@@ -19,10 +19,9 @@ export const RecallInputSchema = z
     /** Cap on hits returned; default is server-defined (typically 5). */
     limit: z.number().int().positive().max(50).optional(),
   })
-  .refine(
-    (v) => Boolean(v.revertSignature ?? v.contractPattern ?? v.freeform),
-    { message: 'recall requires at least one of revertSignature, contractPattern, freeform' },
-  );
+  .refine((v) => Boolean(v.revertSignature ?? v.contractPattern ?? v.freeform), {
+    message: 'recall requires at least one of revertSignature, contractPattern, freeform',
+  });
 export const RecallOutputSchema = z.object({ hits: z.array(MemoryRecallHitSchema) });
 export type RecallInput = z.infer<typeof RecallInputSchema>;
 export type RecallOutput = z.infer<typeof RecallOutputSchema>;

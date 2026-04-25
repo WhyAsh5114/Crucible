@@ -4,11 +4,7 @@
 
 import { z } from 'zod';
 import { ChainStateSchema } from '../chain.ts';
-import {
-  BlockNumberSchema,
-  ChainIdSchema,
-  SnapshotIdSchema,
-} from '../primitives.ts';
+import { BlockNumberSchema, ChainIdSchema, SnapshotIdSchema } from '../primitives.ts';
 
 export const StartNodeInputSchema = z.object({
   fork: z
