@@ -20,3 +20,5 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 bun --version
 bun --revision
 bun install
+
+git config core.hooksPath .githooks
