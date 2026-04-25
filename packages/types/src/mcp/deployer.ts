@@ -1,0 +1,79 @@
+/**
+ * `deployer-mcp` — local-chain deploy, simulate, trace, call.
+ *
+ * Public-chain executions go through KeeperHub (see `./ship.ts`). Nothing in
+ * this server is allowed to talk to a public RPC.
+ */
+
+import { z } from 'zod';
+import { TxTraceSchema } from '../deployer.ts';
+import {
+  AddressSchema,
+  BigIntStringSchema,
+  HashSchema,
+  HexSchema,
+} from '../primitives.ts';
+
+const TxRequestSchema = z.object({
+  from: AddressSchema.optional(),
+  to: AddressSchema.nullable(),
+  data: HexSchema,
+  value: BigIntStringSchema.optional(),
+  gas: BigIntStringSchema.optional(),
+});
+export type TxRequest = z.infer<typeof TxRequestSchema>;
+
+export const DeployLocalInputSchema = z.object({
+  bytecode: HexSchema,
+  /** Encoded constructor calldata appended to the bytecode. May be empty `0x`. */
+  constructorData: HexSchema,
+  sender: AddressSchema.optional(),
+  value: BigIntStringSchema.optional(),
+});
+export const DeployLocalOutputSchema = z.object({
+  address: AddressSchema,
+  txHash: HashSchema,
+  gasUsed: BigIntStringSchema,
+});
+export type DeployLocalInput = z.infer<typeof DeployLocalInputSchema>;
+export type DeployLocalOutput = z.infer<typeof DeployLocalOutputSchema>;
+
+export const SimulateLocalInputSchema = z.object({ tx: TxRequestSchema });
+export const SimulateLocalOutputSchema = z.object({
+  result: HexSchema,
+  gasEstimate: BigIntStringSchema,
+  /** Decoded revert reason, when the simulation reverted. */
+  revertReason: z.string().optional(),
+  /** Raw event log entries, undecoded. Decoding happens at the inspector. */
+  logs: z.array(
+    z.object({
+      address: AddressSchema,
+      topics: z.array(HashSchema),
+      data: HexSchema,
+    }),
+  ),
+});
+export type SimulateLocalInput = z.infer<typeof SimulateLocalInputSchema>;
+export type SimulateLocalOutput = z.infer<typeof SimulateLocalOutputSchema>;
+
+export const TraceInputSchema = z.object({ txHash: HashSchema });
+export const TraceOutputSchema = TxTraceSchema;
+export type TraceInput = z.infer<typeof TraceInputSchema>;
+export type TraceOutput = z.infer<typeof TraceOutputSchema>;
+
+export const CallInputSchema = z.object({
+  to: AddressSchema,
+  /** ABI-encoded calldata. */
+  data: HexSchema,
+  from: AddressSchema.optional(),
+});
+export const CallOutputSchema = z.object({ result: HexSchema });
+export type CallInput = z.infer<typeof CallInputSchema>;
+export type CallOutput = z.infer<typeof CallOutputSchema>;
+
+export const tools = {
+  deploy_local: { input: DeployLocalInputSchema, output: DeployLocalOutputSchema },
+  simulate_local: { input: SimulateLocalInputSchema, output: SimulateLocalOutputSchema },
+  trace: { input: TraceInputSchema, output: TraceOutputSchema },
+  call: { input: CallInputSchema, output: CallOutputSchema },
+} as const;
