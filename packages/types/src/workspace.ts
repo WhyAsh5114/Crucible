@@ -7,11 +7,7 @@
 import { z } from 'zod';
 import { ChainStateSchema } from './chain.ts';
 import { DeploymentRecordSchema } from './deployer.ts';
-import {
-  TerminalSessionIdSchema,
-  TimestampMsSchema,
-  WorkspaceIdSchema,
-} from './primitives.ts';
+import { TerminalSessionIdSchema, TimestampMsSchema, WorkspaceIdSchema } from './primitives.ts';
 
 export const WorkspaceFileLangSchema = z.enum([
   'solidity',

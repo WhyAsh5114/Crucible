@@ -12,23 +12,23 @@ Frozen type contracts shared across every Crucible package. **The single source 
 
 ## Layout
 
-| Module | Purpose |
-| :--- | :--- |
-| `primitives` | Branded IDs, hex/address/hash schemas, chain targets, bigint wire format |
-| `workspace` | `WorkspaceState`, `WorkspaceFile`, `ChainState` |
-| `api` | HTTP request/response shapes (`/api/prompt`, `/api/workspace`, `/api/ship`, `/api/chain/fork`) |
-| `agent-events` | `AgentEvent` discriminated union streamed over `wss://.../ws/agent` |
-| `inference` | Provider routing, receipt envelope, degraded-mode flag |
-| `compiler` | `CompiledContract`, `CompilerMessage` |
-| `deployer` | `DeploymentRecord`, `TxTrace`, `DecodedCall`, `DecodedEvent`, `StorageAccess` |
-| `wallet` | `WalletAccount`, signing payloads |
-| `terminal` | `TerminalSession`, terminal frame envelope |
-| `memory` | `MemoryPattern`, `MemoryRecallHit`, provenance |
-| `mesh` | `MeshPeer`, `MeshHelpRequest`, `MeshHelpResponse` |
-| `ship` | `ShipRequest`, `KeeperHubExecution`, ship status |
-| `runtime` | Control-plane ↔ workspace-runtime envelope |
-| `preview` | Cross-origin EIP-1193 bridge messages |
-| `mcp/*` | One module per MCP server (chain, compiler, deployer, wallet, memory, mesh, terminal, ship). Each exports `tool` + input/output schemas. |
+| Module         | Purpose                                                                                                                                  |
+| :------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| `primitives`   | Branded IDs, hex/address/hash schemas, chain targets, bigint wire format                                                                 |
+| `workspace`    | `WorkspaceState`, `WorkspaceFile`, `ChainState`                                                                                          |
+| `api`          | HTTP request/response shapes (`/api/prompt`, `/api/workspace`, `/api/ship`, `/api/chain/fork`)                                           |
+| `agent-events` | `AgentEvent` discriminated union streamed over `wss://.../ws/agent`                                                                      |
+| `inference`    | Provider routing, receipt envelope, degraded-mode flag                                                                                   |
+| `compiler`     | `CompiledContract`, `CompilerMessage`                                                                                                    |
+| `deployer`     | `DeploymentRecord`, `TxTrace`, `DecodedCall`, `DecodedEvent`, `StorageAccess`                                                            |
+| `wallet`       | `WalletAccount`, signing payloads                                                                                                        |
+| `terminal`     | `TerminalSession`, terminal frame envelope                                                                                               |
+| `memory`       | `MemoryPattern`, `MemoryRecallHit`, provenance                                                                                           |
+| `mesh`         | `MeshPeer`, `MeshHelpRequest`, `MeshHelpResponse`                                                                                        |
+| `ship`         | `ShipRequest`, `KeeperHubExecution`, ship status                                                                                         |
+| `runtime`      | Control-plane ↔ workspace-runtime envelope                                                                                               |
+| `preview`      | Cross-origin EIP-1193 bridge messages                                                                                                    |
+| `mcp/*`        | One module per MCP server (chain, compiler, deployer, wallet, memory, mesh, terminal, ship). Each exports `tool` + input/output schemas. |
 
 ## Boundary rule
 

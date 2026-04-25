@@ -38,11 +38,11 @@ Think **v0 by Vercel, but for dApps**, where the agent has long-term memory, a p
 
 The agent is the primary interface. The editor, chain, wallet, preview, peer mesh, and shipping pipeline are **tools the agent wields** — and the developer can observe, inspect, or override at any point.
 
-Crucible is engineered around three structural commitments — each chosen because it makes a sponsor integration *load-bearing* rather than decorative:
+Crucible is engineered around three structural commitments — each chosen because it makes a sponsor integration _load-bearing_ rather than decorative:
 
 1. **The agent is a 0G-native open agent**, not a closed SDK wrapper. It's built as a Web3-development extension to the **OpenClaw** framework, with sealed inference on **0G Compute** (e.g., `qwen3.6-plus` / `GLM-5-FP8`) and persistent memory on **0G Storage** (KV for hot state, Log for full history).
 2. **Every Crucible instance is an AXL node.** When the local agent hits an unfamiliar revert, it queries its own 0G Storage memory first; on miss, it broadcasts a structured help request over **Gensyn AXL** to peer Crucible nodes. Real cross-node communication, not in-process actor theater.
-3. **Local-first, ship via KeeperHub.** Hardhat handles the local dev loop. The moment the user clicks *Ship*, every onchain action — deployments, configuration calls, post-deploy verification txs — is routed through **KeeperHub** (simulation → gas → execution → retries → audit trail). KeeperHub is the only path from local to public chain.
+3. **Local-first, ship via KeeperHub.** Hardhat handles the local dev loop. The moment the user clicks _Ship_, every onchain action — deployments, configuration calls, post-deploy verification txs — is routed through **KeeperHub** (simulation → gas → execution → retries → audit trail). KeeperHub is the only path from local to public chain.
 
 The three integrations compose into one coherent narrative: **0G is where the agent thinks and remembers, AXL is how agents share what they've learned, KeeperHub is how the agent moves value when it matters.**
 
@@ -104,7 +104,7 @@ For local development, Crucible uses **Portless** so the system is reachable thr
 
 The default flow is **agent-driven**:
 
-- User prompts: *"Build me a custom Uniswap v4 hook that charges a 0.1% fee on swaps over 10 ETH."*
+- User prompts: _"Build me a custom Uniswap v4 hook that charges a 0.1% fee on swaps over 10 ETH."_
 - The agent generates the Solidity hook contract and a test frontend, compiles, deploys to the local chain (with a forked Uniswap v4 pool), and renders the live dApp — all visible in real-time across the workspace panes.
 - The user can intervene at any point: edit code manually, inspect a transaction, switch accounts, or ask the agent to iterate.
 
@@ -150,49 +150,49 @@ When the user is satisfied with the local build, they click **Ship**. This is th
 - `KeeperHub.simulate_bundle()` runs the deployment + initial configuration calls as a bundle. The Inspector shows decoded simulation output and a per-tx gas estimate.
 - `KeeperHub.execute_tx()` then submits each tx with retry logic, gas optimization, and private routing where available.
 - The Inspector shows live status (`pending → mined → confirmed`), retry count, and the KeeperHub **audit trail ID** for every shipped transaction.
-- Subsequent post-deploy interactions (the user clicking *Mint* or *Swap* on the live preview while pointed at the deployed testnet address) also route through KeeperHub — making the integration *load-bearing*, not a one-shot deploy button.
+- Subsequent post-deploy interactions (the user clicking _Mint_ or _Swap_ on the live preview while pointed at the deployed testnet address) also route through KeeperHub — making the integration _load-bearing_, not a one-shot deploy button.
 
 ---
 
 ## How It Compares
 
-| | Remix | ChainIDE | v0 (Vercel) | **Crucible** |
-| :--- | :--- | :--- | :--- | :--- |
-| **AI-Driven** | No | No | Yes (frontend only) | **Yes (full-stack + chain)** |
-| **Local Chain** | JS VM (limited) | Partial | No | **Full Hardhat node (server-side)** |
-| **Embedded Wallet** | Yes (basic) | No | N/A | **Pre-funded, labeled, auto-synced** |
-| **Live dApp Preview** | No | No | Yes | **Yes, with chain injection** |
-| **Tx Inspector** | Basic | Basic | No | **Decoded traces, events, KeeperHub audit trail** |
-| **Agent has chain context** | No | No | No | **Yes, via MCP** |
-| **Persistent agent memory** | No | No | No | **Yes, on 0G Storage (cross-session, cross-node)** |
-| **Peer knowledge mesh** | No | No | No | **Yes, via Gensyn AXL** |
-| **Self-Healing Reverts** | No | No | No | **Recall → mesh → patch → verify → remember** |
-| **Ship to public chains** | Manual | Manual | N/A | **One-click via KeeperHub (with audit trail)** |
+|                             | Remix           | ChainIDE | v0 (Vercel)         | **Crucible**                                       |
+| :-------------------------- | :-------------- | :------- | :------------------ | :------------------------------------------------- |
+| **AI-Driven**               | No              | No       | Yes (frontend only) | **Yes (full-stack + chain)**                       |
+| **Local Chain**             | JS VM (limited) | Partial  | No                  | **Full Hardhat node (server-side)**                |
+| **Embedded Wallet**         | Yes (basic)     | No       | N/A                 | **Pre-funded, labeled, auto-synced**               |
+| **Live dApp Preview**       | No              | No       | Yes                 | **Yes, with chain injection**                      |
+| **Tx Inspector**            | Basic           | Basic    | No                  | **Decoded traces, events, KeeperHub audit trail**  |
+| **Agent has chain context** | No              | No       | No                  | **Yes, via MCP**                                   |
+| **Persistent agent memory** | No              | No       | No                  | **Yes, on 0G Storage (cross-session, cross-node)** |
+| **Peer knowledge mesh**     | No              | No       | No                  | **Yes, via Gensyn AXL**                            |
+| **Self-Healing Reverts**    | No              | No       | No                  | **Recall → mesh → patch → verify → remember**      |
+| **Ship to public chains**   | Manual          | Manual   | N/A                 | **One-click via KeeperHub (with audit trail)**     |
 
 ---
 
 ## Tech Stack
 
-| Layer | Choice | Notes |
-| :--- | :--- | :--- |
-| **Runtime** | Bun 1.3.x | Native TS execution, no build step; Hardhat is the only exception (spawned via `node`) |
-| **Language** | TypeScript 6.x | Bun runs `.ts` directly |
-| **Build orchestration** | Turborepo 2.x | Task graph, remote cache |
-| **Local DX routing** | Portless | Stable `.localhost` URLs instead of hardcoded ports |
-| **Backend HTTP/WS** | Hono 4.x (Bun adapter) | Built-in WS upgrade via `hono/ws` |
-| **MCP SDK** | `@modelcontextprotocol/sdk` | HTTP transport, Zod-validated tools |
-| **Frontend** | SvelteKit 2.x | Reactive stores for agent event streaming |
-| **Editor** | CodeMirror 6.x | `@codemirror/lang-solidity` |
-| **Terminal UI** | `@wterm/react` + `node-pty` | Browser-rendered terminal backed by a real PTY session |
-| **Chain libraries** | viem 2.x | Full TS types for ABIs, actions, accounts |
-| **Local chain** | Hardhat 2.22+ | Fork, snapshots, `hardhat_getTransactionTrace` |
-| **Solidity compiler** | solc-js 0.8.x | Backend-only, never in browser |
-| **Inference** | 0G Compute primary + OpenAI-compatible fallback | 0G is the default/judged path with verifiable receipts; fallback is for degraded public beta only |
-| **Persistent memory** | 0G Storage (KV + Log) | KV = recall index; Log = full history |
-| **Peer mesh** | Gensyn AXL node binary | Separate process per backend instance |
-| **Production execution** | KeeperHub MCP | Only public-chain path, no exceptions |
-| **Validation** | Zod 3.x | All MCP tool args + HTTP request bodies |
-| **Testing** | Vitest 4.x | ESM, viem, SvelteKit compatible |
+| Layer                    | Choice                                          | Notes                                                                                             |
+| :----------------------- | :---------------------------------------------- | :------------------------------------------------------------------------------------------------ |
+| **Runtime**              | Bun 1.3.x                                       | Native TS execution, no build step; Hardhat is the only exception (spawned via `node`)            |
+| **Language**             | TypeScript 6.x                                  | Bun runs `.ts` directly                                                                           |
+| **Build orchestration**  | Turborepo 2.x                                   | Task graph, remote cache                                                                          |
+| **Local DX routing**     | Portless                                        | Stable `.localhost` URLs instead of hardcoded ports                                               |
+| **Backend HTTP/WS**      | Hono 4.x (Bun adapter)                          | Built-in WS upgrade via `hono/ws`                                                                 |
+| **MCP SDK**              | `@modelcontextprotocol/sdk`                     | HTTP transport, Zod-validated tools                                                               |
+| **Frontend**             | SvelteKit 2.x                                   | Reactive stores for agent event streaming                                                         |
+| **Editor**               | CodeMirror 6.x                                  | `@codemirror/lang-solidity`                                                                       |
+| **Terminal UI**          | `@wterm/react` + `node-pty`                     | Browser-rendered terminal backed by a real PTY session                                            |
+| **Chain libraries**      | viem 2.x                                        | Full TS types for ABIs, actions, accounts                                                         |
+| **Local chain**          | Hardhat 2.22+                                   | Fork, snapshots, `hardhat_getTransactionTrace`                                                    |
+| **Solidity compiler**    | solc-js 0.8.x                                   | Backend-only, never in browser                                                                    |
+| **Inference**            | 0G Compute primary + OpenAI-compatible fallback | 0G is the default/judged path with verifiable receipts; fallback is for degraded public beta only |
+| **Persistent memory**    | 0G Storage (KV + Log)                           | KV = recall index; Log = full history                                                             |
+| **Peer mesh**            | Gensyn AXL node binary                          | Separate process per backend instance                                                             |
+| **Production execution** | KeeperHub MCP                                   | Only public-chain path, no exceptions                                                             |
+| **Validation**           | Zod 3.x                                         | All MCP tool args + HTTP request bodies                                                           |
+| **Testing**              | Vitest 4.x                                      | ESM, viem, SvelteKit compatible                                                                   |
 
 We intentionally do **not** run the programming runtime inside WebContainers. Hardhat tracing, long-lived chain state, and the AXL node all require real backend-managed processes. The browser renders the development surface; the backend owns the runtime.
 
@@ -208,7 +208,7 @@ The user lands on `https://crucible.localhost` and either creates or reopens a w
 
 ### 2. Prompt the Agent
 
-The user types a prompt such as *"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."* The agent receives the prompt plus the current workspace context, calls the inference router (0G Compute primary; OpenAI-compatible fallback only in degraded mode), and begins emitting visible tool activity.
+The user types a prompt such as _"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."_ The agent receives the prompt plus the current workspace context, calls the inference router (0G Compute primary; OpenAI-compatible fallback only in degraded mode), and begins emitting visible tool activity.
 
 ### 3. Watch Code Appear
 
@@ -241,15 +241,15 @@ When the user clicks **Ship**, the agent hands execution to KeeperHub. Simulatio
 
 The narrative is one continuous build → break → heal → ship arc:
 
-1. **(0:00–0:25)** Problem slide + three sponsor logos. *"Web3 dev is 5 disconnected tools and an AI that can't see your chain."*
-2. **(0:25–1:15)** **Build.** User prompts: *"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."* Agent writes contracts and frontend, compiles, deploys to local Hardhat, renders the live dApp. **Inspector shows a verifiable inference receipt from 0G Compute.**
+1. **(0:00–0:25)** Problem slide + three sponsor logos. _"Web3 dev is 5 disconnected tools and an AI that can't see your chain."_
+2. **(0:25–1:15)** **Build.** User prompts: _"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."_ Agent writes contracts and frontend, compiles, deploys to local Hardhat, renders the live dApp. **Inspector shows a verifiable inference receipt from 0G Compute.**
 3. **(1:15–2:30)** **Break and Heal — the money shot.** User triggers a withdraw before the cooldown elapses. Tx reverts.
    - Inspector shows the trace.
-   - `memory-mcp.recall()` → no local hit. *"Asking the mesh."*
+   - `memory-mcp.recall()` → no local hit. _"Asking the mesh."_
    - **Cut to a second laptop** running Crucible, also on AXL. Its agent solved this exact pattern yesterday. It responds with the patch + verification receipt.
    - Local agent verifies the patch in a snapshot. Withdraw succeeds.
-   - `memory-mcp.remember()` writes the verified pattern back to 0G Storage. *"Now everyone benefits."*
-4. **(2:30–3:30)** **Ship.** User clicks **Ship to Sepolia**. KeeperHub takes over: bundle simulation, gas estimates, execution status with retry counter, audit trail IDs in the Inspector. User then clicks *Deposit* on the live preview — pointed at the deployed Sepolia address — and that tx also routes through KeeperHub.
+   - `memory-mcp.remember()` writes the verified pattern back to 0G Storage. _"Now everyone benefits."_
+4. **(2:30–3:30)** **Ship.** User clicks **Ship to Sepolia**. KeeperHub takes over: bundle simulation, gas estimates, execution status with retry counter, audit trail IDs in the Inspector. User then clicks _Deposit_ on the live preview — pointed at the deployed Sepolia address — and that tx also routes through KeeperHub.
 5. **(3:30–4:00)** Architecture slide: **OpenClaw extension + 0G Compute/Storage** + **7 custom MCPs** + **AXL peer mesh** + **KeeperHub execution layer**.
 
 ---
@@ -264,9 +264,56 @@ bun install
 bun run dev            # wraps Portless and opens https://crucible.localhost
 ```
 
-The workspace loads with a local chain already running, a PTY-backed terminal attached, the AXL node connected to the mesh, and the agent ready.
+## Devcontainer
 
----
+Crucible includes a VS Code devcontainer with a local Postgres service for
+workspace metadata and backend development.
+
+### Start
+
+1. Open the repository in VS Code.
+2. Run "Dev Containers: Reopen in Container".
+3. Wait for container startup and the Bun setup + `bun install` post-create step.
+
+### Verify Bun
+
+Run these commands in the integrated terminal:
+
+```bash
+bun --version
+bun --revision
+```
+
+If you see `command not found: bun`, reload your shell config and retry:
+
+```bash
+source ~/.zshrc   # or: source ~/.bashrc
+bun --version
+```
+
+### Local database defaults
+
+Inside the devcontainer, the workspace service exposes:
+
+```text
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/crucible
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=crucible
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+```
+
+### Troubleshooting
+
+- If you see `docker-credential-desktop: executable file not found`, fix your
+  host Docker config by removing `"credsStore": "desktop"` from
+  `~/.docker/config.json`.
+- If your Docker tooling warns about missing buildx, this devcontainer setup
+  avoids image build steps by using prebuilt images.
+- Bun is installed via the official script (`https://bun.com/install`) during
+  `postCreateCommand`, and PATH entries are added to both `~/.zshrc` and
+  `~/.bashrc`.
 
 ## Docs
 
@@ -277,4 +324,4 @@ The workspace loads with a local chain already running, a PTY-backed terminal at
 
 ---
 
-*Describe it. Watch it build. Ship it.*
+_Describe it. Watch it build. Ship it._

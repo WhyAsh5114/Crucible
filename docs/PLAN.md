@@ -34,6 +34,7 @@ These are the product proofs of value. They determine build order.
 **Question:** If a user describes a dApp, can Crucible build it in a way that feels inspectable instead of magical?
 
 **Must prove:**
+
 - Prompt accepted by the agent
 - Real files written into a workspace
 - Compile and deploy against a real local chain
@@ -42,6 +43,7 @@ These are the product proofs of value. They determine build order.
 - Terminal and inspector show enough evidence to trust what happened
 
 **What is explicitly not required yet:**
+
 - Mesh
 - KeeperHub
 - Production deployment
@@ -52,6 +54,7 @@ These are the product proofs of value. They determine build order.
 **Question:** Does the revert-repair loop materially reduce debugging time, or is it just a theatrical agent demo?
 
 **Must prove:**
+
 - Revert is detected
 - Trace is readable enough for diagnosis
 - Agent recalls prior pattern or reasons from the trace
@@ -65,6 +68,7 @@ These are the product proofs of value. They determine build order.
 **Question:** Does AXL improve the fix loop beyond what local memory and local reasoning already do?
 
 **Must prove:**
+
 - Local agent misses a known pattern
 - Peer supplies a candidate patch or strong hint
 - Local agent verifies it before apply
@@ -77,6 +81,7 @@ These are the product proofs of value. They determine build order.
 **Question:** Can the exact artifact proven locally be shipped to a public chain through one controlled execution path?
 
 **Must prove:**
+
 - Local build state is explicit and reproducible
 - Ship action invokes KeeperHub and only KeeperHub for public-chain execution
 - Simulation, execution, retry, and audit trail are visible in the inspector
@@ -86,6 +91,7 @@ These are the product proofs of value. They determine build order.
 **Question:** Does the product still behave the same way when the workspace runtime moves out of the main app process?
 
 **Must prove:**
+
 - Control plane can target a workspace runtime without knowing whether it is local or containerized
 - Preview URL, terminal session, and tool calls still work through the same contracts
 - Cold starts and reconnects are understandable to a tester
@@ -96,16 +102,16 @@ These are the product proofs of value. They determine build order.
 
 Only one thing truly freezes on Day 0: the type contracts. Everything else stays replaceable.
 
-| Boundary | Contract | Why it must freeze early |
-| :--- | :--- | :--- |
-| Frontend <-> backend | `WorkspaceState`, `PromptRequest`, `ShipResponse`, `AgentEvent` stream | Lets UI, backend, and agent move independently |
-| Agent <-> MCP tools | Zod-validated tool schemas in `packages/types` | Prevents direct package imports and hidden coupling |
+| Boundary                            | Contract                                                                                     | Why it must freeze early                                           |
+| :---------------------------------- | :------------------------------------------------------------------------------------------- | :----------------------------------------------------------------- |
+| Frontend <-> backend                | `WorkspaceState`, `PromptRequest`, `ShipResponse`, `AgentEvent` stream                       | Lets UI, backend, and agent move independently                     |
+| Agent <-> MCP tools                 | Zod-validated tool schemas in `packages/types`                                               | Prevents direct package imports and hidden coupling                |
 | Control plane <-> workspace runtime | `open_workspace`, `runtime_status`, `preview_url`, terminal session, tool execution envelope | Keeps child-process mode and runner-container mode interchangeable |
-| Preview <-> shell | Exact-origin message contract for EIP-1193 bridging | Avoids preview-specific hacks leaking into the app shell |
-| Memory layer <-> agent | `recall`, `remember`, `list_patterns`, `provenance` | Lets local fixtures and 0G backends share one interface |
-| Mesh layer <-> agent | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Keeps AXL optional until the mesh proof phase |
-| Shipping layer <-> agent | `simulate_bundle`, `execute_tx`, `get_execution_status` | Keeps public-chain execution isolated from local-chain logic |
-| Inference layer <-> agent | provider adapter result including receipt metadata and degraded-mode flag | Makes 0G primary while keeping fallback honest |
+| Preview <-> shell                   | Exact-origin message contract for EIP-1193 bridging                                          | Avoids preview-specific hacks leaking into the app shell           |
+| Memory layer <-> agent              | `recall`, `remember`, `list_patterns`, `provenance`                                          | Lets local fixtures and 0G backends share one interface            |
+| Mesh layer <-> agent                | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`          | Keeps AXL optional until the mesh proof phase                      |
+| Shipping layer <-> agent            | `simulate_bundle`, `execute_tx`, `get_execution_status`                                      | Keeps public-chain execution isolated from local-chain logic       |
+| Inference layer <-> agent           | provider adapter result including receipt metadata and degraded-mode flag                    | Makes 0G primary while keeping fallback honest                     |
 
 ### Non-Negotiable Architectural Rules
 
@@ -121,12 +127,12 @@ Only one thing truly freezes on Day 0: the type contracts. Everything else stays
 
 Ownership is by capability, not by milestone. A capability owner keeps the contract healthy and unblocks others with fixtures.
 
-| Domain | Primary owner | Main packages | Responsibility |
-| :--- | :--- | :--- | :--- |
-| Runtime substrate | **Dev A** | `packages/backend`, `packages/mcp-chain`, `packages/mcp-compiler`, `packages/mcp-deployer`, `packages/mcp-wallet`, `packages/mcp-terminal` | Real workspace runtime, chain, terminal, preview, and runtime contract |
-| Agent and memory | **Dev B** | `packages/agent`, `packages/mcp-memory` | Planning loop, inference routing, memory loop, event stream, and repair orchestration |
-| Trust surfaces and mesh | **Dev C** | `packages/frontend`, `packages/mcp-mesh` | UI trust surfaces, typed event rendering, terminal/preview integration, mesh UX, and peer collaboration |
-| Shared contracts | **All three** | `packages/types` | Schemas, event unions, runtime envelopes, and fixture compatibility |
+| Domain                  | Primary owner | Main packages                                                                                                                              | Responsibility                                                                                          |
+| :---------------------- | :------------ | :----------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------ |
+| Runtime substrate       | **Dev A**     | `packages/backend`, `packages/mcp-chain`, `packages/mcp-compiler`, `packages/mcp-deployer`, `packages/mcp-wallet`, `packages/mcp-terminal` | Real workspace runtime, chain, terminal, preview, and runtime contract                                  |
+| Agent and memory        | **Dev B**     | `packages/agent`, `packages/mcp-memory`                                                                                                    | Planning loop, inference routing, memory loop, event stream, and repair orchestration                   |
+| Trust surfaces and mesh | **Dev C**     | `packages/frontend`, `packages/mcp-mesh`                                                                                                   | UI trust surfaces, typed event rendering, terminal/preview integration, mesh UX, and peer collaboration |
+| Shared contracts        | **All three** | `packages/types`                                                                                                                           | Schemas, event unions, runtime envelopes, and fixture compatibility                                     |
 
 ### Team Rule
 
@@ -145,6 +151,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Make every team member independently productive behind stable contracts.
 
 **Required outputs:**
+
 - `packages/types` merged and treated as frozen
 - Fixture payloads for every `AgentEvent` variant
 - Mock runtime contract returning `WorkspaceState`, `previewUrl`, and `terminalSessionId`
@@ -160,6 +167,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Make one thin vertical slice work locally without any sponsor dependency beyond what is required for the agent to answer.
 
 **Required outputs:**
+
 - Real workspace directory creation and persistence
 - PTY session reachable from the browser
 - Preview dev server managed per workspace with a readable preview URL
@@ -170,6 +178,7 @@ The plan is phased by proof, not by package completion.
 **Success demo:** User prompts a very small app such as a token minter or counter contract, the agent builds it, and the user clicks the preview successfully.
 
 **What stays stubbed if necessary:**
+
 - 0G receipts can be simulated if inference transport is not ready yet
 - Trace rendering can stay skeletal
 - Mesh and KeeperHub remain disabled
@@ -183,6 +192,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Validate the repair loop locally before adding networked collaboration.
 
 **Required outputs:**
+
 - Stable snapshot and revert flow
 - Trace tool good enough to explain a real revert
 - Memory `recall` and `remember` round-trip behind the MCP boundary
@@ -200,6 +210,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Add peer collaboration only after the local loop and local repair loop are credible.
 
 **Required outputs:**
+
 - AXL node lifecycle under `mcp-mesh`
 - Structured help requests and responses
 - Verification of peer-submitted patches before apply
@@ -217,6 +228,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Keep public-chain execution isolated from the local development loop and make KeeperHub the only public-chain path.
 
 **Required outputs:**
+
 - `POST /api/ship` wired to KeeperHub only
 - Simulation and execution status surfaced in the inspector
 - Audit trail IDs visible and persisted
@@ -233,6 +245,7 @@ The plan is phased by proof, not by package completion.
 **Goal:** Preserve the same mental model when moving from trusted demo mode to isolated runtime mode, then harden the demo.
 
 **Required outputs:**
+
 - Control plane / workspace runner boundary extracted and exercised
 - Docker Compose stack for gateway, control plane, runner, volume, and AXL sidecar
 - Clear cold-start, reconnect, and crash-restart behavior
@@ -248,19 +261,19 @@ The plan is phased by proof, not by package completion.
 
 These are go/no-go gates, not status ceremonies.
 
-| Day | Gate | What must work | Why it matters | Who verifies |
-| :--- | :--- | :--- | :--- | :--- |
-| **0** | Contracts frozen | `packages/types` merged, fixtures compile everywhere | Decouples team execution | All |
-| **2** | Stub loop visible | UI renders fixture events, mock workspace opens, terminal attaches | Team can iterate in parallel | Each owner self-tests |
-| **4** | POV-1 green | Prompt -> files -> compile -> deploy -> preview click | Proves the core product loop | Dev B drives, Dev A + C verify |
-| **6** | Local heal green | Revert -> trace -> patch -> verify -> remember, no mesh | Proves repair loop is not theater | Dev B drives |
-| **8** | Memory useful | At least one repeated failure is solved faster via recall | Proves 0G memory has product value | Dev B + A verify |
-| **10** | Mesh additive | Peer response improves a local miss and is verified before apply | Proves AXL adds real value | Dev C drives |
-| **11** | Ship green | KeeperHub simulation + execution + audit visible for Sepolia | Proves the public-chain story | Dev B drives |
-| **12** | Full arc green | Build -> break -> heal -> ship in one sitting | Confirms the demo narrative | All |
-| **13** | Two-laptop rehearsal | Separate AXL peers on separate machines | Proves cross-node honesty | Dev C leads |
-| **13** | Hosted beta green | Dockerized stack works for one external tester | Proves public-test path | All |
-| **14** | Record and submit | Main demo + sponsor-specific cuts recorded | Locks the deliverable | All |
+| Day    | Gate                 | What must work                                                     | Why it matters                     | Who verifies                   |
+| :----- | :------------------- | :----------------------------------------------------------------- | :--------------------------------- | :----------------------------- |
+| **0**  | Contracts frozen     | `packages/types` merged, fixtures compile everywhere               | Decouples team execution           | All                            |
+| **2**  | Stub loop visible    | UI renders fixture events, mock workspace opens, terminal attaches | Team can iterate in parallel       | Each owner self-tests          |
+| **4**  | POV-1 green          | Prompt -> files -> compile -> deploy -> preview click              | Proves the core product loop       | Dev B drives, Dev A + C verify |
+| **6**  | Local heal green     | Revert -> trace -> patch -> verify -> remember, no mesh            | Proves repair loop is not theater  | Dev B drives                   |
+| **8**  | Memory useful        | At least one repeated failure is solved faster via recall          | Proves 0G memory has product value | Dev B + A verify               |
+| **10** | Mesh additive        | Peer response improves a local miss and is verified before apply   | Proves AXL adds real value         | Dev C drives                   |
+| **11** | Ship green           | KeeperHub simulation + execution + audit visible for Sepolia       | Proves the public-chain story      | Dev B drives                   |
+| **12** | Full arc green       | Build -> break -> heal -> ship in one sitting                      | Confirms the demo narrative        | All                            |
+| **13** | Two-laptop rehearsal | Separate AXL peers on separate machines                            | Proves cross-node honesty          | Dev C leads                    |
+| **13** | Hosted beta green    | Dockerized stack works for one external tester                     | Proves public-test path            | All                            |
+| **14** | Record and submit    | Main demo + sponsor-specific cuts recorded                         | Locks the deliverable              | All                            |
 
 ---
 
@@ -268,15 +281,15 @@ These are go/no-go gates, not status ceremonies.
 
 Stubs are not temporary hacks. They are how we keep the build decoupled.
 
-| Boundary | Stub artifact | Purpose |
-| :--- | :--- | :--- |
-| Agent events | `packages/frontend/src/lib/fixtures/agentEvents.json` | Frontend can render every event union variant immediately |
-| Workspace runtime | Mock `GET /api/workspace/:id` + fake preview/terminal IDs | Frontend and backend can wire the shell before the real runtime is stable |
-| Chain toolchain | `--mock` mode for chain/compiler/deployer/wallet MCPs | Agent can exercise planning loop before Hardhat is reliable |
-| Memory | Local fixture-backed `recall`/`remember` implementation | Repair loop can be proven before 0G wiring is done |
-| Mesh | Fixture peer directory + canned help responses | UI and orchestration can be built before AXL networking is live |
-| Ship | KeeperHub fixture adapter | Inspector and ship flow can be built before real execution is wired |
-| Inference | Receipt-shaped fixture result | UI can handle receipts and degraded mode before real 0G transport is stable |
+| Boundary          | Stub artifact                                             | Purpose                                                                     |
+| :---------------- | :-------------------------------------------------------- | :-------------------------------------------------------------------------- |
+| Agent events      | `packages/frontend/src/lib/fixtures/agentEvents.json`     | Frontend can render every event union variant immediately                   |
+| Workspace runtime | Mock `GET /api/workspace/:id` + fake preview/terminal IDs | Frontend and backend can wire the shell before the real runtime is stable   |
+| Chain toolchain   | `--mock` mode for chain/compiler/deployer/wallet MCPs     | Agent can exercise planning loop before Hardhat is reliable                 |
+| Memory            | Local fixture-backed `recall`/`remember` implementation   | Repair loop can be proven before 0G wiring is done                          |
+| Mesh              | Fixture peer directory + canned help responses            | UI and orchestration can be built before AXL networking is live             |
+| Ship              | KeeperHub fixture adapter                                 | Inspector and ship flow can be built before real execution is wired         |
+| Inference         | Receipt-shaped fixture result                             | UI can handle receipts and degraded mode before real 0G transport is stable |
 
 ### Stub Rule
 

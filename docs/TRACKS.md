@@ -8,12 +8,12 @@
 
 ETHGlobal limits submissions to **3 sponsors max**, but within each sponsor you can apply to all their tracks. Crucible's strategy:
 
-| Sponsor | Tracks Applied | Rationale |
-| :--- | :--- | :--- |
-| **0G** | Track 1 (Framework) + Track 2 (Agents/Swarms) | Both tracks are addressable from the same codebase. Track 1 is primary; Track 2 is a free roll with different framing. |
-| **Gensyn** | Best Application of AXL | One track, one prize pool. The AXL integration is the centerpiece of the demo. |
-| **KeeperHub** | Best Use of KeeperHub + Builder Feedback Bounty | Main prize + feedback bounty. Both qualify from the same integration work. |
-| ~~ENS~~ | *Not applied* | The 3-sponsor cap forces a choice. ENS would be a ~4-hour cosmetic add-on (agent names in text records). 0G/Gensyn/KeeperHub are structural — removing any breaks the product. |
+| Sponsor       | Tracks Applied                                  | Rationale                                                                                                                                                                      |
+| :------------ | :---------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0G**        | Track 1 (Framework) + Track 2 (Agents/Swarms)   | Both tracks are addressable from the same codebase. Track 1 is primary; Track 2 is a free roll with different framing.                                                         |
+| **Gensyn**    | Best Application of AXL                         | One track, one prize pool. The AXL integration is the centerpiece of the demo.                                                                                                 |
+| **KeeperHub** | Best Use of KeeperHub + Builder Feedback Bounty | Main prize + feedback bounty. Both qualify from the same integration work.                                                                                                     |
+| ~~ENS~~       | _Not applied_                                   | The 3-sponsor cap forces a choice. ENS would be a ~4-hour cosmetic add-on (agent names in text records). 0G/Gensyn/KeeperHub are structural — removing any breaks the product. |
 
 ---
 
@@ -40,12 +40,12 @@ Crucible ships as two artifacts in the same repo:
 
 **How this maps to the Track 1 brief:**
 
-| Track 1 asks for... | Crucible delivers... |
-| :--- | :--- |
-| "New OpenClaw modules that natively integrate 0G Compute's sealed inference" | The 0G Compute inference adapter routes the primary agent path through sealed models (`qwen3.6-plus`, `GLM-5-FP8`) and emits verifiable receipts. An OpenAI-compatible fallback exists only for degraded public-beta mode. |
-| "Self-evolving agent framework that autonomously generates/tests/integrates new skills/tools using persistent 0G Storage memory" | The self-healing revert loop: agent detects failure → traces → recalls from 0G Storage → broadcasts for help → applies patch → verifies → writes back. The pattern library grows with every solved revert. |
-| "Modular 'agent brain' library with easy swapping of memory layers (0G Storage KV/Log)" | `memory-mcp` abstracts 0G Storage KV (recall index) and Log (full history) behind a clean MCP tool interface. Swap the storage backend by changing the MCP server — the agent doesn't care. |
-| "At least one working example agent built using your framework/tooling" | Crucible itself is the example agent. The README shows how to prompt it, the demo video shows it building a real dApp. |
+| Track 1 asks for...                                                                                                              | Crucible delivers...                                                                                                                                                                                                       |
+| :------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "New OpenClaw modules that natively integrate 0G Compute's sealed inference"                                                     | The 0G Compute inference adapter routes the primary agent path through sealed models (`qwen3.6-plus`, `GLM-5-FP8`) and emits verifiable receipts. An OpenAI-compatible fallback exists only for degraded public-beta mode. |
+| "Self-evolving agent framework that autonomously generates/tests/integrates new skills/tools using persistent 0G Storage memory" | The self-healing revert loop: agent detects failure → traces → recalls from 0G Storage → broadcasts for help → applies patch → verifies → writes back. The pattern library grows with every solved revert.                 |
+| "Modular 'agent brain' library with easy swapping of memory layers (0G Storage KV/Log)"                                          | `memory-mcp` abstracts 0G Storage KV (recall index) and Log (full history) behind a clean MCP tool interface. Swap the storage backend by changing the MCP server — the agent doesn't care.                                |
+| "At least one working example agent built using your framework/tooling"                                                          | Crucible itself is the example agent. The README shows how to prompt it, the demo video shows it building a real dApp.                                                                                                     |
 
 **Submission requirements checklist:**
 
@@ -66,11 +66,11 @@ Crucible ships as two artifacts in the same repo:
 
 **Judge's likely questions & our answers:**
 
-> *"What does the extension do that OpenClaw doesn't do out of the box?"*
+> _"What does the extension do that OpenClaw doesn't do out of the box?"_
 
-The extension adds Web3-specific infrastructure: a tool registry that loads chain-aware MCP servers, Solidity code generation with compiler feedback loops, chain-state-aware planning with snapshot/rollback, and 0G-native inference + memory adapters. It's a *domain extension* — the same way a database extension adds SQL-aware tooling to a general-purpose agent framework.
+The extension adds Web3-specific infrastructure: a tool registry that loads chain-aware MCP servers, Solidity code generation with compiler feedback loops, chain-state-aware planning with snapshot/rollback, and 0G-native inference + memory adapters. It's a _domain extension_ — the same way a database extension adds SQL-aware tooling to a general-purpose agent framework.
 
-> *"Can someone else build a different agent with your extension?"*
+> _"Can someone else build a different agent with your extension?"_
 
 Yes. The extension is a separate package. Crucible is the reference agent. Another team could build a security-auditing agent, a MEV-searching agent, or a multi-chain deployment orchestrator on the same extension. The tool registry is MCP-server-agnostic — add new MCP servers and the agent gains new capabilities.
 
@@ -90,11 +90,11 @@ The same Crucible codebase, framed as a **persistent, networked swarm of autonom
 
 **How this maps to the Track 2 brief:**
 
-| Track 2 asks for... | Crucible delivers... |
-| :--- | :--- |
-| "Personal 'Digital Twin' agent that learns from user behavior and maintains evolving persistent memory via 0G Storage" | Each Crucible agent learns from every revert it encounters and every fix it verifies. Memory persists across sessions on 0G Storage KV + Log. |
-| "Specialist agent swarms that collaborate in real time via shared 0G Storage memory and coordinate inference on 0G Compute" | Crucible agents specialize in debugging. They share a 0G Storage knowledge layer and coordinate over AXL. Inference runs on 0G Compute. |
-| "Clear explanation of how agents communicate and coordinate" | Agents communicate over AXL (structured help requests/responses). They coordinate via the shared 0G Storage knowledge layer (recall → remember with cross-node scope). |
+| Track 2 asks for...                                                                                                         | Crucible delivers...                                                                                                                                                   |
+| :-------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Personal 'Digital Twin' agent that learns from user behavior and maintains evolving persistent memory via 0G Storage"      | Each Crucible agent learns from every revert it encounters and every fix it verifies. Memory persists across sessions on 0G Storage KV + Log.                          |
+| "Specialist agent swarms that collaborate in real time via shared 0G Storage memory and coordinate inference on 0G Compute" | Crucible agents specialize in debugging. They share a 0G Storage knowledge layer and coordinate over AXL. Inference runs on 0G Compute.                                |
+| "Clear explanation of how agents communicate and coordinate"                                                                | Agents communicate over AXL (structured help requests/responses). They coordinate via the shared 0G Storage knowledge layer (recall → remember with cross-node scope). |
 
 **What we skip:** iNFT minting. It would feel bolted on and dilute the swarm narrative. The persistent-memory + emergent-collaboration angle is strong enough on its own.
 
@@ -110,22 +110,22 @@ The same Crucible codebase, framed as a **persistent, networked swarm of autonom
 
 **Depth of AXL integration:**
 
-| Layer | What happens on AXL |
-| :--- | :--- |
-| **Peer discovery** | Each Crucible backend runs an AXL node binary. On startup, it discovers peer Crucible nodes on the mesh. `mesh-mcp.list_peers()` surfaces live peers in the UI. |
+| Layer                    | What happens on AXL                                                                                                                                                             |
+| :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Peer discovery**       | Each Crucible backend runs an AXL node binary. On startup, it discovers peer Crucible nodes on the mesh. `mesh-mcp.list_peers()` surfaces live peers in the UI.                 |
 | **Structured messaging** | `broadcast_help()` sends a structured request: `{revert_signature, full_trace, contract_source, solc_version, ttl}`. Not freeform chat — machine-parseable debugging artifacts. |
-| **Response collection** | `collect_responses()` gathers candidate patches + verification receipts from peers. The local agent verifies each patch in a sandboxed snapshot before applying. |
-| **Contribution** | `respond()` lets a Crucible agent answer another's help request with a verified patch. The mesh is bidirectional — every agent both asks and answers. |
-| **No central broker** | All communication is end-to-end encrypted over AXL. No server, no cloud, no accounts. The demo proves this with two separate laptops. |
+| **Response collection**  | `collect_responses()` gathers candidate patches + verification receipts from peers. The local agent verifies each patch in a sandboxed snapshot before applying.                |
+| **Contribution**         | `respond()` lets a Crucible agent answer another's help request with a verified patch. The mesh is bidirectional — every agent both asks and answers.                           |
+| **No central broker**    | All communication is end-to-end encrypted over AXL. No server, no cloud, no accounts. The demo proves this with two separate laptops.                                           |
 
 **How this maps to the judging criteria:**
 
-| Criterion | How we satisfy it |
-| :--- | :--- |
+| Criterion                    | How we satisfy it                                                                                                                                                                |
+| :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Depth of AXL integration** | AXL is not a wrapper. It carries structured debugging artifacts (traces, patches, receipts) with verification. The `mesh-mcp` server is a first-class MCP tool the agent wields. |
-| **Quality of code** | Monorepo with Turborepo, TypeScript 6.x, ESLint 9 flat config, Vitest 4.x. Clean separation: `mcp-mesh` is a standalone package that wraps the AXL node binary. |
-| **Clear documentation** | `ARCHITECTURE.md` has the full `mesh-mcp` tool spec. `PLAN.md` has the AXL integration checkpoints. `DEMO.md` will document the two-laptop AXL bootstrap config. |
-| **Working examples** | The demo video shows a real cross-node help request → response → verification cycle. Two laptops, two AXL nodes, one revert fixed. |
+| **Quality of code**          | Monorepo with Turborepo, TypeScript 6.x, ESLint 9 flat config, Vitest 4.x. Clean separation: `mcp-mesh` is a standalone package that wraps the AXL node binary.                  |
+| **Clear documentation**      | `ARCHITECTURE.md` has the full `mesh-mcp` tool spec. `PLAN.md` has the AXL integration checkpoints. `DEMO.md` will document the two-laptop AXL bootstrap config.                 |
+| **Working examples**         | The demo video shows a real cross-node help request → response → verification cycle. Two laptops, two AXL nodes, one revert fixed.                                               |
 
 **Submission requirements checklist:**
 
@@ -135,15 +135,15 @@ The same Crucible codebase, framed as a **persistent, networked swarm of autonom
 
 **Judge's likely questions & our answers:**
 
-> *"How does the mesh handle malicious peers submitting bad patches?"*
+> _"How does the mesh handle malicious peers submitting bad patches?"_
 
 `verify_peer_patch()` re-executes the candidate patch in a local Hardhat snapshot before the agent commits it. A bad patch reverts in the sandbox and is discarded. The agent only commits verified fixes. This is a stronger answer than "we trust peers" — lead with it.
 
-> *"What happens if no peers respond?"*
+> _"What happens if no peers respond?"_
 
 The agent falls back to LLM reasoning from the trace. The mesh is an accelerator, not a dependency. Crucible works offline; the mesh makes it faster.
 
-> *"Is this really cross-node, or just in-process?"*
+> _"Is this really cross-node, or just in-process?"_
 
 The demo uses two separate laptops, each running its own Crucible backend + AXL node binary. We'll include a clip of `axl status` on both machines proving they are independent peers, not parent/child processes.
 
@@ -151,27 +151,27 @@ The demo uses two separate laptops, each running its own Crucible backend + AXL 
 
 ## KeeperHub — Best Use of KeeperHub + Builder Feedback Bounty
 
-**Fit:** Very high. KeeperHub is the *only* path from local to public chain.
+**Fit:** Very high. KeeperHub is the _only_ path from local to public chain.
 
-**Why KeeperHub is structural, not decorative:** There is no `eth_sendRawTransaction` to a public RPC anywhere in the Crucible codebase. Every shipping flow — initial deploy, configuration calls, *and* post-deploy preview interactions on the deployed testnet address — routes through KeeperHub. Remove KeeperHub → the *Ship* button breaks. The product cannot reach a public chain.
+**Why KeeperHub is structural, not decorative:** There is no `eth_sendRawTransaction` to a public RPC anywhere in the Crucible codebase. Every shipping flow — initial deploy, configuration calls, _and_ post-deploy preview interactions on the deployed testnet address — routes through KeeperHub. Remove KeeperHub → the _Ship_ button breaks. The product cannot reach a public chain.
 
 **Depth of KeeperHub integration:**
 
-| Flow | What happens |
-| :--- | :--- |
-| **Pre-flight** | Agent calls `KeeperHub.simulate_bundle()` with the deployment + config txs. Inspector shows decoded simulation output + per-tx gas estimates. |
-| **Execution** | Agent calls `KeeperHub.execute_tx()` for each tx. KeeperHub handles retry logic, gas optimization, and private routing. Inspector shows live status: `pending → mined → confirmed`. |
-| **Audit** | Every `execute_tx` returns an `auditTrailId`. Inspector displays it as a clickable link to the KeeperHub provenance record. |
-| **Post-deploy** | User clicks *Deposit* on the live preview (pointed at the deployed Sepolia address). That interaction also routes through KeeperHub — not a one-shot deploy button. |
+| Flow            | What happens                                                                                                                                                                        |
+| :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pre-flight**  | Agent calls `KeeperHub.simulate_bundle()` with the deployment + config txs. Inspector shows decoded simulation output + per-tx gas estimates.                                       |
+| **Execution**   | Agent calls `KeeperHub.execute_tx()` for each tx. KeeperHub handles retry logic, gas optimization, and private routing. Inspector shows live status: `pending → mined → confirmed`. |
+| **Audit**       | Every `execute_tx` returns an `auditTrailId`. Inspector displays it as a clickable link to the KeeperHub provenance record.                                                         |
+| **Post-deploy** | User clicks _Deposit_ on the live preview (pointed at the deployed Sepolia address). That interaction also routes through KeeperHub — not a one-shot deploy button.                 |
 
 **How this maps to the judging criteria:**
 
-| Criterion | How we satisfy it |
-| :--- | :--- |
-| **Does it work?** | The demo shows a full Ship flow: simulate → execute → audit trail. Then a post-deploy interaction also through KeeperHub. |
-| **Would someone actually use it?** | Every Web3 developer needs to go from local to testnet. Today it's manual. Crucible makes it one click with full provenance. |
-| **Depth of KeeperHub integration** | KeeperHub is the *only* public-chain path. Not a wrapper, not a checkbox — an architectural commitment. |
-| **Mergeable quality** | Clean MCP client integration. `POST /api/ship` is a thin endpoint that calls KeeperHub MCP tools. The agent doesn't know about KeeperHub — it just calls `ship` as a tool. |
+| Criterion                          | How we satisfy it                                                                                                                                                          |
+| :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Does it work?**                  | The demo shows a full Ship flow: simulate → execute → audit trail. Then a post-deploy interaction also through KeeperHub.                                                  |
+| **Would someone actually use it?** | Every Web3 developer needs to go from local to testnet. Today it's manual. Crucible makes it one click with full provenance.                                               |
+| **Depth of KeeperHub integration** | KeeperHub is the _only_ public-chain path. Not a wrapper, not a checkbox — an architectural commitment.                                                                    |
+| **Mergeable quality**              | Clean MCP client integration. `POST /api/ship` is a thin endpoint that calls KeeperHub MCP tools. The agent doesn't know about KeeperHub — it just calls `ship` as a tool. |
 
 **Submission requirements checklist:**
 
@@ -182,11 +182,11 @@ The demo uses two separate laptops, each running its own Crucible backend + AXL 
 
 **Judge's likely questions & our answers:**
 
-> *"Why KeeperHub instead of just `eth_sendRawTransaction`?"*
+> _"Why KeeperHub instead of just `eth_sendRawTransaction`?"_
 
 Because raw RPC calls give you none of: retry logic when gas spikes, gas optimization, private routing to avoid MEV extraction, or audit trails for provenance. KeeperHub is a production-grade execution layer. Crucible is a tool for building real dApps — the execution layer should match.
 
-> *"Does the user need a KeeperHub account?"*
+> _"Does the user need a KeeperHub account?"_
 
 The free tier is sufficient for the demo (Sepolia testnet). For production use, the user brings their own API key. The `.env.example` file documents this.
 
@@ -211,25 +211,25 @@ The free tier is sufficient for the demo (Sepolia testnet). For production use, 
 
 The 3-sponsor cap forces a choice. Here's the tradeoff analysis:
 
-| Keep 0G + Gensyn + KeeperHub | Drop one for ENS |
-| :--- | :--- |
-| Three structural integrations. Remove any → product breaks. | ENS would be a cosmetic layer: give Crucible agents `.eth` names, store metadata in text records. ~4 hours of work. |
-| The demo narrative (build → break → heal → ship) hits all three naturally. | ENS would need its own demo segment — diluting the 4-minute arc. |
-| Each sponsor gets a deep, defensible integration. | ENS would be "we added names to our agents" — hard to make load-bearing. |
+| Keep 0G + Gensyn + KeeperHub                                               | Drop one for ENS                                                                                                    |
+| :------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------ |
+| Three structural integrations. Remove any → product breaks.                | ENS would be a cosmetic layer: give Crucible agents `.eth` names, store metadata in text records. ~4 hours of work. |
+| The demo narrative (build → break → heal → ship) hits all three naturally. | ENS would need its own demo segment — diluting the 4-minute arc.                                                    |
+| Each sponsor gets a deep, defensible integration.                          | ENS would be "we added names to our agents" — hard to make load-bearing.                                            |
 
-**Verdict:** 0G + Gensyn + KeeperHub is the correct trio. ENS is a good idea for a project whose primary identity layer *is* ENS. Crucible's identity is "the agent that builds dApps" — not "the agent with a name."
+**Verdict:** 0G + Gensyn + KeeperHub is the correct trio. ENS is a good idea for a project whose primary identity layer _is_ ENS. Crucible's identity is "the agent that builds dApps" — not "the agent with a name."
 
 ---
 
 ## Prize Probability Matrix
 
-| Track | Probability of Placing | Notes |
-| :--- | :--- | :--- |
-| 0G Track 1 (Framework) | 70% (top-3) | Primary track. Framework extension + reference agent is exactly the ask. |
-| Gensyn AXL | 60% (top-3) | Two-laptop demo is the differentiator. Most teams will demo in-process. |
-| KeeperHub Main | 65% (top-3) | Deep integration (full workflow + audit trail UI). KeeperHub is the only path to public chains. |
-| KeeperHub Feedback | 85% | Free roll. Specific, actionable feedback from a non-LangChain integration is exactly what they want. |
-| 0G Track 2 (Agents/Swarms) | 30% (top-5) | Secondary. Same codebase, different framing. Risk of looking like a repackaged T1 submission. |
+| Track                      | Probability of Placing | Notes                                                                                                |
+| :------------------------- | :--------------------- | :--------------------------------------------------------------------------------------------------- |
+| 0G Track 1 (Framework)     | 70% (top-3)            | Primary track. Framework extension + reference agent is exactly the ask.                             |
+| Gensyn AXL                 | 60% (top-3)            | Two-laptop demo is the differentiator. Most teams will demo in-process.                              |
+| KeeperHub Main             | 65% (top-3)            | Deep integration (full workflow + audit trail UI). KeeperHub is the only path to public chains.      |
+| KeeperHub Feedback         | 85%                    | Free roll. Specific, actionable feedback from a non-LangChain integration is exactly what they want. |
+| 0G Track 2 (Agents/Swarms) | 30% (top-5)            | Secondary. Same codebase, different framing. Risk of looking like a repackaged T1 submission.        |
 
 ---
 
@@ -258,7 +258,7 @@ The 3-sponsor cap forces a choice. Here's the tradeoff analysis:
 
 ### KeeperHub Main
 
-- Write-up must show **exactly where KeeperHub sits** — the *Ship* path.
+- Write-up must show **exactly where KeeperHub sits** — the _Ship_ path.
 - Screenshots of the Inspector's **audit trail panel** with `auditTrailId` visible.
 - Note that KeeperHub is the **only path** to public chains — no `eth_sendRawTransaction` anywhere.
 

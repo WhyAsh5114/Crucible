@@ -7,12 +7,7 @@
 
 import { z } from 'zod';
 import { TxTraceSchema } from '../deployer.ts';
-import {
-  AddressSchema,
-  BigIntStringSchema,
-  HashSchema,
-  HexSchema,
-} from '../primitives.ts';
+import { AddressSchema, BigIntStringSchema, HashSchema, HexSchema } from '../primitives.ts';
 
 const TxRequestSchema = z.object({
   from: AddressSchema.optional(),

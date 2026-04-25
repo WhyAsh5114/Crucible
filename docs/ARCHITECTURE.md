@@ -74,11 +74,11 @@ graph TD
 
 Portless is used for readable local development URLs and to avoid hardcoded ports in the browser-facing surfaces.
 
-| Surface | Example URL | Notes |
-| :--- | :--- | :--- |
-| Main workspace app | `https://crucible.localhost` | Frontend + API + WebSocket entrypoint |
-| Workspace preview | `https://preview.{workspaceId}.crucible.localhost` | Per-workspace frontend dev server |
-| Browser WebSocket channels | `wss://crucible.localhost/ws/*` | Agent stream, RPC proxy, terminal stream |
+| Surface                    | Example URL                                        | Notes                                    |
+| :------------------------- | :------------------------------------------------- | :--------------------------------------- |
+| Main workspace app         | `https://crucible.localhost`                       | Frontend + API + WebSocket entrypoint    |
+| Workspace preview          | `https://preview.{workspaceId}.crucible.localhost` | Per-workspace frontend dev server        |
+| Browser WebSocket channels | `wss://crucible.localhost/ws/*`                    | Agent stream, RPC proxy, terminal stream |
 
 Internal MCP services still run on loopback ports. Portless is for the human-facing and browser-facing surfaces, not for every internal service.
 
@@ -146,14 +146,14 @@ For the demo, that backend can run directly on a laptop or on a single stateful 
 
 ### Where the Data Actually Lives
 
-| Data | Where it lives | Why |
-| :--- | :--- | :--- |
-| Editor files, generated code, artifacts | Backend disk/volume under `/workspace/{workspaceId}/` | Fast local reads/writes for compile, preview, and deploy |
-| Hardhat chain state, snapshots, nonces | In the per-workspace Hardhat process + `.crucible/state.json` | Must be low-latency and isolated |
-| Terminal session state | Backend PTY process memory + `.crucible/logs/` | Shared live shell between user and agent |
-| Agent memory patterns, debugging history, provenance | 0G Storage KV + Log | Persistent cross-session, cross-node memory |
-| Execution audit trails for public-chain txs | KeeperHub | External execution/provenance system |
-| UI state (pane layout, selections, current file) | Browser memory / local storage | Pure presentation state |
+| Data                                                 | Where it lives                                                | Why                                                      |
+| :--------------------------------------------------- | :------------------------------------------------------------ | :------------------------------------------------------- |
+| Editor files, generated code, artifacts              | Backend disk/volume under `/workspace/{workspaceId}/`         | Fast local reads/writes for compile, preview, and deploy |
+| Hardhat chain state, snapshots, nonces               | In the per-workspace Hardhat process + `.crucible/state.json` | Must be low-latency and isolated                         |
+| Terminal session state                               | Backend PTY process memory + `.crucible/logs/`                | Shared live shell between user and agent                 |
+| Agent memory patterns, debugging history, provenance | 0G Storage KV + Log                                           | Persistent cross-session, cross-node memory              |
+| Execution audit trails for public-chain txs          | KeeperHub                                                     | External execution/provenance system                     |
+| UI state (pane layout, selections, current file)     | Browser memory / local storage                                | Pure presentation state                                  |
 
 ### What 0G Storage Is Not Used For
 
@@ -176,7 +176,7 @@ That split is intentional. One system is for the live development loop; the othe
 - demo server/laptop: `/var/lib/crucible/workspaces/{workspaceId}/`
 - hosted deployment: a mounted persistent volume path, for example `/mnt/crucible/workspaces/{workspaceId}/`
 
-So the answer to *"where do we store it?"* is: **on our backend machine's persistent disk**.
+So the answer to _"where do we store it?"_ is: **on our backend machine's persistent disk**.
 
 ---
 
@@ -184,9 +184,9 @@ So the answer to *"where do we store it?"* is: **on our backend machine's persis
 
 Inference is handled by a provider router in the control plane.
 
-| Mode | Provider | When used |
-| :--- | :--- | :--- |
-| **Primary** | 0G Compute | Default for development, demo, and judged flows |
+| Mode         | Provider                                     | When used                                                                         |
+| :----------- | :------------------------------------------- | :-------------------------------------------------------------------------------- |
+| **Primary**  | 0G Compute                                   | Default for development, demo, and judged flows                                   |
 | **Fallback** | OpenAI-compatible endpoint (e.g. OpenRouter) | Only when 0G is unavailable, rate-limited, out of balance, or manually overridden |
 
 Suggested config surface:
@@ -222,13 +222,13 @@ Every workspace has a real filesystem root managed by the backend:
     logs/
 ```
 
-| Path | Purpose |
-| :--- | :--- |
-| `contracts/` | Solidity source written by the agent or the user |
-| `frontend/` | Live frontend app served in the preview pane |
+| Path                   | Purpose                                                                         |
+| :--------------------- | :------------------------------------------------------------------------------ |
+| `contracts/`           | Solidity source written by the agent or the user                                |
+| `frontend/`            | Live frontend app served in the preview pane                                    |
 | `.crucible/state.json` | Deployments, selected chain target, snapshots, active account, preview metadata |
-| `.crucible/artifacts/` | Compiler output consumed by deployer tools |
-| `.crucible/logs/` | Terminal transcript, build logs, and agent-visible execution logs |
+| `.crucible/artifacts/` | Compiler output consumed by deployer tools                                      |
+| `.crucible/logs/`      | Terminal transcript, build logs, and agent-visible execution logs               |
 
 The editor mirrors the workspace files. The compiler, deployer, preview server, and terminal all operate against that same directory. There is no second hidden representation of the project in browser memory.
 
@@ -240,26 +240,26 @@ Each workspace also gets its own isolated Hardhat process and snapshot stack. Th
 
 The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. All custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments.
 
-| MCP Server | Port | Tools | Purpose |
-| :--- | :--- | :--- | :--- |
-| **chain-mcp** | 3100 | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork` | Manage the local chain lifecycle and state |
-| **compiler-mcp** | 3101 | `compile`, `get_abi`, `get_bytecode`, `list_contracts` | Compile Solidity/Vyper, extract artifacts |
-| **deployer-mcp** | 3102 | `deploy_local`, `simulate_local`, `trace`, `call` | Deploy contracts, simulate & trace transactions locally |
-| **wallet-mcp** | 3103 | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account` | Manage accounts and sign/send transactions |
-| **memory-mcp** | 3104 | `recall`, `remember`, `list_patterns`, `provenance` | Store and retrieve learned debugging patterns on 0G Storage |
-| **mesh-mcp** | 3105 | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL |
-| **terminal-mcp** | 3106 | `create_session`, `write`, `exec`, `resize` | Own PTY-backed shell sessions and make terminal output visible to both user and agent |
-| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status` | Production-grade tx execution — the only path to public chains |
+| MCP Server        | Port       | Tools                                                                               | Purpose                                                                               |
+| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------ |
+| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                            |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity/Vyper, extract artifacts                                             |
+| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy contracts, simulate & trace transactions locally                               |
+| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                            |
+| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                           |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL                     |
+| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Own PTY-backed shell sessions and make terminal output visible to both user and agent |
+| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains                        |
 
 ---
 
 ## WebSocket Channels
 
-| Channel | Purpose |
-| :--- | :--- |
-| `wss://crucible.localhost/ws/agent?streamId=<id>` | Agent event stream — `AgentEvent` frames from backend to frontend |
-| `wss://crucible.localhost/ws/rpc` | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
-| `wss://crucible.localhost/ws/terminal?sessionId=<id>` | PTY stream — browser terminal input/output for the active workspace shell |
+| Channel                                               | Purpose                                                                                                                                             |
+| :---------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wss://crucible.localhost/ws/agent?streamId=<id>`     | Agent event stream — `AgentEvent` frames from backend to frontend                                                                                   |
+| `wss://crucible.localhost/ws/rpc`                     | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
+| `wss://crucible.localhost/ws/terminal?sessionId=<id>` | PTY stream — browser terminal input/output for the active workspace shell                                                                           |
 
 ---
 
@@ -315,13 +315,13 @@ We do **not** need COOP/COEP for this wallet bridge. Those headers are only nece
 
 ## HTTP REST API
 
-| Endpoint | Method | Request | Response |
-| :--- | :--- | :--- | :--- |
-| `/api/prompt` | POST | `{ prompt, workspaceId }` | `{ streamId }` — then connect WS with this id |
-| `/api/workspace` | POST | `{ name }` | `{ id }` |
-| `/api/workspace/:id` | GET | — | `WorkspaceState` |
-| `/api/chain/fork` | POST | `{ rpcUrl, blockNumber? }` | `{ rpcUrl, chainId }` |
-| `/api/ship` | POST | `{ network, signerAddress }` | `{ deployments: KeeperHubExecution[] }` |
+| Endpoint             | Method | Request                      | Response                                      |
+| :------------------- | :----- | :--------------------------- | :-------------------------------------------- |
+| `/api/prompt`        | POST   | `{ prompt, workspaceId }`    | `{ streamId }` — then connect WS with this id |
+| `/api/workspace`     | POST   | `{ name }`                   | `{ id }`                                      |
+| `/api/workspace/:id` | GET    | —                            | `WorkspaceState`                              |
+| `/api/chain/fork`    | POST   | `{ rpcUrl, blockNumber? }`   | `{ rpcUrl, chainId }`                         |
+| `/api/ship`          | POST   | `{ network, signerAddress }` | `{ deployments: KeeperHubExecution[] }`       |
 
 ---
 
@@ -426,59 +426,94 @@ All inter-package communication is typed against these interfaces. Changing a ty
 Sent from backend → frontend over `wss://crucible.localhost/ws/agent`:
 
 ```typescript
-import type { Address, Hash, Abi, TransactionReceipt } from 'viem'
+import type { Address, Hash, Abi, TransactionReceipt } from 'viem';
 
 export type AgentEvent =
-  | { type: 'thinking';    text: string }
-  | { type: 'tool_call';   tool: string; args: unknown; callId: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_call'; tool: string; args: unknown; callId: string }
   | { type: 'tool_result'; callId: string; result: unknown; error?: string }
-  | { type: 'code_write';  path: string; content: string; lang: 'solidity' | 'typescript' | 'svelte' }
-  | { type: 'message';     content: string }
-  | { type: 'inference_receipt'; provider: '0g' | 'openai-compatible'; model: string; receipt?: string; fallback?: boolean }
+  | {
+      type: 'code_write';
+      path: string;
+      content: string;
+      lang: 'solidity' | 'typescript' | 'svelte';
+    }
+  | { type: 'message'; content: string }
+  | {
+      type: 'inference_receipt';
+      provider: '0g' | 'openai-compatible';
+      model: string;
+      receipt?: string;
+      fallback?: boolean;
+    }
   | { type: 'done' }
-  | { type: 'error';       message: string }
+  | { type: 'error'; message: string };
 ```
 
 ### HTTP API Types
 
 ```typescript
 // POST /api/prompt
-export interface PromptRequest  { prompt: string; workspaceId: string }
-export interface PromptResponse { streamId: string }
+export interface PromptRequest {
+  prompt: string;
+  workspaceId: string;
+}
+export interface PromptResponse {
+  streamId: string;
+}
 
 // POST /api/workspace
-export interface WorkspaceCreateRequest  { name: string }
-export interface WorkspaceCreateResponse { id: string }
+export interface WorkspaceCreateRequest {
+  name: string;
+}
+export interface WorkspaceCreateResponse {
+  id: string;
+}
 
 // GET /api/workspace/:id
 export interface WorkspaceState {
-  id: string
-  name: string
-  chainState: ChainState | null
-  deployments: DeploymentRecord[]
-  files: WorkspaceFile[]
-  previewUrl: string | null
-  terminalSessionId: string | null
+  id: string;
+  name: string;
+  chainState: ChainState | null;
+  deployments: DeploymentRecord[];
+  files: WorkspaceFile[];
+  previewUrl: string | null;
+  terminalSessionId: string | null;
 }
 
-export interface WorkspaceFile { path: string; content: string; lang: string }
+export interface WorkspaceFile {
+  path: string;
+  content: string;
+  lang: string;
+}
 
 // POST /api/chain/fork
-export interface ForkRequest  { rpcUrl: string; blockNumber?: number }
-export interface ForkResponse { rpcUrl: string; chainId: number }
+export interface ForkRequest {
+  rpcUrl: string;
+  blockNumber?: number;
+}
+export interface ForkResponse {
+  rpcUrl: string;
+  chainId: number;
+}
 
 // POST /api/ship
-export interface ShipRequest  { network: 'sepolia' | 'base-sepolia'; signerAddress: Address }
-export interface ShipResponse { deployments: KeeperHubExecution[] }
+export interface ShipRequest {
+  network: 'sepolia' | 'base-sepolia';
+  signerAddress: Address;
+}
+export interface ShipResponse {
+  deployments: KeeperHubExecution[];
+}
 ```
 
 ### Terminal
 
 ```typescript
 export interface TerminalSession {
-  sessionId: string
-  workspaceId: string
-  cwd: string
+  sessionId: string;
+  workspaceId: string;
+  cwd: string;
 }
 ```
 
@@ -486,12 +521,12 @@ export interface TerminalSession {
 
 ```typescript
 export interface ChainState {
-  blockNumber: number
-  gasPrice: bigint
-  accounts: Address[]
-  isForked: boolean
-  forkBlock?: number
-  activeSnapshotIds: string[]
+  blockNumber: number;
+  gasPrice: bigint;
+  accounts: Address[];
+  isForked: boolean;
+  forkBlock?: number;
+  activeSnapshotIds: string[];
 }
 ```
 
@@ -499,86 +534,109 @@ export interface ChainState {
 
 ```typescript
 export interface CompiledContract {
-  name: string
-  abi: Abi
-  bytecode: `0x${string}`
-  deployedBytecode: `0x${string}`
-  storageLayout?: unknown
-  errors?: CompilerMessage[]
-  warnings?: CompilerMessage[]
+  name: string;
+  abi: Abi;
+  bytecode: `0x${string}`;
+  deployedBytecode: `0x${string}`;
+  storageLayout?: unknown;
+  errors?: CompilerMessage[];
+  warnings?: CompilerMessage[];
 }
-export interface CompilerMessage { severity: 'error' | 'warning'; message: string; location?: string }
+export interface CompilerMessage {
+  severity: 'error' | 'warning';
+  message: string;
+  location?: string;
+}
 ```
 
 ### Deployer
 
 ```typescript
 export interface DeploymentRecord {
-  contractName: string
-  address: Address
-  txHash: Hash
-  gasUsed: bigint
-  constructorArgs: unknown[]
-  network: 'local' | 'sepolia' | 'base-sepolia' | 'mainnet'
-  timestamp: number
-  keeperHubAuditId?: string
+  contractName: string;
+  address: Address;
+  txHash: Hash;
+  gasUsed: bigint;
+  constructorArgs: unknown[];
+  network: 'local' | 'sepolia' | 'base-sepolia' | 'mainnet';
+  timestamp: number;
+  keeperHubAuditId?: string;
 }
 
 export interface TxTrace {
-  txHash: Hash
-  decodedCalls: DecodedCall[]
-  storageReads: StorageAccess[]
-  storageWrites: StorageAccess[]
-  events: DecodedEvent[]
-  revertReason?: string
-  gasUsed: bigint
+  txHash: Hash;
+  decodedCalls: DecodedCall[];
+  storageReads: StorageAccess[];
+  storageWrites: StorageAccess[];
+  events: DecodedEvent[];
+  revertReason?: string;
+  gasUsed: bigint;
 }
-export interface DecodedCall    { depth: number; to: Address; fn: string; args: unknown[]; result: unknown; reverted: boolean }
-export interface StorageAccess  { contract: Address; slot: string; value: string }
-export interface DecodedEvent   { contract: Address; name: string; args: Record<string, unknown> }
+export interface DecodedCall {
+  depth: number;
+  to: Address;
+  fn: string;
+  args: unknown[];
+  result: unknown;
+  reverted: boolean;
+}
+export interface StorageAccess {
+  contract: Address;
+  slot: string;
+  value: string;
+}
+export interface DecodedEvent {
+  contract: Address;
+  name: string;
+  args: Record<string, unknown>;
+}
 ```
 
 ### Memory (0G Storage)
 
 ```typescript
 export interface MemoryPattern {
-  id: string
-  revertSignature: string
-  patch: string                     // unified diff
-  traceRef: string                  // 0G Storage Log entry ID
-  verificationReceipt: string
+  id: string;
+  revertSignature: string;
+  patch: string; // unified diff
+  traceRef: string; // 0G Storage Log entry ID
+  verificationReceipt: string;
   provenance: {
-    authorNode: string
-    originalSession: string
-    derivedFrom?: string[]
-  }
-  scope: 'local' | 'mesh'
-  createdAt: number
+    authorNode: string;
+    originalSession: string;
+    derivedFrom?: string[];
+  };
+  scope: 'local' | 'mesh';
+  createdAt: number;
 }
 
 export interface MemoryRecallHit {
-  pattern: MemoryPattern
-  score: number                     // similarity 0–1
+  pattern: MemoryPattern;
+  score: number; // similarity 0–1
 }
 ```
 
 ### Mesh (AXL)
 
 ```typescript
-export interface MeshPeer { nodeId: string; lastSeen: number; reputation: number }
+export interface MeshPeer {
+  nodeId: string;
+  lastSeen: number;
+  reputation: number;
+}
 
 export interface MeshHelpRequest {
-  reqId: string
-  revertSignature: string
-  trace: TxTrace
-  ctx: { contractSource: string; solcVersion: string }
-  ttlMs: number
+  reqId: string;
+  revertSignature: string;
+  trace: TxTrace;
+  ctx: { contractSource: string; solcVersion: string };
+  ttlMs: number;
 }
 
 export interface MeshHelpResponse {
-  peerId: string
-  patch: string
-  verificationReceipt: string
+  peerId: string;
+  patch: string;
+  verificationReceipt: string;
 }
 ```
 
@@ -586,11 +644,11 @@ export interface MeshHelpResponse {
 
 ```typescript
 export interface KeeperHubExecution {
-  txHash: Hash
-  receipt: TransactionReceipt
-  auditTrailId: string
-  retries: number
-  status: 'pending' | 'mined' | 'confirmed' | 'failed'
+  txHash: Hash;
+  receipt: TransactionReceipt;
+  auditTrailId: string;
+  retries: number;
+  status: 'pending' | 'mined' | 'confirmed' | 'failed';
 }
 ```
 
@@ -716,7 +774,7 @@ This is the exact mapping from the planned 4-minute demo to the runtime undernea
 
 - Browser opens Crucible
 - VS Code-like workspace appears
-- User types: *"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."*
+- User types: _"Build me a token vault with deposit, withdraw, and a 24-hour withdrawal cooldown."_
 
 **What actually happens underneath:**
 

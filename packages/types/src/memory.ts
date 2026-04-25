@@ -7,12 +7,7 @@
  */
 
 import { z } from 'zod';
-import {
-  HashSchema,
-  NodeIdSchema,
-  PatternIdSchema,
-  TimestampMsSchema,
-} from './primitives.ts';
+import { HashSchema, NodeIdSchema, PatternIdSchema, TimestampMsSchema } from './primitives.ts';
 
 export const MemoryScopeSchema = z.enum(['local', 'mesh']);
 export type MemoryScope = z.infer<typeof MemoryScopeSchema>;

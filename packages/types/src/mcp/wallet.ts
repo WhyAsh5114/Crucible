@@ -4,12 +4,7 @@
 
 import { z } from 'zod';
 import { WalletAccountSchema } from '../wallet.ts';
-import {
-  AddressSchema,
-  BigIntStringSchema,
-  HashSchema,
-  HexSchema,
-} from '../primitives.ts';
+import { AddressSchema, BigIntStringSchema, HashSchema, HexSchema } from '../primitives.ts';
 
 export const ListAccountsInputSchema = z.object({});
 export const ListAccountsOutputSchema = z.object({

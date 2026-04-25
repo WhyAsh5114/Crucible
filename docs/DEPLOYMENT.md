@@ -28,6 +28,7 @@ There are really two deployment modes:
 Run everything inside one stateful backend process that spawns per-workspace child processes.
 
 This is fine for:
+
 - local development
 - demo recordings
 - trusted testers
@@ -50,28 +51,28 @@ This lets you keep the UX identical while moving the dangerous code execution bo
 
 ## Component Breakdown
 
-| Component | Runs where | Responsibility |
-| :--- | :--- | :--- |
-| **Gateway** | Container | TLS termination, HTTP/WebSocket proxying, routing to main app and workspace previews |
-| **Control plane** | Container | Frontend shell, API, auth, workspace metadata, agent orchestration, MCP coordination, 0G + KeeperHub clients |
-| **AXL node** | Sidecar container | One node per Crucible deployment for peer communication |
-| **Workspace runner** | One container per active workspace | Hardhat node, preview server, PTY shell, file storage, compile/deploy loop |
-| **Persistent volume** | Host disk / mounted volume | Workspace files, artifacts, logs, metadata |
-| **Cloudflare Tunnel** | Optional container on laptop | Public ingress from the internet to the home-hosted stack |
+| Component             | Runs where                         | Responsibility                                                                                               |
+| :-------------------- | :--------------------------------- | :----------------------------------------------------------------------------------------------------------- |
+| **Gateway**           | Container                          | TLS termination, HTTP/WebSocket proxying, routing to main app and workspace previews                         |
+| **Control plane**     | Container                          | Frontend shell, API, auth, workspace metadata, agent orchestration, MCP coordination, 0G + KeeperHub clients |
+| **AXL node**          | Sidecar container                  | One node per Crucible deployment for peer communication                                                      |
+| **Workspace runner**  | One container per active workspace | Hardhat node, preview server, PTY shell, file storage, compile/deploy loop                                   |
+| **Persistent volume** | Host disk / mounted volume         | Workspace files, artifacts, logs, metadata                                                                   |
+| **Cloudflare Tunnel** | Optional container on laptop       | Public ingress from the internet to the home-hosted stack                                                    |
 
 ---
 
 ## Recommended Data Placement
 
-| Data | Storage location | Notes |
-| :--- | :--- | :--- |
-| Workspace source code | Persistent host volume | Mounted into the runner container |
-| Compiler artifacts | Persistent host volume | Stored under workspace `.crucible/artifacts/` |
-| Deployment metadata | Persistent host volume | Stored under workspace `.crucible/state.json` |
-| Terminal logs | Persistent host volume | Stored under workspace `.crucible/logs/` |
-| Session metadata | SQLite on host volume | Good enough for a single-host MVP |
-| Agent memory / verified fixes | 0G Storage | Cross-session, cross-node memory |
-| Public-chain execution trail | KeeperHub | External provenance system |
+| Data                          | Storage location       | Notes                                         |
+| :---------------------------- | :--------------------- | :-------------------------------------------- |
+| Workspace source code         | Persistent host volume | Mounted into the runner container             |
+| Compiler artifacts            | Persistent host volume | Stored under workspace `.crucible/artifacts/` |
+| Deployment metadata           | Persistent host volume | Stored under workspace `.crucible/state.json` |
+| Terminal logs                 | Persistent host volume | Stored under workspace `.crucible/logs/`      |
+| Session metadata              | SQLite on host volume  | Good enough for a single-host MVP             |
+| Agent memory / verified fixes | 0G Storage             | Cross-session, cross-node memory              |
+| Public-chain execution trail  | KeeperHub              | External provenance system                    |
 
 For the MVP, **SQLite + filesystem** is the right choice. Do not add Postgres unless you genuinely outgrow it.
 
@@ -149,6 +150,7 @@ This is how the hosted version works technically.
 ### 1. User opens the site
 
 Flow:
+
 - Browser hits `crucible.yourdomain.com`
 - Gateway forwards to control plane
 - Control plane serves the frontend shell
@@ -157,6 +159,7 @@ Flow:
 ### 2. User creates or opens a workspace
 
 Flow:
+
 - Control plane creates a workspace record in SQLite
 - Control plane creates a workspace directory on the persistent volume
 - Control plane starts a new workspace runner container if one is not already running
@@ -167,6 +170,7 @@ Flow:
 ### 3. User prompts the agent
 
 Flow:
+
 - Browser posts prompt to control plane
 - Control plane sends prompt + workspace context into the agent loop
 - Agent calls the inference router: 0G first, OpenAI-compatible fallback only when degraded-mode conditions are met
@@ -176,6 +180,7 @@ Flow:
 ### 4. User sees code and preview update
 
 Flow:
+
 - Agent writes files into the mounted workspace volume
 - Runner compiles and deploys locally
 - Preview server reads those same files
@@ -185,6 +190,7 @@ Flow:
 ### 5. User hits a revert
 
 Flow:
+
 - Runner Hardhat process returns a revert
 - Agent asks runner for the trace
 - Agent queries 0G Storage for similar patterns
@@ -194,6 +200,7 @@ Flow:
 ### 6. User deploys live
 
 Flow:
+
 - User clicks Ship
 - Agent reads deployment state from the workspace
 - Control plane calls KeeperHub for simulation + execution
@@ -216,18 +223,22 @@ Do not split this into ten microservices. For the hackathon, that would be self-
 ### Containers
 
 #### `crucible-gateway`
+
 Recommended: **Caddy** or **Traefik**
 
 Responsibilities:
+
 - HTTPS termination
 - Route `crucible.yourdomain.com` → control plane
 - Route `preview-<workspace-id>.crucible.yourdomain.com` → correct workspace runner
 - Proxy websocket upgrades
 
 #### `crucible-control-plane`
+
 Recommended: Bun + Hono app
 
 Responsibilities:
+
 - Serves frontend shell
 - Auth / session management
 - SQLite metadata
@@ -237,16 +248,20 @@ Responsibilities:
 - Starts/stops workspace runners
 
 #### `crucible-axl`
+
 Optional sidecar, but recommended
 
 Responsibilities:
+
 - Runs one AXL node binary for the deployment
 - Keeps mesh lifecycle separate from the app process
 
 #### `crucible-runner`
+
 One container per active workspace
 
 Responsibilities:
+
 - Workspace filesystem mount
 - Hardhat node
 - Preview dev server
@@ -278,6 +293,7 @@ The easiest safe-ish approach is:
 - **Cloudflare Tunnel** to expose the site publicly
 
 This avoids:
+
 - opening ports directly on your router
 - managing residential IP changes
 - dealing with raw TLS issuance on a home IP
@@ -340,6 +356,7 @@ If you want the simplest deployable architecture that still respects reality, do
 4. If judges or testers need a more stable host, **move the same stack to a single EC2 instance**.
 
 That gives you:
+
 - one architecture
 - one set of images
 - one deployment model

@@ -17,13 +17,7 @@ import {
 } from './primitives.ts';
 import { ChainStateSchema } from './chain.ts';
 
-export const RuntimeStatusSchema = z.enum([
-  'starting',
-  'ready',
-  'degraded',
-  'crashed',
-  'stopped',
-]);
+export const RuntimeStatusSchema = z.enum(['starting', 'ready', 'degraded', 'crashed', 'stopped']);
 export type RuntimeStatus = z.infer<typeof RuntimeStatusSchema>;
 
 /** What the control plane needs to know to point traffic at a runtime. */

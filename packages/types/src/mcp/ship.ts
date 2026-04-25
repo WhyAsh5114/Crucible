@@ -6,11 +6,7 @@
  */
 
 import { z } from 'zod';
-import {
-  KeeperHubExecutionSchema,
-  KeeperHubStatusSchema,
-  ShipTxSchema,
-} from '../ship.ts';
+import { KeeperHubExecutionSchema, KeeperHubStatusSchema, ShipTxSchema } from '../ship.ts';
 import {
   AuditTrailIdSchema,
   BigIntStringSchema,
@@ -62,14 +58,15 @@ export const ExecuteTxOutputSchema = KeeperHubExecutionSchema;
 export type ExecuteTxInput = z.infer<typeof ExecuteTxInputSchema>;
 export type ExecuteTxOutput = z.infer<typeof ExecuteTxOutputSchema>;
 
-export const GetExecutionStatusInputSchema = z.object({
-  /** Either a tx hash or an audit-trail ID may identify an execution. */
-  txHash: HashSchema.optional(),
-  auditTrailId: AuditTrailIdSchema.optional(),
-}).refine(
-  (v) => Boolean(v.txHash ?? v.auditTrailId),
-  { message: 'one of txHash or auditTrailId is required' },
-);
+export const GetExecutionStatusInputSchema = z
+  .object({
+    /** Either a tx hash or an audit-trail ID may identify an execution. */
+    txHash: HashSchema.optional(),
+    auditTrailId: AuditTrailIdSchema.optional(),
+  })
+  .refine((v) => Boolean(v.txHash ?? v.auditTrailId), {
+    message: 'one of txHash or auditTrailId is required',
+  });
 export const GetExecutionStatusOutputSchema = z.object({
   status: KeeperHubStatusSchema,
   retries: z.number().int().nonnegative(),

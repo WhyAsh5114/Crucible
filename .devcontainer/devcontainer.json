@@ -1,0 +1,19 @@
+{
+  "name": "Crucible Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/Crucible",
+  "runServices": ["workspace", "postgres"],
+  "shutdownAction": "stopCompose",
+  "remoteUser": "vscode",
+  "remoteEnv": {
+    "BUN_INSTALL": "/home/vscode/.bun",
+    "PATH": "/home/vscode/.bun/bin:${containerEnv:PATH}"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["oven.bun-vscode", "dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}

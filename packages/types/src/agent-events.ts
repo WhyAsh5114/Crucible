@@ -17,7 +17,6 @@ import {
   CallIdSchema,
   HashSchema,
   HelpRequestIdSchema,
-  PatternIdSchema,
   StreamIdSchema,
   TimestampMsSchema,
 } from './primitives.ts';
