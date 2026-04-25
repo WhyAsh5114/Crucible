@@ -1,0 +1,8 @@
+[install]
+linkWorkspacePackages = true
+exact = false
+
+[install.scopes]
+
+[test]
+preload = []

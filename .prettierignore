@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+.turbo
+*.tsbuildinfo
+bun.lockb
+data
+.crucible
