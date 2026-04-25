@@ -78,6 +78,8 @@ https://preview.{workspaceId}.crucible.localhost
 
 That means the preview behaves like a normal app during development: module loading, HMR, network requests, wallet injection, and testnet switching all work against a real origin.
 
+In production, the main app must **not** reach across the iframe boundary and mutate the preview DOM. The preview runs on its own origin, so Crucible bootstraps a small same-origin script into the preview HTML that installs an EIP-1193-compatible `window.ethereum` inside the preview origin itself. That bridge talks back to the parent shell with exact-origin `postMessage` checks, and the parent shell forwards approved requests to the backend RPC proxy. Private keys never enter the iframe.
+
 ### The Terminal Is a First-Class Part of the Product
 
 Crucible includes a real PTY-backed terminal, rendered in the browser with **wterm** and powered by a backend shell session.
@@ -111,7 +113,7 @@ This is not "an IDE with a chat sidebar." The chat **is** the primary interface.
 ### 2. Zero-Config Local Chain (Backend-Hosted)
 
 - **Each workspace gets its own server-side Hardhat child process** when it opens. Chain state, snapshots, deployed addresses, and wallet nonces are isolated per workspace. The full EVM, solc compiler, and transaction tracer run on the backend — no WASM, no browser performance issues.
-- **WebSocket RPC proxy** pipes the chain to the browser. The live preview and dev wallet are pre-wired. The agent deploys directly via MCP.
+- **Shell-owned WebSocket RPC proxy** pipes the chain to the browser. The preview gets a same-origin EIP-1193 bridge and reaches the shell through exact-origin messaging, while the agent deploys directly via MCP.
 - **Snapshots & resets:** The agent can snapshot chain state before risky operations and roll back if something breaks.
 - **Mainnet fork mode:** The agent can fork any chain at any block number for realistic testing against live protocol state (Uniswap pools, Aave markets, etc.).
 
@@ -136,7 +138,7 @@ When a transaction reverts, the agent doesn't just show an error. It **autonomou
 ### 5. Live dApp Preview
 
 - The preview pane renders a real frontend dev server rooted at `/workspace/{workspaceId}/frontend/`, not an ephemeral browser-only bundle.
-- The preview is automatically injected with the local chain's RPC (via WebSocket proxy) and the embedded wallet's signer.
+- The preview HTML is bootstrapped with a same-origin EIP-1193 bridge. That bridge exposes `window.ethereum` inside the preview origin, relays requests to the parent shell with exact-origin checks, and the shell forwards approved JSON-RPC calls to the backend RPC proxy.
 - Every interaction (mint, swap, transfer) is reflected in real-time in the **Transaction Inspector** pane — showing decoded function calls, gas usage, event logs, and state changes.
 - The agent watches the preview too — if a user action triggers a revert, the **Self-Healing Revert** loop kicks in automatically.
 
@@ -214,7 +216,7 @@ The agent writes real files into the workspace directory. CodeMirror updates as 
 
 ### 4. See the App Running
 
-The backend starts or refreshes the workspace preview server, and the preview pane loads the app from its own Portless URL. The injected wallet and local RPC are already wired in, so the user can click buttons immediately.
+The backend starts or refreshes the workspace preview server, and the preview pane loads the app from its own Portless URL. The preview bootstraps with its own EIP-1193 bridge, and local RPC access is routed through the parent shell, so the user can click buttons immediately without a browser extension.
 
 ### 5. Inspect What Happened
 
@@ -268,10 +270,10 @@ The workspace loads with a local chain already running, a PTY-backed terminal at
 
 ## Docs
 
-- **[ARCHITECTURE.md](./docs/ARCHITECTURE.md)** — MCP server specs, type contracts, WebSocket channels, monorepo structure
-- **[DEPLOYMENT.md](./docs/DEPLOYMENT.md)** — Live hosting architecture, Docker strategy, laptop hosting plan, AWS migration path
-- **[TRACKS.md](./docs/TRACKS.md)** — Sponsor alignment, prize strategy, submission requirements per track
-- **[PLAN.md](./docs/PLAN.md)** — 14-day build plan, team division, integration checkpoints, stub strategy
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — MCP server specs, type contracts, WebSocket channels, monorepo structure
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** — Live hosting architecture, Docker strategy, laptop hosting plan, AWS migration path
+- **[TRACKS.md](./TRACKS.md)** — Sponsor alignment, prize strategy, submission requirements per track
+- **[PLAN.md](./PLAN.md)** — 14-day build plan, team division, integration checkpoints, stub strategy
 
 ---
 

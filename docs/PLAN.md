@@ -56,13 +56,16 @@ Three developers. Each owns a vertical slice of the stack. All share `packages/t
 - [ ] `packages/mcp-wallet` — `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account` (pre-funded Hardhat accounts via viem `privateKeyToAccount`)
 - [ ] `packages/mcp-terminal` — `create_session`, `write`, `exec`, `resize` backed by `node-pty`
 - [ ] Preview dev server supervisor — boot a per-workspace frontend dev server rooted at `/workspace/{workspaceId}/frontend/` and expose it to the UI
-- [ ] WebSocket RPC proxy at `/ws/rpc` — pipes browser Ethereum JSON-RPC to local Hardhat node
+- [ ] Preview HTML bootstrap injector — prepend a same-origin `/__crucible/preview-bridge.js` script into the preview HTML before app code executes
+- [ ] Cross-origin wallet bridge — preview iframe uses exact-origin `postMessage` to the parent shell; the parent shell owns `/ws/rpc`
+- [ ] WebSocket RPC proxy at `/ws/rpc` — accepts shell-owned Ethereum JSON-RPC frames and forwards approved methods to local Hardhat
 - [ ] WebSocket terminal proxy at `/ws/terminal` — pipes browser terminal I/O to the PTY session
 - [ ] Portless integration — main app at `https://crucible.localhost`, previews at `https://preview.{workspaceId}.crucible.localhost`
+- [ ] Preview security pass — iframe sandbox policy, host-only control-plane cookies, `frame-src` / `frame-ancestors` / `connect-src` headers, WS origin checks, RPC method allowlist, and per-workspace rate limits
 - [ ] Dockerize the control plane — Bun app, mounted data volume, and gateway integration points
 - [ ] Extract the workspace runtime boundary — Hardhat + preview + PTY should be able to run as a workspace runner container, not only as host child processes
 
-**Deliverable:** All 7 custom backend MCP servers respond on predictable ports (`3100–3106` excluding external KeeperHub), accept Zod-validated tool schemas from `packages/types`, and return typed responses. `GET /api/workspace/:id` returns `WorkspaceState`, including `previewUrl` and `terminalSessionId`. The RPC proxy at `/ws/rpc` accepts standard EIP-1193 JSON-RPC frames, and the terminal proxy at `/ws/terminal` streams PTY data.
+**Deliverable:** All 7 custom backend MCP servers respond on predictable ports (`3100–3106` excluding external KeeperHub), accept Zod-validated tool schemas from `packages/types`, and return typed responses. `GET /api/workspace/:id` returns `WorkspaceState`, including `previewUrl` and `terminalSessionId`. The preview loads from its own origin with a same-origin EIP-1193 bootstrap, the shell validates cross-origin preview messages, the RPC proxy at `/ws/rpc` accepts standard EIP-1193 JSON-RPC frames from the shell only, and the terminal proxy at `/ws/terminal` streams PTY data.
 
 ### Dev B — Agent & Integrations
 
@@ -87,13 +90,13 @@ Three developers. Each owns a vertical slice of the stack. All share `packages/t
 - [ ] `packages/frontend` — SvelteKit 2 workspace shell: 4-pane layout (editor top-left, preview top-right, inspector bottom-left, terminal/mesh tabbed panel bottom-right), responsive splitter
 - [ ] CodeMirror 6 editor with `@codemirror/lang-solidity`, theme, basic keybindings
 - [ ] Agent chat rail: renders `AgentEvent` stream from the WS (use a mock WS emitter that replays a fixture JSON file during Dev B's Week 1)
-- [ ] Live preview `<iframe>` — `src` is the backend-managed preview URL, injected with a script that overrides `window.ethereum` to proxy JSON-RPC to `/ws/rpc`
+- [ ] Live preview `<iframe>` — `src` is the backend-managed preview URL, sandboxed, and paired with a parent-side bridge that validates preview-origin messages before forwarding EIP-1193 requests to `/ws/rpc`
 - [ ] Transaction Inspector skeleton: columns for timestamp, fn name, gas, status; expandable row for trace, events
 - [ ] Terminal pane with `@wterm/react`, connected to `/ws/terminal?sessionId=<id>`
 - [ ] `packages/mcp-mesh` — AXL node binary auto-installer (`axl-node` binary downloaded on first `start`), `list_peers` tool working against the public Crucible AXL mesh
 - [ ] Hosted domain support — frontend handles real public domains the same way it handles Portless hosts locally
 
-**Deliverable:** Frontend connects to `wss://crucible.localhost/ws/agent?streamId=<id>`, `wss://crucible.localhost/ws/rpc`, and `wss://crucible.localhost/ws/terminal?sessionId=<id>`. All WS message parsing is typed against `packages/types`. `mcp-mesh` responds on port `3105`.
+**Deliverable:** Frontend connects to `wss://crucible.localhost/ws/agent?streamId=<id>`, `wss://crucible.localhost/ws/rpc`, and `wss://crucible.localhost/ws/terminal?sessionId=<id>`. The shell owns the RPC connection, the preview talks through the validated bridge, all WS message parsing is typed against `packages/types`, and `mcp-mesh` responds on port `3105`.
 
 ---
 

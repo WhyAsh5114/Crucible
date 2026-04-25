@@ -180,7 +180,7 @@ Flow:
 - Runner compiles and deploys locally
 - Preview server reads those same files
 - Browser iframe loads the workspace preview subdomain
-- Wallet interactions in the preview route back through control plane / gateway to the runner's Hardhat RPC
+- The preview bootstraps a same-origin EIP-1193 bridge, posts wallet requests to the parent shell with exact origin checks, and the shell forwards approved RPC calls through control plane / gateway to the runner's Hardhat RPC
 
 ### 5. User hits a revert
 
@@ -321,6 +321,10 @@ That means the minimum acceptable protections are:
 - Idle cleanup and hard kill timeouts
 - No raw Docker socket mounted into the runner
 - Terminal access is authenticated and ideally scoped to the workspace owner
+- The preview runs on a **different origin** from the main app, never same-origin with the control plane UI
+- Control-plane auth cookies are **host-only** and not shared with preview subdomains
+- The preview gets its wallet bridge from a **preview-origin bootstrap script**, not from the parent mutating the iframe DOM
+- Parent/preview messaging uses exact origin checks, and `/ws/rpc` enforces origin validation, method allowlists, and per-workspace rate limits
 
 For the MVP, the control plane can manage runner containers through Docker on the same host. That is acceptable for a hackathon beta. Just be honest that it is not hardened multi-tenant infrastructure.
 

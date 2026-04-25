@@ -11,10 +11,10 @@ graph TD
     subgraph "Frontend (Browser - SvelteKit)"
         U[User Prompt] --> A[Crucible Agent - OpenClaw extension]
         A -->|writes code| E[Code Editor - CodeMirror]
-        A -->|renders| P[Live dApp Preview]
+    S[Workspace Shell] -->|renders| P[Live dApp Preview]
         P --> T[Transaction Inspector]
     A -->|logs + commands| TT[Terminal - wterm]
-        W[Embedded Dev Wallet] -->|auto-injects signer| P
+    W[Embedded Dev Wallet] -->|approval state| S
     end
 
     subgraph "0G Network"
@@ -59,7 +59,8 @@ graph TD
     FS --- M3
     FS --- V
     FS --- PTY
-    N -->|RPC via WebSocket proxy| P
+    P -->|EIP-1193 bridge| S
+    S -->|RPC via WebSocket proxy| N
     V -->|workspace preview URL| P
     PTY -->|terminal WebSocket| TT
     N --- M1
@@ -257,8 +258,58 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 | Channel | Purpose |
 | :--- | :--- |
 | `wss://crucible.localhost/ws/agent?streamId=<id>` | Agent event stream — `AgentEvent` frames from backend to frontend |
-| `wss://crucible.localhost/ws/rpc` | Ethereum JSON-RPC proxy (EIP-1193) — pipes browser wallet + preview to local Hardhat node |
+| `wss://crucible.localhost/ws/rpc` | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
 | `wss://crucible.localhost/ws/terminal?sessionId=<id>` | PTY stream — browser terminal input/output for the active workspace shell |
+
+---
+
+## Preview Isolation and Wallet Bridge
+
+The preview iframe runs **untrusted generated app code**. In production, we must treat it as a separate web application, not as DOM that the main app can reach into after navigation.
+
+### Why Direct Parent Injection Is Wrong
+
+- The main shell runs on `https://crucible...` while the preview runs on `https://preview...`
+- Per the browser same-origin policy, cross-origin windows only get a narrow set of shared APIs; the safe primitive we should build on is `window.postMessage()`, not parent-side DOM mutation
+- `document.domain` is deprecated and should not be used to weaken the origin boundary
+
+### Correct Implementation
+
+1. The gateway serves each preview from its own preview origin and iframe URL.
+2. The preview HTML response is transformed by the preview gateway or runner so that a same-origin bootstrap script, for example `/__crucible/preview-bridge.js`, loads **before** the app's own entry scripts.
+3. That bootstrap script installs an EIP-1193-compatible provider inside the preview origin. At minimum it implements `request`, `on`, and `removeListener`, and emits `connect`, `disconnect`, `chainChanged`, `accountsChanged`, and `message`.
+4. The preview bridge communicates with the parent shell using `window.postMessage()` after a strict origin handshake. A dedicated `MessageChannel` can be layered on top after the initial handshake, but the security property still comes from validating origins and sources.
+5. Every outbound message uses an exact `targetOrigin`, never `*`. The receiver validates both `event.origin` and `event.source` before doing anything.
+6. The parent shell forwards approved JSON-RPC frames over its authenticated `/ws/rpc` connection.
+7. The backend binds that channel to exactly one workspace runner and forwards only approved methods to the workspace's Hardhat process and wallet service.
+
+### Security Requirements For Production
+
+- **Dedicated preview origin:** the preview must not be same-origin with the main app. In hosted production, the safest form is a workspace- or session-scoped preview hostname so cached scripts and service workers do not persist across unrelated sessions.
+- **Host-only auth cookies:** control-plane session cookies should be `Secure`, `HttpOnly`, and host-only on the main app origin. Do not share wildcard-domain cookies with preview subdomains.
+- **Sandbox the iframe:** start with `sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin"` and do not grant top-navigation permissions unless a specific workflow requires them.
+- **Minimal permissions policy:** do not hand the preview camera, microphone, geolocation, or similar features by default. Keep the iframe `allow` attribute empty or narrowly scoped.
+- **Strict CSP boundaries:** the main shell should restrict `frame-src` to preview origins and `connect-src` to its own API and WebSocket endpoints. The preview should at least restrict `frame-ancestors` to the Crucible app origin.
+- **RPC method allowlist:** the preview bridge can call normal wallet and chain methods, but it must never get raw `hardhat_*`, `debug_*`, filesystem, or cross-workspace control methods.
+- **Approval stays outside the iframe:** `eth_requestAccounts`, account switching, and transaction approvals should resolve in the parent shell or backend wallet service, not in arbitrary preview code.
+- **Rate limits and frame caps:** browser WebSockets do not provide backpressure automatically, so the RPC bridge must cap message size, subscription count, and request rate per workspace.
+- **No secrets in the provider object:** per EIP-1193, consumers should be treated as adversarial. The provider should expose capability, not private key material.
+
+### Suggested Headers
+
+Main shell:
+
+```text
+Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-<nonce>'; connect-src 'self' wss://crucible.yourdomain.com; frame-src https://*.crucible.yourdomain.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'
+```
+
+Preview origin:
+
+```text
+Content-Security-Policy: default-src 'self'; connect-src 'self' https://crucible.yourdomain.com wss://crucible.yourdomain.com; object-src 'none'; base-uri 'none'; frame-ancestors https://crucible.yourdomain.com
+```
+
+We do **not** need COOP/COEP for this wallet bridge. Those headers are only necessary if we later require cross-origin isolation features such as `SharedArrayBuffer`, and enabling them too early will make the preview embedding story harder.
 
 ---
 
@@ -637,7 +688,7 @@ Every successful fix is written back to 0G Storage via `memory-mcp.remember()` w
 
 - `deployer-mcp` deploys to the local Hardhat node
 - `.crucible/state.json` records deployment metadata and active snapshot IDs
-- The preview pane loads the per-workspace dev server URL and uses the RPC WebSocket proxy for wallet interactions
+- The preview pane loads the per-workspace dev server URL, bootstraps a same-origin EIP-1193 bridge, and relays wallet requests through the parent shell's RPC WebSocket proxy
 - Inspector shows decoded txs, events, gas, and trace data
 
 ### 5. Failure Recovery
@@ -672,7 +723,7 @@ This is the exact mapping from the planned 4-minute demo to the runtime undernea
 - Browser loads the frontend shell from the Bun/Hono backend
 - Backend creates or restores a workspace directory on disk
 - Backend starts the workspace's Hardhat process, PTY session, and preview supervisor
-- Frontend connects to the agent, terminal, and RPC WebSocket endpoints
+- Frontend connects to the agent and terminal WebSocket endpoints and opens a shell-owned authenticated RPC WebSocket used on behalf of the preview bridge
 - Prompt is posted to `/api/prompt`
 - Agent calls the inference router to create a plan; the router uses 0G Compute by default and only falls back to an OpenAI-compatible provider in degraded mode
 
@@ -693,6 +744,7 @@ If the fallback path was used, the UI also shows that the current inference prov
 - `compiler-mcp` compiles the Solidity files from disk
 - Artifacts are written into `.crucible/artifacts/`
 - Preview supervisor starts the workspace frontend dev server
+- Preview gateway injects the preview bridge bootstrap into the HTML entry response
 - Frontend iframe loads the preview URL for that workspace
 
 ### Demo Step 3: Agent Deploys to the Local Chain
@@ -708,7 +760,7 @@ If the fallback path was used, the UI also shows that the current inference prov
 - `deployer-mcp` reads bytecode from artifacts and deploys to the workspace Hardhat process
 - `wallet-mcp` supplies the active dev account
 - Deployment metadata is appended to `.crucible/state.json`
-- Preview uses the RPC WebSocket proxy to talk to that specific workspace chain
+- Preview uses its EIP-1193 bridge to send approved JSON-RPC requests through the parent shell to that specific workspace chain
 
 ### Demo Step 4: User Clicks Withdraw and the Tx Reverts
 
@@ -720,8 +772,9 @@ If the fallback path was used, the UI also shows that the current inference prov
 
 **What actually happens underneath:**
 
-- Preview sends the tx through injected `window.ethereum`
-- RPC proxy forwards it to the workspace Hardhat process
+- Preview code calls `window.ethereum.request(...)` inside its own origin
+- The preview bridge posts that request to the parent shell with exact origin checks
+- The shell forwards the approved JSON-RPC frame to the workspace RPC proxy
 - Hardhat returns a revert
 - Frontend surfaces the failure in the Inspector
 - Agent receives the failure signal through its tool result stream
