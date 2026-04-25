@@ -16,14 +16,20 @@
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "lint": "turbo run lint",
+    "ci:check": "bun run lint && bun run check-types",
+    "ci:verify": "bun run ci:check && bun run build",
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bun": "^1.3.6",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0",
     "prettier": "^3.4.2",
     "turbo": "^2.5.4",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.59.0"
   }
 }

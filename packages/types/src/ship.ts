@@ -14,7 +14,6 @@ import {
   BigIntStringSchema,
   HashSchema,
   HexSchema,
-  PublicChainTargetSchema,
 } from './primitives.ts';
 
 export const KeeperHubStatusSchema = z.enum(['pending', 'mined', 'confirmed', 'failed']);
