@@ -128,8 +128,14 @@ export function createChainServer(): McpServer {
         const node = requireNode();
         const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
         // evm_revert consumes the target snapshot and invalidates all later ones.
-        const idx = node.snapshotIds.indexOf(snapshotId);
-        if (idx !== -1) node.snapshotIds.splice(idx);
+        if (success) {
+          const idx = node.snapshotIds.indexOf(snapshotId);
+          if (idx !== -1) {
+            node.snapshotIds.splice(idx);
+          } else {
+            node.snapshotIds = [];
+          }
+        }
         return toolResult({ success });
       } catch (err) {
         return errorResult(`revert failed: ${String(err)}`);

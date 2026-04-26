@@ -214,8 +214,14 @@ app.openapi(revertRoute, async (c) => {
     const { snapshotId } = c.req.valid('json');
     const node = requireNode();
     const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
-    const idx = node.snapshotIds.indexOf(snapshotId);
-    if (idx !== -1) node.snapshotIds.splice(idx);
+    if (success) {
+      const idx = node.snapshotIds.indexOf(snapshotId);
+      if (idx !== -1) {
+        node.snapshotIds.splice(idx);
+      } else {
+        node.snapshotIds = [];
+      }
+    }
     return c.json({ success }, 200);
   } catch (err) {
     return c.json({ error: String(err) }, 500);
