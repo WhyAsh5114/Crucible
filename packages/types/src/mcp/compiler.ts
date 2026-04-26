@@ -1,5 +1,5 @@
 /**
- * `compiler-mcp` — solc-js compilation against workspace files.
+ * `compiler-mcp` — Hardhat-based Solidity compilation against workspace files.
  */
 
 import { z } from 'zod';
@@ -9,7 +9,7 @@ import { HexSchema } from '../primitives.ts';
 export const CompileInputSchema = z.object({
   /** Workspace-relative path of the source file to compile. */
   sourcePath: z.string().min(1),
-  /** Optional solc settings override. Opaque pass-through to solc-js. */
+  /** Optional compiler settings override (Hardhat-subset: version, optimizer, evmVersion). */
   settings: z.record(z.string(), z.unknown()).optional(),
 });
 export const CompileOutputSchema = z.object({
