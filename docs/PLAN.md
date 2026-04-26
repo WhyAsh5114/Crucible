@@ -1,6 +1,6 @@
 # Plan — Decoupled Build Strategy, Proofs of Value & Decision Gates
 
-> The hackathon runs 14 days. This plan is intentionally not package-first. The earlier version coupled sponsor integrations, implementation packages, and demo beats into the same milestones, which made it too easy to finish a lot of code without proving the product thesis.
+> The hackathon runs **9 days** (April 24 – May 3, 2026, deadline **noon EDT**). This plan is intentionally not package-first. The earlier version coupled sponsor integrations, implementation packages, and demo beats into the same milestones, which made it too easy to finish a lot of code without proving the product thesis.
 
 This version separates four things that must not be conflated:
 
@@ -22,6 +22,20 @@ The rule for the whole build: no milestone is considered done because a package 
 5. **The runtime boundary is sacred.** Control plane and workspace runtime must talk through a narrow contract so the same product can run either as host child processes or isolated runner containers.
 6. **Every sponsor integration must degrade honestly.** 0G fallback must be visible, mesh must be optional, and shipping must be a separate path from the local dev loop.
 7. **UI surfaces are trust surfaces.** Terminal, preview, inspector, and event stream are not polish tasks. They are how the product earns credibility.
+
+---
+
+## Compliance Checklist
+
+Non-negotiable requirements from the ETHGlobal Open Agents rules. All must be satisfied before submission on May 3.
+
+- [ ] **AI tool attribution**: Document AI tool usage (GitHub Copilot, Cursor, etc.) in the README, specifying which files or parts were AI-assisted. Required for partner prize eligibility.
+- [ ] **`FEEDBACK.md` in repo root**: Required to qualify for KeeperHub Builder Feedback Bounty ($500). Must be specific and actionable — cover UX friction, reproducible bugs, documentation gaps, or feature requests encountered during integration.
+- [ ] **Contract deployment addresses on 0G Chain**: Both 0G tracks require actual deployment addresses (not local Hardhat). `mcp-deployer` must target 0G Chain in addition to the local chain.
+- [ ] **AXL cross-process**: Gensyn requires communication across separate AXL node processes — not just in-process calls. Must demonstrate two independent AXL processes (same-machine dual-workspace first, then two-laptop).
+- [ ] **Demo video 2–4 min**: ETHGlobal auto-rejects videos under 2 min or over 4 min. No AI voiceover. Minimum 720p. 0G specifically asks for under 3 min — cut a separate ≤3-min 0G-focused version from the main demo.
+- [ ] **Incremental commit history**: Large single commits may trigger disqualification. Keep commits small and purposeful throughout the remaining 7 days.
+- [ ] **Select up to 3 Partner Prizes on submission form**: 0G counts as 1 slot even across both tracks. Slots: 0G (1), Gensyn (2), KeeperHub (3).
 
 ---
 
@@ -146,7 +160,7 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 0 — Freeze Contracts and Stub Every Boundary
 
-**Days 0-1**
+**Days 0-1 (April 24-25) — ✅ Complete**
 
 **Goal:** Make every team member independently productive behind stable contracts.
 
@@ -162,7 +176,7 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 1 — Prove POV-1: Inspectable Local Loop
 
-**Days 1-4**
+**Days 2-4 (April 26-28)**
 
 **Goal:** Make one thin vertical slice work locally without any sponsor dependency beyond what is required for the agent to answer.
 
@@ -187,7 +201,7 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 2 — Prove POV-2: Self-Healing Without Mesh
 
-**Days 4-7**
+**Days 4-5 (April 28-29)**
 
 **Goal:** Validate the repair loop locally before adding networked collaboration.
 
@@ -205,7 +219,7 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 3 — Prove POV-3: Mesh Adds Value
 
-**Days 7-10**
+**Days 5-7 (April 29 – May 1) ⚠️ Compressed — highest risk phase**
 
 **Goal:** Add peer collaboration only after the local loop and local repair loop are credible.
 
@@ -223,7 +237,7 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 4 — Prove POV-4: Ship Path
 
-**Days 10-12**
+**Days 7-8 (May 1-2)**
 
 **Goal:** Keep public-chain execution isolated from the local development loop and make KeeperHub the only public-chain path.
 
@@ -240,9 +254,11 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 5 — Prove POV-5: Hosted Runtime and Demo Hardening
 
-**Days 12-14**
+**CUT for hackathon — Post-Hackathon Only**
 
-**Goal:** Preserve the same mental model when moving from trusted demo mode to isolated runtime mode, then harden the demo.
+> With 9 days total, Phase 5 is explicitly out of scope. The judged demo runs in single-host trusted mode. The Docker Compose stack and runner isolation are post-hackathon work. See the kill criteria in Phase 4 — if shipping is stable, the demo is locked and the remaining time goes to demo hardening and the submission video, not runner extraction.
+
+**Goal (post-hackathon):** Preserve the same mental model when moving from trusted demo mode to isolated runtime mode.
 
 **Required outputs:**
 
@@ -261,19 +277,18 @@ The plan is phased by proof, not by package completion.
 
 These are go/no-go gates, not status ceremonies.
 
-| Day    | Gate                 | What must work                                                     | Why it matters                     | Who verifies                   |
-| :----- | :------------------- | :----------------------------------------------------------------- | :--------------------------------- | :----------------------------- |
-| **0**  | Contracts frozen     | `packages/types` merged, fixtures compile everywhere               | Decouples team execution           | All                            |
-| **2**  | Stub loop visible    | UI renders fixture events, mock workspace opens, terminal attaches | Team can iterate in parallel       | Each owner self-tests          |
-| **4**  | POV-1 green          | Prompt -> files -> compile -> deploy -> preview click              | Proves the core product loop       | Dev B drives, Dev A + C verify |
-| **6**  | Local heal green     | Revert -> trace -> patch -> verify -> remember, no mesh            | Proves repair loop is not theater  | Dev B drives                   |
-| **8**  | Memory useful        | At least one repeated failure is solved faster via recall          | Proves 0G memory has product value | Dev B + A verify               |
-| **10** | Mesh additive        | Peer response improves a local miss and is verified before apply   | Proves AXL adds real value         | Dev C drives                   |
-| **11** | Ship green           | KeeperHub simulation + execution + audit visible for Sepolia       | Proves the public-chain story      | Dev B drives                   |
-| **12** | Full arc green       | Build -> break -> heal -> ship in one sitting                      | Confirms the demo narrative        | All                            |
-| **13** | Two-laptop rehearsal | Separate AXL peers on separate machines                            | Proves cross-node honesty          | Dev C leads                    |
-| **13** | Hosted beta green    | Dockerized stack works for one external tester                     | Proves public-test path            | All                            |
-| **14** | Record and submit    | Main demo + sponsor-specific cuts recorded                         | Locks the deliverable              | All                            |
+| Day / Date          | Gate                  | What must work                                                     | Why it matters                       | Who verifies                   |
+| :------------------ | :-------------------- | :----------------------------------------------------------------- | :----------------------------------- | :----------------------------- |
+| **0** (Apr 24) ✅   | Contracts frozen      | `packages/types` merged, fixtures compile everywhere               | Decouples team execution             | All                            |
+| **2** (Apr 26)      | Stub loop visible     | UI renders fixture events, mock workspace opens, terminal attaches | Team can iterate in parallel         | Each owner self-tests          |
+| **4** (Apr 28)      | POV-1 green           | Prompt → files → compile → deploy → preview click                  | Proves the core product loop         | Dev B drives, Dev A + C verify |
+| **5** (Apr 29)      | Local heal green      | Revert → trace → patch → verify → remember, no mesh                | Proves repair loop is not theater    | Dev B drives                   |
+| **6** (Apr 30)      | Memory + 0G inference | 0G Compute routing visible in UI; recall round-trip on 0G Storage  | Proves 0G integrations have value    | Dev B + A verify               |
+| **7** (May 1)       | Mesh additive         | AXL cross-process peer response verified before apply              | Proves AXL adds real value           | Dev C drives                   |
+| **8** (May 2)       | Ship green            | KeeperHub simulation + execution + audit visible for Sepolia       | Proves the public-chain story        | Dev B drives                   |
+| **8** (May 2)       | Full arc green        | Build → break → heal → ship in one sitting                         | Confirms the demo narrative          | All                            |
+| **8** (May 2)       | Two-laptop rehearsal  | Separate AXL processes on separate machines                        | Proves cross-node honesty for Gensyn | Dev C leads                    |
+| **9** (May 3, noon) | Record and submit     | Demo video (2–4 min) + 0G cut (≤3 min) + submission form           | Locks the deliverable                | All                            |
 
 ---
 

@@ -28,4 +28,8 @@ logs/
 
 # Workspace data (per ARCHITECTURE.md)
 data/
+
+# Compiled contract artifacts
 .crucible/
+artifacts/
+cache/

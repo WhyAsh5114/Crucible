@@ -6,3 +6,5 @@ build
 bun.lockb
 data
 .crucible
+artifacts
+cache
