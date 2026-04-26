@@ -1,17 +1,18 @@
 /**
- * solc-js wrapper — compiles a single Solidity source file and returns
- * typed artifact objects matching @crucible/types CompiledContractSchema.
+ * Hardhat-based Solidity compiler — compiles a single Solidity source file
+ * using Hardhat v3's build system and returns typed artifact objects matching
+ * @crucible/types CompiledContractSchema.
+ *
+ * Uses the same Hardhat dependency already present for chain management,
+ * avoiding the solc-js CJS interop hacks.
  */
 
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
-// solc is a CommonJS module; import via createRequire for ESM compat.
-import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
+import { createHardhatRuntimeEnvironment } from 'hardhat/hre';
+import { defineConfig } from 'hardhat/config';
+import { FileBuildResultType } from 'hardhat/types/solidity';
 import type { CompiledContract, CompilerMessage } from '@crucible/types';
-
-const _require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const solc = _require('solc') as any;
 
 export interface SolcSettings {
   optimizer?: { enabled?: boolean; runs?: number };
@@ -25,52 +26,68 @@ export interface CompileResult {
   warnings: CompilerMessage[];
 }
 
+interface RawArtifact {
+  contractName: string;
+  sourceName: string;
+  abi: unknown[];
+  bytecode: string;
+  deployedBytecode: string;
+}
+
 /**
  * Compile a Solidity file at `absolutePath`.
- * @throws if solc emits compilation errors.
+ * @throws if the compilation emits errors.
  */
-export function compileSolidity(absolutePath: string, settings: SolcSettings = {}): CompileResult {
-  const source = readFileSync(absolutePath, 'utf8');
-  const fileName = basename(absolutePath);
+export async function compileSolidity(
+  absolutePath: string,
+  settings: SolcSettings = {},
+): Promise<CompileResult> {
+  const sourcesDir = dirname(absolutePath);
 
-  const solcInput = {
-    language: 'Solidity',
-    sources: {
-      [fileName]: { content: source },
-    },
-    settings: {
-      optimizer: { enabled: false, runs: 200 },
-      evmVersion: 'cancun',
-      ...settings,
-      outputSelection: {
-        '*': {
-          '*': ['abi', 'evm.bytecode', 'evm.deployedBytecode', 'storageLayout'],
+  const hre = await createHardhatRuntimeEnvironment(
+    defineConfig({
+      paths: { sources: sourcesDir },
+      solidity: {
+        version: '0.8.28',
+        settings: {
+          optimizer: settings['optimizer'] ?? { enabled: false, runs: 200 },
+          evmVersion: settings['evmVersion'] ?? 'cancun',
         },
       },
-    },
-  };
+    }),
+  );
 
-  const rawOutput = solc.compile(JSON.stringify(solcInput)) as string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const output = JSON.parse(rawOutput) as any;
+  const buildResult = await hre.solidity.build([absolutePath]);
+
+  if (!hre.solidity.isSuccessfulBuildResult(buildResult)) {
+    throw new Error(`Compilation of ${basename(absolutePath)} failed: build process error`);
+  }
 
   const allErrors: CompilerMessage[] = [];
   const allWarnings: CompilerMessage[] = [];
+  const artifactPaths: string[] = [];
 
-  if (output.errors) {
-    for (const e of output.errors as Array<{
-      severity: string;
-      message: string;
-      formattedMessage?: string;
-      errorCode?: string;
-    }>) {
-      const msg: CompilerMessage = {
-        severity: e.severity === 'error' ? 'error' : 'warning',
-        message: e.formattedMessage ?? e.message,
-        ...(e.errorCode ? { errorCode: e.errorCode } : {}),
-      };
-      if (msg.severity === 'error') allErrors.push(msg);
-      else allWarnings.push(msg);
+  for (const [, result] of buildResult) {
+    if (result.type === FileBuildResultType.BUILD_FAILURE) {
+      for (const e of result.errors) {
+        allErrors.push({
+          severity: 'error',
+          message: e.formattedMessage ?? e.message,
+          ...(e.errorCode ? { errorCode: e.errorCode } : {}),
+        });
+      }
+    } else if (result.type === FileBuildResultType.BUILD_SUCCESS) {
+      for (const w of result.warnings) {
+        allWarnings.push({
+          severity: 'warning',
+          message: w.formattedMessage ?? w.message,
+          ...(w.errorCode ? { errorCode: w.errorCode } : {}),
+        });
+      }
+      artifactPaths.push(...result.contractArtifactsGenerated);
+    } else {
+      // CACHE_HIT — artifacts already written; paths still need to be read
+      artifactPaths.push(...result.contractArtifactsGenerated);
     }
   }
 
@@ -79,37 +96,17 @@ export function compileSolidity(absolutePath: string, settings: SolcSettings = {
     throw new Error(`solc compilation failed:\n${summary}`);
   }
 
-  const contracts: CompiledContract[] = [];
+  const contracts: CompiledContract[] = await Promise.all(
+    artifactPaths.map(async (artifactPath) => {
+      const raw = JSON.parse(await readFile(artifactPath, 'utf8')) as RawArtifact;
+      return {
+        name: `${basename(raw.sourceName)}:${raw.contractName}`,
+        abi: raw.abi as CompiledContract['abi'],
+        bytecode: raw.bytecode as CompiledContract['bytecode'],
+        deployedBytecode: raw.deployedBytecode as CompiledContract['deployedBytecode'],
+      };
+    }),
+  );
 
-  const fileContracts = output.contracts?.[fileName] as
-    | Record<
-        string,
-        {
-          abi: unknown[];
-          evm: {
-            bytecode: { object: string };
-            deployedBytecode: { object: string };
-          };
-          storageLayout?: unknown;
-        }
-      >
-    | undefined;
-
-  if (fileContracts) {
-    for (const [name, artifact] of Object.entries(fileContracts)) {
-      const bytecode = artifact.evm.bytecode.object;
-      const deployedBytecode = artifact.evm.deployedBytecode.object;
-
-      contracts.push({
-        name: `${fileName}:${name}`,
-        abi: artifact.abi as CompiledContract['abi'],
-        bytecode: `0x${bytecode}`,
-        deployedBytecode: `0x${deployedBytecode}`,
-        ...(artifact.storageLayout !== undefined ? { storageLayout: artifact.storageLayout } : {}),
-        ...(allWarnings.length > 0 ? { warnings: allWarnings } : {}),
-      });
-    }
-  }
-
-  return { contracts, errors: allErrors, warnings: allWarnings };
+  return { contracts, errors: [], warnings: allWarnings };
 }
