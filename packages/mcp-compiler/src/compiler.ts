@@ -7,8 +7,8 @@
  * avoiding the solc-js CJS interop hacks.
  */
 
-import { readFile } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { readFile, readdir } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 import { createHardhatRuntimeEnvironment } from 'hardhat/hre';
 import { defineConfig } from 'hardhat/config';
 import { FileBuildResultType } from 'hardhat/types/solidity';
@@ -86,7 +86,26 @@ export async function compileSolidity(
           ...(w.errorCode ? { errorCode: w.errorCode } : {}),
         });
       }
-      artifactPaths.push(...result.contractArtifactsGenerated);
+      // Hardhat v3 has a path-key mismatch bug: artifactsPerFile is keyed by
+      // root.fsPath (absolute) but looked up via userSourceName (relative from
+      // cwd), so contractArtifactsGenerated is empty on the first build.
+      // Fall back to scanning the artifacts directory directly.
+      if (result.contractArtifactsGenerated.length > 0) {
+        artifactPaths.push(...result.contractArtifactsGenerated);
+      } else {
+        const rel = relative(process.cwd(), absolutePath);
+        const artifactDir = join(hre.config.paths.artifacts, rel);
+        try {
+          const files = await readdir(artifactDir);
+          artifactPaths.push(
+            ...files
+              .filter((f) => f.endsWith('.json') && f !== 'artifacts.d.ts')
+              .map((f) => join(artifactDir, f)),
+          );
+        } catch {
+          // directory may not exist if the file had no contracts
+        }
+      }
     } else {
       // CACHE_HIT — artifacts already written; paths still need to be read
       artifactPaths.push(...result.contractArtifactsGenerated);
