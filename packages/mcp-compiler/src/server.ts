@@ -18,12 +18,7 @@ import {
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
 import { compileSolidity, type SolcSettings } from './compiler.ts';
-import {
-  storeContracts,
-  resolveContract,
-  listContractNames,
-  persistArtifacts,
-} from './artifact-store.ts';
+import { createArtifactStore } from './artifact-store.ts';
 
 /**
  * Resolve symlinks on both paths and verify `candidatePath` is contained
@@ -68,6 +63,7 @@ export function createCompilerServer(opts: {
   workspaceRoot: string;
   solcVersion?: string | undefined;
 }): McpServer {
+  const store = createArtifactStore();
   const server = new McpServer({
     name: 'crucible-compiler',
     version: '0.0.0',
@@ -97,8 +93,8 @@ export function createCompilerServer(opts: {
           version: opts.solcVersion,
           ...(settings ?? {}),
         } as SolcSettings);
-        storeContracts(result.contracts, rel);
-        await persistArtifacts(opts.workspaceRoot, result.contracts);
+        store.storeContracts(result.contracts, rel);
+        await store.persistArtifacts(opts.workspaceRoot, result.contracts);
 
         // Deduplicate warnings by message text and surface them at the top level
         // so the agent sees a clean summary without iterating over every contract.
@@ -131,7 +127,7 @@ export function createCompilerServer(opts: {
     },
     async ({ contractName }: GetAbiInput) => {
       try {
-        const artifact = resolveContract(contractName);
+        const artifact = store.resolveContract(contractName);
         if (!artifact) {
           return errorResult(`Contract "${contractName}" not found. Run compile first.`);
         }
@@ -152,7 +148,7 @@ export function createCompilerServer(opts: {
     },
     async ({ contractName }: GetBytecodeInput) => {
       try {
-        const artifact = resolveContract(contractName);
+        const artifact = store.resolveContract(contractName);
         if (!artifact) {
           return errorResult(`Contract "${contractName}" not found. Run compile first.`);
         }
@@ -176,7 +172,7 @@ export function createCompilerServer(opts: {
     },
     async () => {
       try {
-        return toolResult({ contracts: listContractNames() });
+        return toolResult({ contracts: store.listContractNames() });
       } catch (err) {
         return errorResult(`list_contracts failed: ${String(err)}`);
       }
