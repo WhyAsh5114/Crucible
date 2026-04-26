@@ -6,12 +6,28 @@
  */
 
 import { describe, it, expect } from 'bun:test';
-import { resolve } from 'node:path';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { compileSolidity } from '../src/compiler.ts';
 
 const FIXTURE = resolve(import.meta.dir, 'fixtures/Counter.sol');
 
 describe('compileSolidity — Counter.sol', () => {
+  it('returns contracts for a fresh build from an uncached source path', async () => {
+    const tempDir = await mkdtemp(join(resolve(import.meta.dir), '.tmp-crucible-sol-'));
+    const tempFixture = join(tempDir, 'Counter.sol');
+
+    try {
+      const source = await readFile(FIXTURE, 'utf8');
+      await writeFile(tempFixture, source, 'utf8');
+
+      const { contracts } = await compileSolidity(tempFixture);
+      expect(contracts.length).toBeGreaterThan(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns at least one contract', async () => {
     const { contracts } = await compileSolidity(FIXTURE);
     expect(contracts.length).toBeGreaterThan(0);

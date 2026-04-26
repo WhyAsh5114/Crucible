@@ -8,7 +8,7 @@
  */
 
 import { readFile, readdir } from 'node:fs/promises';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHardhatRuntimeEnvironment } from 'hardhat/hre';
 import { defineConfig } from 'hardhat/config';
 import { FileBuildResultType } from 'hardhat/types/solidity';
@@ -35,6 +35,91 @@ interface RawArtifact {
   deployedBytecode: string;
 }
 
+function isPathInside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function toRelativeIfInside(root: string, absolutePath: string): string | undefined {
+  const rel = relative(root, absolutePath);
+  if (rel === '' || rel === '.') {
+    return basename(absolutePath);
+  }
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    return undefined;
+  }
+  return rel;
+}
+
+function isArtifactJson(fileName: string): boolean {
+  return fileName.endsWith('.json') && !fileName.endsWith('.dbg.json');
+}
+
+async function listArtifactFilesInDir(artifactDir: string): Promise<string[]> {
+  try {
+    const files = await readdir(artifactDir);
+    return files
+      .filter((fileName) => isArtifactJson(fileName))
+      .map((fileName) => join(artifactDir, fileName));
+  } catch {
+    // Directory may not exist if the file had no contracts.
+    return [];
+  }
+}
+
+async function scanArtifactsBySourceName(
+  artifactsRoot: string,
+  absoluteSourcePath: string,
+  projectRoot: string,
+  sourceRoots: string[],
+): Promise<string[]> {
+  const queue = [artifactsRoot];
+  const matches: string[] = [];
+
+  while (queue.length > 0) {
+    const dir = queue.pop()!;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true, encoding: 'utf8' });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryName = entry.name.toString();
+      const entryPath = join(dir, entryName);
+      if (entry.isDirectory()) {
+        queue.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile() || !isArtifactJson(entryName)) {
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(await readFile(entryPath, 'utf8')) as Partial<RawArtifact>;
+        if (typeof parsed.sourceName !== 'string') {
+          continue;
+        }
+
+        const normalizedSourceName = parsed.sourceName.replace(/\\/g, '/');
+        const candidates = [
+          resolve(projectRoot, normalizedSourceName),
+          ...sourceRoots.map((root) => resolve(root, normalizedSourceName)),
+        ];
+
+        if (candidates.some((candidate) => candidate === absoluteSourcePath)) {
+          matches.push(entryPath);
+        }
+      } catch {
+        // Skip non-artifact JSON files like build-info payloads.
+      }
+    }
+  }
+
+  return matches;
+}
+
 /**
  * Compile a Solidity file at `absolutePath`.
  * @throws if the compilation emits errors.
@@ -43,7 +128,8 @@ export async function compileSolidity(
   absolutePath: string,
   settings: SolcSettings = {},
 ): Promise<CompileResult> {
-  const sourcesDir = dirname(absolutePath);
+  const normalizedAbsolutePath = resolve(absolutePath);
+  const sourcesDir = dirname(normalizedAbsolutePath);
 
   const solcVersion = settings.version ?? '0.8.28';
   const hre = await createHardhatRuntimeEnvironment(
@@ -59,7 +145,7 @@ export async function compileSolidity(
     }),
   );
 
-  const buildResult = await hre.solidity.build([absolutePath]);
+  const buildResult = await hre.solidity.build([normalizedAbsolutePath]);
 
   if (!hre.solidity.isSuccessfulBuildResult(buildResult)) {
     throw new Error(`Compilation of ${basename(absolutePath)} failed: build process error`);
@@ -68,6 +154,9 @@ export async function compileSolidity(
   const allErrors: CompilerMessage[] = [];
   const allWarnings: CompilerMessage[] = [];
   const artifactPaths: string[] = [];
+  const artifactsRoot = resolve(hre.config.paths.artifacts);
+  const projectRoot = resolve(hre.config.paths.root);
+  const sourceRoots = hre.config.paths.sources.solidity.map((sourceRoot) => resolve(sourceRoot));
 
   for (const [, result] of buildResult) {
     if (result.type === FileBuildResultType.BUILD_FAILURE) {
@@ -93,29 +182,49 @@ export async function compileSolidity(
       if (result.contractArtifactsGenerated.length > 0) {
         artifactPaths.push(...result.contractArtifactsGenerated);
       } else {
-        // Hardhat's configured sources directory IS dirname(absolutePath), so the
-        // sourceName Hardhat assigns is just basename(absolutePath) — no cwd
-        // dependency, no ".." segments when absolutePath is outside process.cwd().
-        const rel = basename(absolutePath);
-        const artifactDir = join(hre.config.paths.artifacts, rel);
-        // Containment check: ensure the resolved dir is still inside the
-        // Hardhat artifacts root (guards against absolutePath outside cwd).
-        const artifactsRoot = resolve(hre.config.paths.artifacts);
-        const resolvedArtifactDir = resolve(artifactDir);
-        if (
-          resolvedArtifactDir.startsWith(artifactsRoot + sep) ||
-          resolvedArtifactDir === artifactsRoot
-        ) {
-          try {
-            const files = await readdir(resolvedArtifactDir);
-            artifactPaths.push(
-              ...files
-                .filter((f) => f.endsWith('.json') && f !== 'artifacts.d.ts')
-                .map((f) => join(resolvedArtifactDir, f)),
-            );
-          } catch {
-            // directory may not exist if the file had no contracts
+        const relCandidates = new Set<string>();
+
+        const fromProjectRoot = toRelativeIfInside(projectRoot, normalizedAbsolutePath);
+        if (fromProjectRoot !== undefined) {
+          relCandidates.add(fromProjectRoot);
+        }
+
+        for (const sourceRoot of sourceRoots) {
+          const fromSourceRoot = toRelativeIfInside(sourceRoot, normalizedAbsolutePath);
+          if (fromSourceRoot !== undefined) {
+            relCandidates.add(fromSourceRoot);
           }
+        }
+
+        relCandidates.add(basename(normalizedAbsolutePath));
+
+        const discovered = new Set<string>();
+        for (const relSourcePath of relCandidates) {
+          const artifactDir = resolve(artifactsRoot, relSourcePath);
+          if (!isPathInside(artifactsRoot, artifactDir)) {
+            continue;
+          }
+
+          const files = await listArtifactFilesInDir(artifactDir);
+          for (const file of files) {
+            discovered.add(file);
+          }
+        }
+
+        if (discovered.size === 0) {
+          const scanned = await scanArtifactsBySourceName(
+            artifactsRoot,
+            normalizedAbsolutePath,
+            projectRoot,
+            sourceRoots,
+          );
+          for (const file of scanned) {
+            discovered.add(file);
+          }
+        }
+
+        if (discovered.size > 0) {
+          artifactPaths.push(...discovered);
         }
       }
     } else {
@@ -129,8 +238,10 @@ export async function compileSolidity(
     throw new Error(`solc compilation failed:\n${summary}`);
   }
 
+  const uniqueArtifactPaths = [...new Set(artifactPaths)];
+
   const contracts: CompiledContract[] = await Promise.all(
-    artifactPaths.map(async (artifactPath) => {
+    uniqueArtifactPaths.map(async (artifactPath) => {
       const raw = JSON.parse(await readFile(artifactPath, 'utf8')) as RawArtifact;
       return {
         // Preserve the full relative source path (normalise to forward slashes)
