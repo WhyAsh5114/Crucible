@@ -2,6 +2,7 @@ node_modules
 dist
 build
 .turbo
+.svelte-kit
 *.tsbuildinfo
 bun.lockb
 data

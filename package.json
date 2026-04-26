@@ -20,8 +20,8 @@
     "ci:verify": "bun run ci:check && bun run build",
     "test": "turbo run test",
     "format:staged": "lint-staged",
-    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
-    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,svelte,css}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,svelte,css}\""
   },
   "lint-staged": {
     "*.{ts,tsx,js,json,md,yml,yaml}": "prettier --write"
@@ -33,6 +33,8 @@
     "globals": "^17.5.0",
     "lint-staged": "^16.4.0",
     "prettier": "^3.4.2",
+    "prettier-plugin-svelte": "^3.5.1",
+    "prettier-plugin-tailwindcss": "^0.7.2",
     "turbo": "^2.5.4",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.59.0"
