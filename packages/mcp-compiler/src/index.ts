@@ -14,9 +14,11 @@
  */
 
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
-import { localhostHostValidation } from '@modelcontextprotocol/hono';
+import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { writeFile, mkdir, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { mcp } from '@crucible/types';
@@ -121,8 +123,15 @@ await mcpServer.connect(transport);
 
 const app = new OpenAPIHono<Env>();
 
-// DNS rebinding protection.
-app.use('*', localhostHostValidation());
+// DNS rebinding protection — localhost plus any extra hosts from ALLOWED_HOSTS env var.
+// ALLOWED_HOSTS accepts a comma-separated list, e.g. ALLOWED_HOSTS=macbook,100.x.y.z
+const extraHosts = process.env['ALLOWED_HOSTS']
+  ? process.env['ALLOWED_HOSTS']
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean)
+  : [];
+app.use('*', hostHeaderValidation(['localhost', '127.0.0.1', '::1', '[::1]', ...extraHosts]));
 
 // Parse JSON bodies once and stash them for the MCP transport.
 app.use('*', async (c, next) => {
@@ -136,35 +145,82 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+// Incoming request logger — logs method, path, status, and round-trip duration (skips /doc).
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === '/doc') {
+    await next();
+    return;
+  }
+  const start = Date.now();
+  console.log(`[mcp-compiler] \u2192 ${c.req.method} ${path}`);
+  await next();
+  const ms = Date.now() - start;
+  const status = c.res?.status ?? 0;
+  const logFn = status >= 500 ? console.error : status >= 400 ? console.warn : console.log;
+  logFn(`[mcp-compiler] \u2190 ${status} (${ms}ms)`);
+});
+
 // REST route handlers
 app.openapi(compileRoute, async (c) => {
+  let tempDir: string | undefined;
   try {
-    const { sourcePath, settings } = c.req.valid('json');
-    const absolutePath = join(WORKSPACE_ROOT, sourcePath);
+    const { sourcePath, source, fileName, settings } = c.req.valid('json');
+    let absolutePath: string;
     let rel: string;
-    try {
-      rel = await assertContainedInWorkspace(WORKSPACE_ROOT, absolutePath);
-    } catch (e) {
-      return c.json({ error: String(e) }, 400);
+
+    if (source !== undefined) {
+      const solFileName = fileName ?? 'Inline.sol';
+      console.log(
+        `[mcp-compiler] compile inline=${solFileName} (${source.split('\n').length} lines)`,
+      );
+      tempDir = join(WORKSPACE_ROOT, '.crucible', 'tmp', `inline-${randomUUID()}`);
+      await mkdir(tempDir, { recursive: true });
+      absolutePath = join(tempDir, solFileName);
+      await writeFile(absolutePath, source, 'utf8');
+      rel = `<inline>/${solFileName}`;
+    } else {
+      console.log(`[mcp-compiler] compile path=${sourcePath}`);
+      absolutePath = join(WORKSPACE_ROOT, sourcePath!);
+      try {
+        rel = await assertContainedInWorkspace(WORKSPACE_ROOT, absolutePath);
+      } catch (e) {
+        console.error(`[mcp-compiler] compile error: ${String(e)}`);
+        return c.json({ error: String(e) }, 400);
+      }
     }
     const result = await compileSolidity(absolutePath, {
       version: SOLC_VERSION,
       ...(settings ?? {}),
     } as SolcSettings);
     store.storeContracts(result.contracts, rel);
-    await store.persistArtifacts(WORKSPACE_ROOT, result.contracts);
+    if (!tempDir) {
+      await store.persistArtifacts(WORKSPACE_ROOT, result.contracts);
+    }
     const seen = new Set<string>();
     const topWarnings = (result.warnings ?? []).filter((w) => {
       if (seen.has(w.message)) return false;
       seen.add(w.message);
       return true;
     });
+    const contractNames = result.contracts.map((c) => c.name);
+    console.log(
+      `[mcp-compiler] compile ok  contracts=[${contractNames.join(', ')}] warnings=${topWarnings.length}`,
+    );
+    for (const w of topWarnings) {
+      console.warn(`[mcp-compiler] compile warn: ${w.message}`);
+    }
     return c.json(
       { contracts: result.contracts, ...(topWarnings.length > 0 ? { warnings: topWarnings } : {}) },
       200,
     );
   } catch (err) {
+    console.error(`[mcp-compiler] compile error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
+  } finally {
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   }
 });
 
@@ -172,10 +228,16 @@ app.openapi(getAbiRoute, async (c) => {
   try {
     const { contractName } = c.req.valid('param');
     const artifact = store.resolveContract(contractName);
-    if (!artifact)
+    if (!artifact) {
+      console.warn(`[mcp-compiler] get_abi not found: ${contractName}`);
       return c.json({ error: `Contract "${contractName}" not found. Run compile first.` }, 404);
+    }
+    console.log(
+      `[mcp-compiler] get_abi ok  contract=${contractName} fns=${(artifact.abi as unknown[]).length}`,
+    );
     return c.json({ abi: artifact.abi }, 200);
   } catch (err) {
+    console.error(`[mcp-compiler] get_abi error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });
@@ -184,21 +246,31 @@ app.openapi(getBytecodeRoute, async (c) => {
   try {
     const { contractName } = c.req.valid('param');
     const artifact = store.resolveContract(contractName);
-    if (!artifact)
+    if (!artifact) {
+      console.warn(`[mcp-compiler] get_bytecode not found: ${contractName}`);
       return c.json({ error: `Contract "${contractName}" not found. Run compile first.` }, 404);
+    }
+    const creationBytes = Math.ceil((artifact.bytecode.length - 2) / 2);
+    console.log(
+      `[mcp-compiler] get_bytecode ok  contract=${contractName} creationBytes=${creationBytes}`,
+    );
     return c.json(
       { bytecode: artifact.bytecode, deployedBytecode: artifact.deployedBytecode },
       200,
     );
   } catch (err) {
+    console.error(`[mcp-compiler] get_bytecode error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });
 
 app.openapi(listContractsRoute, async (c) => {
   try {
-    return c.json({ contracts: store.listContractNames() }, 200);
+    const contracts = store.listContractNames();
+    console.log(`[mcp-compiler] list_contracts ok  count=${contracts.length}`);
+    return c.json({ contracts }, 200);
   } catch (err) {
+    console.error(`[mcp-compiler] list_contracts error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });
