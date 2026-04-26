@@ -34,5 +34,4 @@ data/
 artifacts/
 cache/
 
-# Backend generated files (Prisma client)
-packages/backend/src/generated
+# Backend generated files (Prisma client) — see packages/backend/.gitignore
