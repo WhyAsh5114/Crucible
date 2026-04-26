@@ -5,8 +5,17 @@
  * removed or renamed contracts from lingering in the cache.
  */
 
-import { describe, it, expect, beforeEach } from 'bun:test';
-import { storeContracts, resolveContract, listContractNames, clearStore } from '../src/artifact-store.ts';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import {
+  storeContracts,
+  resolveContract,
+  listContractNames,
+  clearStore,
+  persistArtifacts,
+} from '../src/artifact-store.ts';
 import type { CompiledContract } from '@crucible/types';
 
 function makeContract(name: string): CompiledContract {
@@ -77,5 +86,71 @@ describe('listContractNames', () => {
     const names = listContractNames();
     expect(names).toContain('A.sol:A');
     expect(names).toContain('A.sol:B');
+  });
+});
+
+// ── persistArtifacts ───────────────────────────────────────────────────────
+
+describe('persistArtifacts', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'crucible-artifacts-test-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('writes one JSON file per contract under .crucible/artifacts/', async () => {
+    await persistArtifacts(tmpDir, [makeContract('Counter.sol:Counter')]);
+
+    const filePath = join(tmpDir, '.crucible', 'artifacts', 'Counter.sol__Counter.json');
+    const raw = await readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw) as { name: string };
+    expect(parsed.name).toBe('Counter.sol:Counter');
+  });
+
+  it('replaces the colon with double-underscore in the filename', async () => {
+    await persistArtifacts(tmpDir, [makeContract('Vault.sol:Vault')]);
+
+    const filePath = join(tmpDir, '.crucible', 'artifacts', 'Vault.sol__Vault.json');
+    const raw = await readFile(filePath, 'utf8');
+    expect(JSON.parse(raw)).toMatchObject({ name: 'Vault.sol:Vault' });
+  });
+
+  it('creates the artifacts directory when it does not already exist', async () => {
+    // tmpDir is a fresh directory — .crucible/artifacts/ does not exist
+    await expect(persistArtifacts(tmpDir, [makeContract('A.sol:A')])).resolves.toBeUndefined();
+  });
+
+  it('writes multiple contracts in a single call', async () => {
+    const contracts = [makeContract('A.sol:A'), makeContract('A.sol:B')];
+    await persistArtifacts(tmpDir, contracts);
+
+    const aPath = join(tmpDir, '.crucible', 'artifacts', 'A.sol__A.json');
+    const bPath = join(tmpDir, '.crucible', 'artifacts', 'A.sol__B.json');
+    await expect(readFile(aPath, 'utf8')).resolves.toBeDefined();
+    await expect(readFile(bPath, 'utf8')).resolves.toBeDefined();
+  });
+
+  it('round-trips abi, bytecode, and deployedBytecode fields', async () => {
+    const contract: ReturnType<typeof makeContract> & {
+      bytecode: string;
+      deployedBytecode: string;
+    } = {
+      ...makeContract('Token.sol:Token'),
+      bytecode: '0x1234',
+      deployedBytecode: '0x5678',
+    };
+    await persistArtifacts(tmpDir, [contract]);
+
+    const filePath = join(tmpDir, '.crucible', 'artifacts', 'Token.sol__Token.json');
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as {
+      bytecode: string;
+      deployedBytecode: string;
+    };
+    expect(parsed.bytecode).toBe('0x1234');
+    expect(parsed.deployedBytecode).toBe('0x5678');
   });
 });
