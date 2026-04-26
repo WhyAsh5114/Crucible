@@ -19,11 +19,20 @@ const docker = process.env['DOCKER_SOCKET_PATH']
 
 const WORKSPACES_BIND_ROOT = process.env['CRUCIBLE_RUNTIME_BIND_ROOT'];
 const MOUNT_MODE = process.env['CRUCIBLE_RUNTIME_MOUNT_MODE'] ?? 'bind';
-const RUNTIME_IMAGE = process.env['CRUCIBLE_RUNTIME_IMAGE'] ?? 'ubuntu:24.04';
+const RUNTIME_IMAGE = process.env['CRUCIBLE_RUNTIME_IMAGE'] ?? 'crucible-runtime:latest';
 const DOCKER_RETRY_COUNT = Number(process.env['CRUCIBLE_DOCKER_RETRY_COUNT'] ?? '2');
 const DOCKER_TIMEOUT_MS = Number(process.env['CRUCIBLE_DOCKER_TIMEOUT_MS'] ?? '15000');
 const VOLUME_MOUNT_ROOT = process.env['CRUCIBLE_RUNTIME_VOLUME_ROOT'] ?? '/workspace-root';
 const WORKSPACES_VOLUME = process.env['CRUCIBLE_WORKSPACES_VOLUME'] ?? 'crucible-workspaces-data';
+
+// Loopback ports the in-container MCP services bind to. Host-side ports are
+// assigned dynamically by Docker and discovered after the container starts.
+const CONTAINER_CHAIN_PORT = 3100;
+const CONTAINER_COMPILER_PORT = 3101;
+
+const READINESS_TIMEOUT_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_TIMEOUT_MS'] ?? '60000');
+const READINESS_INTERVAL_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_INTERVAL_MS'] ?? '500');
+const RUNTIME_HOST = process.env['CRUCIBLE_RUNTIME_HOST'] ?? '127.0.0.1';
 
 // --- Error helpers ---
 
@@ -159,20 +168,32 @@ async function ensureRuntimeImageAvailable(): Promise<void> {
     if (!isDockerNotFound(error)) throw error;
   }
 
-  const stream = await withTimeout(docker.pull(RUNTIME_IMAGE), 'Pull runtime image');
+  try {
+    const stream = await withTimeout(docker.pull(RUNTIME_IMAGE), 'Pull runtime image');
 
-  await withTimeout(
-    new Promise<void>((resolve, reject) => {
-      docker.modem.followProgress(stream, (error: Error | null) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve();
-      });
-    }),
-    'Wait for image pull',
-  );
+    await withTimeout(
+      new Promise<void>((resolve, reject) => {
+        docker.modem.followProgress(stream, (error: Error | null) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      }),
+      'Wait for image pull',
+    );
+  } catch (error) {
+    // Locally built images can't be pulled. Surface a clear, actionable
+    // error pointing to the build script instead of an opaque modem failure.
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Runtime image '${RUNTIME_IMAGE}' is not present locally and could not be pulled (${message}). ` +
+        `If this is the default Crucible runtime image, build it first: ` +
+        `bun run --cwd packages/backend runtime:build`,
+      { cause: error },
+    );
+  }
 }
 
 async function ensureWorkspaceVolumeExists(): Promise<void> {
@@ -274,7 +295,73 @@ export async function stopWorkspaceContainer(workspaceId: string): Promise<void>
   );
 }
 
-export async function ensureWorkspaceContainer(workspaceId: string, hostWorkspacePath: string) {
+export type WorkspaceRuntimePorts = {
+  chain: number | null;
+  compiler: number | null;
+};
+
+export type EnsureWorkspaceContainerResult = {
+  containerName: string;
+  startedAtMs: number;
+  ports: WorkspaceRuntimePorts;
+  ready: boolean;
+};
+
+function extractHostPort(
+  inspect: Docker.ContainerInspectInfo,
+  containerPort: number,
+): number | null {
+  const bindings = inspect.NetworkSettings?.Ports?.[`${containerPort}/tcp`];
+  const first = bindings?.[0]?.HostPort;
+  if (!first) return null;
+  const parsed = Number.parseInt(first, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function probeOnce(url: string): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 1500);
+    try {
+      // Any HTTP response — including 4xx/5xx — proves the service is
+      // listening. The chain server, for example, returns 500 from /state
+      // before `start_node` is called, but it is still "up". Only network
+      // errors (ECONNREFUSED, abort, etc.) count as not-ready.
+      await fetch(url, { signal: controller.signal });
+      return true;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait until both in-container MCP services answer HTTP. Returns true when
+ * both are reachable; false on timeout. The caller decides whether a partial
+ * boot warrants `degraded` or `crashed`.
+ */
+export async function waitForRuntimeReady(ports: WorkspaceRuntimePorts): Promise<boolean> {
+  if (ports.chain === null || ports.compiler === null) return false;
+
+  const chainUrl = `http://${RUNTIME_HOST}:${ports.chain}/state`;
+  const compilerUrl = `http://${RUNTIME_HOST}:${ports.compiler}/contracts`;
+  const deadline = Date.now() + READINESS_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const [chainOk, compilerOk] = await Promise.all([probeOnce(chainUrl), probeOnce(compilerUrl)]);
+    if (chainOk && compilerOk) return true;
+    await new Promise((resolve) => setTimeout(resolve, READINESS_INTERVAL_MS));
+  }
+
+  return false;
+}
+
+export async function ensureWorkspaceContainer(
+  workspaceId: string,
+  hostWorkspacePath: string,
+): Promise<EnsureWorkspaceContainerResult> {
   const containerName = runtimeContainerName(workspaceId);
   const workspaceDir = runtimeWorkspaceDir(workspaceId);
   const bind = workspaceBind(workspaceId, hostWorkspacePath);
@@ -284,16 +371,36 @@ export async function ensureWorkspaceContainer(workspaceId: string, hostWorkspac
   await ensureWorkspaceVolumeExists();
 
   try {
+    // Generic base images (e.g. `ubuntu:24.04` used in tests) have a CMD that
+    // exits immediately under Docker. Override with a keep-alive so the
+    // container stays running for inspection. The crucible-runtime image
+    // ships its own CMD that supervises mcp-chain and mcp-compiler.
+    const isCrucibleRuntime = RUNTIME_IMAGE.startsWith('crucible-runtime');
     await withRetry(() =>
       withTimeout(
         docker.createContainer({
           name: containerName,
           Image: RUNTIME_IMAGE,
           WorkingDir: workspaceDir,
-          Cmd: ['sh', '-lc', 'while true; do sleep 3600; done'],
+          ...(isCrucibleRuntime ? {} : { Cmd: ['sh', '-lc', 'while true; do sleep 3600; done'] }),
+          Env: [
+            `WORKSPACE_ID=${workspaceId}`,
+            `CHAIN_MCP_PORT=${CONTAINER_CHAIN_PORT}`,
+            `COMPILER_MCP_PORT=${CONTAINER_COMPILER_PORT}`,
+            `WORKSPACE_ROOT=${workspaceDir}`,
+          ],
+          ExposedPorts: {
+            [`${CONTAINER_CHAIN_PORT}/tcp`]: {},
+            [`${CONTAINER_COMPILER_PORT}/tcp`]: {},
+          },
           HostConfig: {
             RestartPolicy: { Name: 'unless-stopped' },
             Binds: [bind],
+            // Empty HostPort = Docker assigns a free port on the host.
+            PortBindings: {
+              [`${CONTAINER_CHAIN_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_COMPILER_PORT}/tcp`]: [{ HostPort: '' }],
+            },
           },
         }),
         `Create container ${containerName}`,
@@ -315,10 +422,39 @@ export async function ensureWorkspaceContainer(workspaceId: string, hostWorkspac
     );
   }
 
-  const startedAtMs = Date.parse(inspect.State?.StartedAt ?? '');
+  // Re-inspect after start so State.StartedAt and PortBindings reflect the
+  // actual runtime state, not Docker's pre-start zero values.
+  const freshInspect = await getContainerInspect(containerName);
+  const startedAtMs = Date.parse(freshInspect?.State?.StartedAt ?? '');
+
+  const ports: WorkspaceRuntimePorts = {
+    chain: freshInspect ? extractHostPort(freshInspect, CONTAINER_CHAIN_PORT) : null,
+    compiler: freshInspect ? extractHostPort(freshInspect, CONTAINER_COMPILER_PORT) : null,
+  };
+
+  const ready = await waitForRuntimeReady(ports);
 
   return {
     containerName,
     startedAtMs: Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
+    ports,
+    ready,
   };
+}
+
+export async function getWorkspaceContainerPorts(
+  workspaceId: string,
+): Promise<WorkspaceRuntimePorts | null> {
+  const containerName = runtimeContainerName(workspaceId);
+  const inspect = await getContainerInspect(containerName);
+  if (!inspect) return null;
+
+  return {
+    chain: extractHostPort(inspect, CONTAINER_CHAIN_PORT),
+    compiler: extractHostPort(inspect, CONTAINER_COMPILER_PORT),
+  };
+}
+
+export function runtimeServiceBaseUrl(_server: 'chain' | 'compiler', port: number): string {
+  return `http://${RUNTIME_HOST}:${port}`;
 }
