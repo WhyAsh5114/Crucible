@@ -24,4 +24,4 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run CI verification
-        run: bun run ci:verify
+        run: bun run ci:full
