@@ -10,30 +10,81 @@ import {
   WorkspaceGetResponseSchema,
   WorkspaceCreateRequestSchema,
   WorkspaceCreateResponseSchema,
+  ApiErrorSchema,
 } from '@crucible/types';
-import { Hono } from 'hono';
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
 
-export const workspaceApi = new Hono();
+// ── OpenAPI route definitions ────────────────────────────────────────────────
 
-workspaceApi.post('/workspace', async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsedBody = WorkspaceCreateRequestSchema.safeParse(body);
+const createWorkspaceRoute = createRoute({
+  method: 'post',
+  path: '/workspace',
+  request: {
+    body: {
+      content: { 'application/json': { schema: WorkspaceCreateRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: WorkspaceCreateResponseSchema } },
+      description: 'Workspace created',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    409: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Conflict',
+    },
+    500: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
 
-  if (!parsedBody.success) {
-    return c.json(createApiErrorBody('bad_request', 'Invalid workspace create payload'), 400);
-  }
+const getWorkspaceRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: WorkspaceGetResponseSchema } },
+      description: 'Workspace state',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Not found',
+    },
+  },
+});
 
+// ── Router ───────────────────────────────────────────────────────────────────
+
+export const workspaceApi = new OpenAPIHono();
+
+workspaceApi.openapi(createWorkspaceRoute, async (c) => {
+  const { name } = c.req.valid('json');
   let createdId: string | null = null;
 
   try {
     const created = await prisma.workspace.create({
       data: {
         deployments: [],
-        name: parsedBody.data.name,
+        name,
         directoryPath: `pending://${randomUUID()}`,
       },
       select: { id: true },
@@ -62,16 +113,11 @@ workspaceApi.post('/workspace', async (c) => {
   }
 });
 
-workspaceApi.get('/workspace/:id', async (c) => {
-  const id = c.req.param('id');
-  const parsedId = WorkspaceIdSchema.safeParse(id);
-
-  if (!parsedId.success) {
-    return c.json(createApiErrorBody('bad_request', 'Invalid workspace id'), 400);
-  }
+workspaceApi.openapi(getWorkspaceRoute, async (c) => {
+  const { id } = c.req.valid('param');
 
   const row = await prisma.workspace.findUnique({
-    where: { id: parsedId.data },
+    where: { id },
     include: { runtime: true },
   });
 

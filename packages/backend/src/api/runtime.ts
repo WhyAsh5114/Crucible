@@ -4,20 +4,58 @@ import {
   RuntimeStatusSchema,
   RuntimeRequestSchema,
   RuntimeResponseSchema,
+  ApiErrorSchema,
 } from '@crucible/types';
 import {
   stopWorkspaceContainer,
   ensureWorkspaceContainer,
   getWorkspaceContainerState,
 } from '../lib/runtime-docker';
-import { Hono } from 'hono';
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { prisma } from '../lib/prisma';
 import { Prisma } from '../generated/prisma/client';
 import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
 
-export const runtimeApi = new Hono();
+// ── OpenAPI route definition ─────────────────────────────────────────────────
+
+const runtimeRoute = createRoute({
+  method: 'post',
+  path: '/runtime',
+  request: {
+    body: {
+      content: { 'application/json': { schema: RuntimeRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: RuntimeResponseSchema } },
+      description: 'Runtime operation result',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Not found',
+    },
+    501: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Not implemented',
+    },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Runtime unavailable',
+    },
+  },
+});
+
+// ── Router ───────────────────────────────────────────────────────────────────
+
+export const runtimeApi = new OpenAPIHono();
 
 function toDescriptor(runtime: {
   runtimeId: string;
@@ -54,13 +92,8 @@ function toDescriptor(runtime: {
   };
 }
 
-runtimeApi.post('/runtime', async (c) => {
-  const payload = await c.req.json().catch(() => null);
-  const parsed = RuntimeRequestSchema.safeParse(payload);
-
-  if (!parsed.success) {
-    return c.json(createApiErrorBody('bad_request', 'Invalid runtime request payload'), 400);
-  }
+runtimeApi.openapi(runtimeRoute, async (c) => {
+  const parsed = { success: true as const, data: c.req.valid('json') };
 
   if (parsed.data.type === 'open_workspace') {
     const workspace = await prisma.workspace.findUnique({
