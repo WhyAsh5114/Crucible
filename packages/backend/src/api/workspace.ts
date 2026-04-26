@@ -18,6 +18,7 @@ import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
+import { ensureWorkspaceContainer } from '../lib/runtime-docker';
 
 // ── OpenAPI route definitions ────────────────────────────────────────────────
 
@@ -72,6 +73,56 @@ const getWorkspaceRoute = createRoute({
   },
 });
 
+// ── Background runtime bootstrap ─────────────────────────────────────────────
+
+/**
+ * Spawn the per-workspace Docker container and upsert the WorkspaceRuntime
+ * row. Runs as a background task triggered by workspace creation so the HTTP
+ * create response returns immediately and the UI can navigate to the
+ * workspace URL while the container boots.
+ *
+ * Status transitions: starting → ready | degraded | crashed.
+ */
+async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: string): Promise<void> {
+  try {
+    await prisma.workspaceRuntime.upsert({
+      where: { workspaceId },
+      create: {
+        workspaceId,
+        status: 'starting',
+        startedAt: new Date(),
+        chainState: Prisma.JsonNull,
+      },
+      update: { status: 'starting' },
+      select: { runtimeId: true },
+    });
+
+    const container = await ensureWorkspaceContainer(workspaceId, directoryPath);
+
+    await prisma.workspaceRuntime.update({
+      where: { workspaceId },
+      data: {
+        status: container.ready ? 'ready' : 'degraded',
+        startedAt: new Date(container.startedAtMs),
+        terminalSessionId: `${workspaceId}-terminal`,
+        chainPort: container.ports.chain,
+        compilerPort: container.ports.compiler,
+      },
+    });
+  } catch (err) {
+    // Mark the runtime crashed so the UI can show a degraded state instead
+    // of looking idle forever. The error itself is intentionally swallowed:
+    // the user can still browse the workspace and retry via runtime API.
+    console.error(`[workspace ${workspaceId}] runtime spawn failed:`, err);
+    await prisma.workspaceRuntime
+      .updateMany({
+        where: { workspaceId, status: 'starting' },
+        data: { status: 'crashed' },
+      })
+      .catch(() => undefined);
+  }
+}
+
 // ── Router ───────────────────────────────────────────────────────────────────
 
 export const workspaceApi = new OpenAPIHono({
@@ -106,6 +157,12 @@ export const workspaceApi = new OpenAPIHono({
         data: { directoryPath },
         select: { id: true },
       });
+
+      // Kick off the Docker container spawn + runtime row upsert in the
+      // background so the create response stays fast. Failures here are
+      // surfaced via the runtime status (degraded/crashed) rather than
+      // blocking the workspace from being created.
+      void spawnRuntimeForWorkspace(created.id, directoryPath);
 
       const response = WorkspaceCreateResponseSchema.parse({ id: created.id });
       return c.json(response, 201);

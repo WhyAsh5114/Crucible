@@ -2,13 +2,52 @@
 	import * as Conversation from '$lib/components/ai-elements/conversation';
 	import { Loader } from '$lib/components/ai-elements/loader';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
+	import { workspaceClient } from '$lib/api/workspace';
+	import { Button } from '$lib/components/ui/button';
 	import EventRow from './events/event-row.svelte';
 	import ToolRow from './events/tool-row.svelte';
 	import { pairToolEvents } from './events/pair-tool-events';
 	import EmptyState from './empty-state.svelte';
+	import SendIcon from '@lucide/svelte/icons/send';
+	import LoaderIcon from '@lucide/svelte/icons/loader';
+	import type { WorkspaceId } from '@crucible/types';
+
+	interface Props {
+		workspaceId: WorkspaceId;
+	}
+
+	let { workspaceId }: Props = $props();
 
 	const stream = getAgentStream();
 	let items = $derived(pairToolEvents(stream.events));
+
+	let prompt = $state('');
+	let sending = $state(false);
+	let sendError = $state<string | null>(null);
+
+	async function handleSubmit(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		const trimmed = prompt.trim();
+		if (!trimmed || sending) return;
+		sending = true;
+		sendError = null;
+		try {
+			await workspaceClient.sendPrompt({ workspaceId, prompt: trimmed });
+			prompt = '';
+		} catch (err) {
+			sendError = err instanceof Error ? err.message : String(err);
+		} finally {
+			sending = false;
+		}
+	}
+
+	function handleKeydown(event: KeyboardEvent): void {
+		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+			event.preventDefault();
+			const form = (event.currentTarget as HTMLTextAreaElement).form;
+			form?.requestSubmit();
+		}
+	}
 </script>
 
 <aside class="flex h-full min-h-0 flex-col bg-background">
@@ -43,8 +82,8 @@
 				/>
 			{:else if stream.events.length === 0}
 				<EmptyState
-					title="No agent activity yet"
-					description="The live agent stream is connected. Events will appear here as the backend produces them."
+					title="Ready when you are"
+					description="Send a prompt below to start a conversation with the agent."
 				/>
 			{:else}
 				<ol class="flex flex-col">
@@ -63,14 +102,35 @@
 		<Conversation.ScrollButton />
 	</Conversation.Root>
 
-	<div class="shrink-0 border-t border-border p-3">
+	<form onsubmit={handleSubmit} class="shrink-0 border-t border-border bg-muted/10 p-3">
+		{#if sendError}
+			<p class="mb-2 font-mono text-[11px] text-destructive">{sendError}</p>
+		{/if}
 		<div
-			class="flex items-center gap-2 rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 font-mono text-[11px] text-muted-foreground"
+			class="flex items-end gap-2 rounded-md border border-border bg-background p-2 focus-within:ring-1 focus-within:ring-ring"
 		>
-			<span class="size-1.5 rounded-full bg-muted-foreground/40"></span>
-			<span>
-				Prompt input pending — agent inference is not yet wired (see PLAN.md POV-1).
-			</span>
+			<textarea
+				bind:value={prompt}
+				onkeydown={handleKeydown}
+				placeholder="Ask the agent…  (Enter to send, Shift+Enter for newline)"
+				rows={2}
+				disabled={sending}
+				class="min-h-[2.5rem] flex-1 resize-none bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
+			></textarea>
+			<Button
+				type="submit"
+				size="icon"
+				variant="default"
+				disabled={sending || prompt.trim().length === 0}
+				aria-label="Send prompt"
+				class="shrink-0"
+			>
+				{#if sending || stream.status === 'streaming'}
+					<LoaderIcon class="size-4 animate-spin" />
+				{:else}
+					<SendIcon class="size-4" />
+				{/if}
+			</Button>
 		</div>
-	</div>
+	</form>
 </aside>

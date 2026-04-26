@@ -5,6 +5,7 @@ import { auth } from './lib/auth';
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { workspaceApi } from './api/workspace';
+import { inferenceApi } from './api/inference';
 
 const app = new OpenAPIHono();
 
@@ -51,8 +52,13 @@ const requireSession = createMiddleware(async (c, next) => {
 app.use('/api/workspace/*', requireSession);
 app.use('/api/runtime', requireSession);
 app.use('/api/agent/*', requireSession);
+app.use('/api/prompt', requireSession);
 
-const apiRoutes = app.route('/api', workspaceApi).route('/api', runtimeApi).route('/api', agentApi);
+const apiRoutes = app
+  .route('/api', workspaceApi)
+  .route('/api', runtimeApi)
+  .route('/api', agentApi)
+  .route('/api', inferenceApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
 

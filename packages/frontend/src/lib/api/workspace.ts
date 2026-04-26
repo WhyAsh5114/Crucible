@@ -9,7 +9,9 @@ import type { AppType } from '@crucible/backend';
 import type {
 	WorkspaceCreateRequest,
 	WorkspaceCreateResponse,
-	WorkspaceState
+	WorkspaceState,
+	PromptRequest,
+	PromptResponse
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -36,6 +38,20 @@ export class WorkspaceClient {
 			throw new Error(`getWorkspace failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as WorkspaceState;
+	}
+
+	/**
+	 * Send a user prompt to the agent. The HTTP response is fast (just a
+	 * stream id); model tokens are delivered over the existing
+	 * `/api/agent/stream` SSE feed as `thinking` deltas plus a final
+	 * `message` event.
+	 */
+	async sendPrompt(req: PromptRequest): Promise<PromptResponse> {
+		const res = await apiClient.api.prompt.$post({ json: req });
+		if (!res.ok) {
+			throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as PromptResponse;
 	}
 }
 
