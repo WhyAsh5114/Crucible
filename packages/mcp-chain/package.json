@@ -5,6 +5,12 @@
   "description": "MCP server — local Hardhat chain lifecycle and state.",
   "license": "UNLICENSED",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "dev": "portless --name chain.crucible --app-port 3100 bun run --hot src/index.ts",
     "start": "bun run src/index.ts",

@@ -5,6 +5,12 @@
   "description": "MCP server — Hardhat-based Solidity compilation against workspace files.",
   "license": "UNLICENSED",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "dev": "portless --name compiler.crucible --app-port 3101 bun run --hot src/index.ts",
     "start": "bun run src/index.ts",
