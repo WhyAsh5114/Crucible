@@ -5,7 +5,8 @@
  * using schemas from @crucible/types/mcp/compiler.
  */
 
-import { basename, join, relative, isAbsolute } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import {
   CompileInputSchema,
@@ -23,6 +24,31 @@ import {
   listContractNames,
   persistArtifacts,
 } from './artifact-store.ts';
+
+/**
+ * Resolve symlinks on both paths and verify `candidatePath` is contained
+ * within `workspaceRoot`. Returns the workspace-relative path on success.
+ * Throws with a descriptive message on containment failure.
+ *
+ * Uses `realpath` to prevent symlink-escape attacks where a symlink inside
+ * the workspace root points to a file outside it.
+ */
+export async function assertContainedInWorkspace(
+  workspaceRoot: string,
+  candidatePath: string,
+): Promise<string> {
+  const [resolvedRoot, resolvedCandidate] = await Promise.all([
+    realpath(workspaceRoot),
+    // candidatePath may not exist yet; fall back to the un-resolved path so
+    // compilation errors surface from solc rather than from path validation.
+    realpath(candidatePath).catch(() => candidatePath),
+  ]);
+  const rel = relative(resolvedRoot, resolvedCandidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error('sourcePath must resolve within the workspace root');
+  }
+  return rel;
+}
 
 function toolResult(data: unknown): CallToolResult {
   return {
@@ -61,15 +87,17 @@ export function createCompilerServer(opts: {
     async ({ sourcePath, settings }: CompileInput) => {
       try {
         const absolutePath = join(opts.workspaceRoot, sourcePath);
-        const rel = relative(opts.workspaceRoot, absolutePath);
-        if (rel.startsWith('..') || isAbsolute(rel)) {
-          return errorResult('compile failed: sourcePath must resolve within the workspace root');
+        let rel: string;
+        try {
+          rel = await assertContainedInWorkspace(opts.workspaceRoot, absolutePath);
+        } catch (e) {
+          return errorResult(`compile failed: ${String(e)}`);
         }
         const result = await compileSolidity(absolutePath, {
           version: opts.solcVersion,
           ...(settings ?? {}),
         } as SolcSettings);
-        storeContracts(result.contracts, basename(absolutePath));
+        storeContracts(result.contracts, rel);
         await persistArtifacts(opts.workspaceRoot, result.contracts);
 
         // Deduplicate warnings by message text and surface them at the top level

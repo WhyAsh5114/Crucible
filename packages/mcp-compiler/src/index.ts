@@ -16,7 +16,7 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { localhostHostValidation } from '@modelcontextprotocol/hono';
 import { existsSync } from 'node:fs';
-import { basename, join, relative, isAbsolute } from 'node:path';
+import { join } from 'node:path';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { mcp } from '@crucible/types';
@@ -36,7 +36,7 @@ import {
   listContractNames,
   persistArtifacts,
 } from './artifact-store.ts';
-import { createCompilerServer } from './server.ts';
+import { createCompilerServer, assertContainedInWorkspace } from './server.ts';
 
 const PORT = process.env['COMPILER_MCP_PORT']
   ? parseInt(process.env['COMPILER_MCP_PORT'], 10)
@@ -144,15 +144,17 @@ app.openapi(compileRoute, async (c) => {
   try {
     const { sourcePath, settings } = c.req.valid('json');
     const absolutePath = join(WORKSPACE_ROOT, sourcePath);
-    const rel = relative(WORKSPACE_ROOT, absolutePath);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
-      return c.json({ error: 'sourcePath must resolve within the workspace root' }, 400);
+    let rel: string;
+    try {
+      rel = await assertContainedInWorkspace(WORKSPACE_ROOT, absolutePath);
+    } catch (e) {
+      return c.json({ error: String(e) }, 400);
     }
     const result = await compileSolidity(absolutePath, {
       version: SOLC_VERSION,
       ...(settings ?? {}),
     } as SolcSettings);
-    storeContracts(result.contracts, basename(absolutePath));
+    storeContracts(result.contracts, rel);
     await persistArtifacts(WORKSPACE_ROOT, result.contracts);
     const seen = new Set<string>();
     const topWarnings = (result.warnings ?? []).filter((w) => {

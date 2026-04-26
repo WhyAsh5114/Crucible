@@ -17,7 +17,9 @@ const store = new Map<string, CompiledContract>();
 /**
  * Tracks which contracts were produced by each source file so that recompiling
  * a file evicts its previous output before inserting the new one.
- * Key: source file basename (e.g. "Counter.sol"). Value: contract names.
+ * Key: workspace-relative source path (e.g. "contracts/Counter.sol"). Value: contract names.
+ * Using the full relative path (not just basename) avoids collisions between
+ * same-named files in different directories.
  */
 const sourceFileMap = new Map<string, string[]>();
 

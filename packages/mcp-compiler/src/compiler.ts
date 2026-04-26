@@ -93,7 +93,10 @@ export async function compileSolidity(
       if (result.contractArtifactsGenerated.length > 0) {
         artifactPaths.push(...result.contractArtifactsGenerated);
       } else {
-        const rel = relative(process.cwd(), absolutePath);
+        // Use sourcesDir (== dirname(absolutePath)) as the base so rel is always
+        // just the filename and can never contain ".." segments that would
+        // allow the artifactDir to escape hre.config.paths.artifacts.
+        const rel = relative(sourcesDir, absolutePath);
         const artifactDir = join(hre.config.paths.artifacts, rel);
         try {
           const files = await readdir(artifactDir);
@@ -121,7 +124,10 @@ export async function compileSolidity(
     artifactPaths.map(async (artifactPath) => {
       const raw = JSON.parse(await readFile(artifactPath, 'utf8')) as RawArtifact;
       return {
-        name: `${basename(raw.sourceName)}:${raw.contractName}`,
+        // Preserve the full relative source path (normalise to forward slashes)
+        // so names match the "contracts/Foo.sol:Foo" convention and avoid
+        // collisions between same-basename files in different directories.
+        name: `${raw.sourceName.replace(/\\/g, '/')}:${raw.contractName}`,
         abi: raw.abi as CompiledContract['abi'],
         bytecode: raw.bytecode as CompiledContract['bytecode'],
         deployedBytecode: raw.deployedBytecode as CompiledContract['deployedBytecode'],
