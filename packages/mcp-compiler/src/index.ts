@@ -30,12 +30,7 @@ import {
   ListContractsOutputSchema,
 } from '@crucible/types/mcp/compiler';
 import { compileSolidity, type SolcSettings } from './compiler.ts';
-import {
-  storeContracts,
-  resolveContract,
-  listContractNames,
-  persistArtifacts,
-} from './artifact-store.ts';
+import { createArtifactStore } from './artifact-store.ts';
 import { createCompilerServer, assertContainedInWorkspace } from './server.ts';
 
 const PORT = process.env['COMPILER_MCP_PORT']
@@ -50,6 +45,8 @@ console.log(`[mcp-compiler] starting on port ${PORT} (workspaceRoot: ${WORKSPACE
 if (!existsSync(WORKSPACE_ROOT)) {
   throw new Error(`[mcp-compiler] WORKSPACE_ROOT does not exist: ${WORKSPACE_ROOT}`);
 }
+
+const store = createArtifactStore();
 
 // ── Error schema ────────────────────────────────────────────────────────────
 
@@ -154,8 +151,8 @@ app.openapi(compileRoute, async (c) => {
       version: SOLC_VERSION,
       ...(settings ?? {}),
     } as SolcSettings);
-    storeContracts(result.contracts, rel);
-    await persistArtifacts(WORKSPACE_ROOT, result.contracts);
+    store.storeContracts(result.contracts, rel);
+    await store.persistArtifacts(WORKSPACE_ROOT, result.contracts);
     const seen = new Set<string>();
     const topWarnings = (result.warnings ?? []).filter((w) => {
       if (seen.has(w.message)) return false;
@@ -174,7 +171,7 @@ app.openapi(compileRoute, async (c) => {
 app.openapi(getAbiRoute, async (c) => {
   try {
     const { contractName } = c.req.valid('param');
-    const artifact = resolveContract(contractName);
+    const artifact = store.resolveContract(contractName);
     if (!artifact)
       return c.json({ error: `Contract "${contractName}" not found. Run compile first.` }, 404);
     return c.json({ abi: artifact.abi }, 200);
@@ -186,7 +183,7 @@ app.openapi(getAbiRoute, async (c) => {
 app.openapi(getBytecodeRoute, async (c) => {
   try {
     const { contractName } = c.req.valid('param');
-    const artifact = resolveContract(contractName);
+    const artifact = store.resolveContract(contractName);
     if (!artifact)
       return c.json({ error: `Contract "${contractName}" not found. Run compile first.` }, 404);
     return c.json(
@@ -200,7 +197,7 @@ app.openapi(getBytecodeRoute, async (c) => {
 
 app.openapi(listContractsRoute, async (c) => {
   try {
-    return c.json({ contracts: listContractNames() }, 200);
+    return c.json({ contracts: store.listContractNames() }, 200);
   } catch (err) {
     return c.json({ error: String(err) }, 500);
   }
