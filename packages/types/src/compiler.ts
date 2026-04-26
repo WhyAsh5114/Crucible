@@ -37,7 +37,6 @@ export const CompiledContractSchema = z.object({
   deployedBytecode: HexSchema,
   /** solc storage layout, when emitted. Opaque pass-through. */
   storageLayout: z.unknown().optional(),
-  errors: z.array(CompilerMessageSchema).optional(),
   warnings: z.array(CompilerMessageSchema).optional(),
 });
 export type CompiledContract = z.infer<typeof CompiledContractSchema>;
