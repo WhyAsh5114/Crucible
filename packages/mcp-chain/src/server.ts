@@ -30,7 +30,7 @@ import {
   mockFork,
 } from './mock.ts';
 
-const IS_MOCK = process.env['CHAIN_MOCK'] === 'true';
+const IS_MOCK = process.env['MOCK_CHAIN'] === 'true';
 
 function toolResult(data: unknown): CallToolResult {
   return {

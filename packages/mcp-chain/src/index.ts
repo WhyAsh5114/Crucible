@@ -5,7 +5,7 @@
  * specified by the CHAIN_MCP_PORT environment variable.
  *
  * Environment flags:
- *   CHAIN_MOCK=true     — bypass real Hardhat; return fixture data
+ *   MOCK_CHAIN=true     — bypass real Hardhat; return fixture data
  *   CHAIN_MCP_PORT=N    — override the listen port
  */
 
@@ -19,7 +19,7 @@ const PORT = process.env['CHAIN_MCP_PORT']
   ? parseInt(process.env['CHAIN_MCP_PORT'], 10)
   : mcp.DEFAULT_MCP_PORTS.chain;
 
-const IS_MOCK = process.env['CHAIN_MOCK'] === 'true';
+const IS_MOCK = process.env['MOCK_CHAIN'] === 'true';
 
 console.log(`[mcp-chain] starting on port ${PORT} (mode: ${IS_MOCK ? 'mock' : 'real'})`);
 

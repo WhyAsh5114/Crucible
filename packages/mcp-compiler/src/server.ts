@@ -21,7 +21,7 @@ import { compileSolidity } from './compiler.ts';
 import { storeContracts, resolveContract, listContractNames, persistArtifacts } from './artifact-store.ts';
 import { mockCompile, mockGetAbi, mockGetBytecode, mockListContracts } from './mock.ts';
 
-const IS_MOCK = process.env['COMPILER_MOCK'] === 'true';
+const IS_MOCK = process.env['MOCK_COMPILER'] === 'true';
 
 function toolResult(data: unknown): CallToolResult {
   return {

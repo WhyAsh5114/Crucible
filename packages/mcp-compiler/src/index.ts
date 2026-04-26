@@ -5,8 +5,9 @@
  * specified by the COMPILER_MCP_PORT environment variable.
  *
  * Environment flags:
- *   COMPILER_MOCK=true      — bypass real solc; return fixture data
+ *   MOCK_COMPILER=true      — bypass real solc; return fixture data
  *   COMPILER_MCP_PORT=N     — override the listen port
+ *   WORKSPACE_ROOT=<path>   — workspace root for resolving source paths (defaults to cwd)
  */
 
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
@@ -19,7 +20,7 @@ const PORT = process.env['COMPILER_MCP_PORT']
   ? parseInt(process.env['COMPILER_MCP_PORT'], 10)
   : mcp.DEFAULT_MCP_PORTS.compiler;
 
-const IS_MOCK = process.env['COMPILER_MOCK'] === 'true';
+const IS_MOCK = process.env['MOCK_COMPILER'] === 'true';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 
 console.log(
