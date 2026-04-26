@@ -1,4 +1,9 @@
 import {
+  workspaceHostPath,
+  collectWorkspaceFiles,
+  provisionWorkspaceDirectory,
+} from '../lib/workspace-fs';
+import {
   ChainStateSchema,
   WorkspaceIdSchema,
   DeploymentRecordSchema,
@@ -22,21 +27,35 @@ workspaceApi.post('/workspace', async (c) => {
     return c.json(createApiErrorBody('bad_request', 'Invalid workspace create payload'), 400);
   }
 
+  let createdId: string | null = null;
+
   try {
-    const row = await prisma.workspace.create({
+    const created = await prisma.workspace.create({
       data: {
         deployments: [],
         name: parsedBody.data.name,
-        directoryPath: `metadata://${randomUUID()}`,
+        directoryPath: `pending://${randomUUID()}`,
       },
       select: { id: true },
     });
+    createdId = created.id;
 
-    const response = WorkspaceCreateResponseSchema.parse({ id: row.id });
+    const directoryPath = await provisionWorkspaceDirectory(created.id);
+    await prisma.workspace.update({
+      where: { id: created.id },
+      data: { directoryPath },
+      select: { id: true },
+    });
+
+    const response = WorkspaceCreateResponseSchema.parse({ id: created.id });
     return c.json(response, 201);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return c.json(createApiErrorBody('conflict', 'Workspace metadata already exists'), 409);
+    }
+
+    if (createdId) {
+      await prisma.workspace.delete({ where: { id: createdId } }).catch(() => undefined);
     }
 
     return c.json(createApiErrorBody('internal', 'Failed to create workspace metadata'), 500);
@@ -62,9 +81,10 @@ workspaceApi.get('/workspace/:id', async (c) => {
 
   const chainState = ChainStateSchema.safeParse(row.chainState);
   const deployments = DeploymentRecordSchema.array().safeParse(row.deployments);
+  const files = await collectWorkspaceFiles(row.directoryPath || workspaceHostPath(row.id));
 
   const response = WorkspaceGetResponseSchema.parse({
-    files: [],
+    files,
     id: row.id,
     name: row.name,
     createdAt: row.createdAt.getTime(),
