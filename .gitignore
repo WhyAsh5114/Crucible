@@ -26,7 +26,6 @@ bun.lockb
 *.log
 logs/
 
-# Workspace data (per ARCHITECTURE.md)
+# Workspace data
 data/
 .crucible/
-packages/backend/src/generated
