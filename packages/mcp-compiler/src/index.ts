@@ -20,10 +20,15 @@ const PORT = process.env['COMPILER_MCP_PORT']
   : mcp.DEFAULT_MCP_PORTS.compiler;
 
 const IS_MOCK = process.env['COMPILER_MOCK'] === 'true';
+const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 
-console.log(`[mcp-compiler] starting on port ${PORT} (mode: ${IS_MOCK ? 'mock' : 'real'})`);
+console.log(
+  `[mcp-compiler] starting on port ${PORT} (mode: ${
+    IS_MOCK ? 'mock' : 'real'
+  }, workspaceRoot: ${WORKSPACE_ROOT})`,
+);
 
-const mcpServer = createCompilerServer();
+const mcpServer = createCompilerServer({ workspaceRoot: WORKSPACE_ROOT });
 
 // Typed Hono context so c.get('parsedBody') is properly typed.
 type Env = { Variables: { parsedBody: unknown } };

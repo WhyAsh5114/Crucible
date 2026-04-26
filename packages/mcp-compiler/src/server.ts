@@ -6,7 +6,7 @@
  * real solc-js or mock implementations based on COMPILER_MOCK env flag.
  */
 
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import {
   CompileInputSchema,
@@ -37,7 +37,7 @@ function errorResult(message: string): CallToolResult {
   };
 }
 
-export function createCompilerServer(): McpServer {
+export function createCompilerServer(opts: { workspaceRoot: string }): McpServer {
   const server = new McpServer({
     name: 'crucible-compiler',
     version: '0.0.0',
@@ -58,8 +58,9 @@ export function createCompilerServer(): McpServer {
       try {
         if (IS_MOCK) return toolResult(mockCompile(sourcePath));
 
-        const result = compileSolidity(sourcePath, settings as Record<string, unknown>);
-        storeContracts(result.contracts, basename(sourcePath));
+        const absolutePath = join(opts.workspaceRoot, sourcePath);
+        const result = compileSolidity(absolutePath, settings as Record<string, unknown>);
+        storeContracts(result.contracts, basename(absolutePath));
         return toolResult({ contracts: result.contracts });
       } catch (err) {
         return errorResult(`compile failed: ${String(err)}`);
