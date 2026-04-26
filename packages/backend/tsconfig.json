@@ -12,6 +12,5 @@
     "jsxImportSource": "hono/jsx"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"],
-  "references": [{ "path": "../types" }]
+  "exclude": ["node_modules", "dist", "tests"]
 }
