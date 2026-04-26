@@ -61,4 +61,12 @@ apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'cruc
 //   const client = hc<AppType>('/');
 export type AppType = typeof apiRoutes;
 
-export default apiRoutes;
+// Bun's auto-serve uses a 10s idle timeout, which kills SSE streams before
+// the next keepalive ping. Use explicit Bun.serve and disable idle timeout
+// so long-lived `/api/agent/stream` connections stay open.
+const port = Number(process.env['PORT'] ?? 3000);
+export default {
+  port,
+  idleTimeout: 0,
+  fetch: apiRoutes.fetch,
+};

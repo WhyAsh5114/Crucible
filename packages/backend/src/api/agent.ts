@@ -5,14 +5,12 @@
  * carrying real `AgentEvent`s for the given workspace. Authentication is
  * enforced by the upstream `requireSession` middleware in `src/index.ts`.
  *
- * The connection stays open as long as the client holds it. Events arrive
- * via the in-process `agent-bus`; if no producers publish, the stream is
- * silent (real, not faked). A keepalive comment is sent every 25s so
- * intermediaries don't drop idle connections.
+ * Uses a raw ReadableStream Response (not Hono's streamSSE helper) because
+ * Bun's HTTP server only reliably keeps long-lived connections open when the
+ * response body is a native ReadableStream controller.
  */
 
 import { OpenAPIHono } from '@hono/zod-openapi';
-import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { WorkspaceIdSchema } from '@crucible/types';
 import { prisma } from '../lib/prisma';
@@ -23,7 +21,7 @@ const QuerySchema = z.object({
   workspaceId: WorkspaceIdSchema,
 });
 
-const KEEPALIVE_INTERVAL_MS = 25_000;
+const KEEPALIVE_INTERVAL_MS = 15_000;
 
 export const agentApi = new OpenAPIHono().get('/agent/stream', async (c) => {
   const parsed = QuerySchema.safeParse({ workspaceId: c.req.query('workspaceId') });
@@ -44,27 +42,62 @@ export const agentApi = new OpenAPIHono().get('/agent/stream', async (c) => {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 
-  return streamSSE(c, async (stream) => {
-    const subscription = subscribeAgentEvents(workspaceId);
+  const subscription = subscribeAgentEvents(workspaceId);
+  const encoder = new TextEncoder();
 
-    const keepalive = setInterval(() => {
-      // SSE comment frames keep idle connections alive without affecting
-      // the consumer's event log.
-      void stream.writeSSE({ data: '', event: 'keepalive' });
-    }, KEEPALIVE_INTERVAL_MS);
+  const body = new ReadableStream({
+    start(controller) {
+      // Keepalive: SSE comment frames every 15s so intermediaries don't close
+      // idle connections.
+      const keepalive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          clearInterval(keepalive);
+        }
+      }, KEEPALIVE_INTERVAL_MS);
 
-    stream.onAbort(() => {
-      clearInterval(keepalive);
+      // Drain the async iterator in the background.
+      void (async () => {
+        try {
+          for await (const event of subscription.events) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          }
+        } catch {
+          // Subscription closed or stream cancelled.
+        } finally {
+          clearInterval(keepalive);
+          subscription.unsubscribe();
+          try {
+            controller.close();
+          } catch {
+            // Already closed.
+          }
+        }
+      })();
+
+      // Clean up when the client disconnects.
+      c.req.raw.signal.addEventListener('abort', () => {
+        clearInterval(keepalive);
+        subscription.unsubscribe();
+        try {
+          controller.close();
+        } catch {
+          // Already closed.
+        }
+      });
+    },
+    cancel() {
       subscription.unsubscribe();
-    });
+    },
+  });
 
-    try {
-      for await (const event of subscription.events) {
-        await stream.writeSSE({ data: JSON.stringify(event) });
-      }
-    } finally {
-      clearInterval(keepalive);
-      subscription.unsubscribe();
-    }
+  return new Response(body, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
   });
 });

@@ -12,9 +12,12 @@ import type {
 	WorkspaceState
 } from '@crucible/types';
 
-// Browser-relative base — Vite proxies `/api/*` to the backend in dev,
-// and the production reverse proxy serves both under one origin.
-export const apiClient = hc<AppType>('/', {
+// Use window.location.origin so Hono RPC can construct absolute URLs
+// ($url, $post, $get all call `new URL(path, base)` internally).
+// Falls back to a placeholder during SSR — all actual calls happen client-side.
+const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+
+export const apiClient = hc<AppType>(base, {
 	init: { credentials: 'include' }
 });
 

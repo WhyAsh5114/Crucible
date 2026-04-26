@@ -27,6 +27,7 @@
 		"@codemirror/view": "^6.41.1",
 		"@crucible/backend": "workspace:*",
 		"@crucible/types": "workspace:*",
+		"better-auth": "^1.6.9",
 		"@lezer/highlight": "^1.2.3",
 		"@lucide/svelte": "^1.11.0",
 		"@replit/codemirror-lang-solidity": "^6.0.2",

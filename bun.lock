@@ -72,6 +72,7 @@
         "@types/dompurify": "^3.2.0",
         "@wterm/dom": "^0.1.9",
         "ai": "^6.0.168",
+        "better-auth": "^1.6.9",
         "codemirror": "^6.0.2",
         "dompurify": "^3.4.1",
         "hono": "^4.12.15",
