@@ -23,7 +23,18 @@ export async function rpc<T = unknown>(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', method, params, id: 1 }),
   });
-  const data = (await res.json()) as { result?: T; error?: { message: string } };
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(
+      `JSON-RPC request failed: HTTP ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`,
+    );
+  }
+  let data: { result?: T; error?: { message: string } };
+  try {
+    data = (await res.json()) as { result?: T; error?: { message: string } };
+  } catch (e) {
+    throw new Error(`JSON-RPC (${method}): failed to parse response — ${String(e)}`, { cause: e });
+  }
   if (data.error) throw new Error(`JSON-RPC error (${method}): ${data.error.message}`);
   return data.result as T;
 }
