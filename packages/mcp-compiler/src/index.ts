@@ -29,7 +29,7 @@ import {
   GetBytecodeOutputSchema,
   ListContractsOutputSchema,
 } from '@crucible/types/mcp/compiler';
-import { compileSolidity } from './compiler.ts';
+import { compileSolidity, type SolcSettings } from './compiler.ts';
 import {
   storeContracts,
   resolveContract,
@@ -43,6 +43,7 @@ const PORT = process.env['COMPILER_MCP_PORT']
   : mcp.DEFAULT_MCP_PORTS.compiler;
 
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+const SOLC_VERSION = process.env['SOLC_VERSION'];
 
 console.log(`[mcp-compiler] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT})`);
 
@@ -111,7 +112,10 @@ const listContractsRoute = createRoute({
 
 // ── App ─────────────────────────────────────────────────────────────────────
 
-const mcpServer = createCompilerServer({ workspaceRoot: WORKSPACE_ROOT });
+const mcpServer = createCompilerServer({
+  workspaceRoot: WORKSPACE_ROOT,
+  solcVersion: SOLC_VERSION,
+});
 
 type Env = { Variables: { parsedBody: unknown } };
 
@@ -144,7 +148,10 @@ app.openapi(compileRoute, async (c) => {
     if (rel.startsWith('..') || isAbsolute(rel)) {
       return c.json({ error: 'sourcePath must resolve within the workspace root' }, 400);
     }
-    const result = await compileSolidity(absolutePath, settings as Record<string, unknown>);
+    const result = await compileSolidity(absolutePath, {
+      version: SOLC_VERSION,
+      ...(settings ?? {}),
+    } as SolcSettings);
     storeContracts(result.contracts, basename(absolutePath));
     await persistArtifacts(WORKSPACE_ROOT, result.contracts);
     const seen = new Set<string>();

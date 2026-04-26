@@ -15,6 +15,7 @@ import { FileBuildResultType } from 'hardhat/types/solidity';
 import type { CompiledContract, CompilerMessage } from '@crucible/types';
 
 export interface SolcSettings {
+  version?: string | undefined;
   optimizer?: { enabled?: boolean; runs?: number };
   evmVersion?: string;
   [key: string]: unknown;
@@ -44,11 +45,12 @@ export async function compileSolidity(
 ): Promise<CompileResult> {
   const sourcesDir = dirname(absolutePath);
 
+  const solcVersion = settings.version ?? '0.8.28';
   const hre = await createHardhatRuntimeEnvironment(
     defineConfig({
       paths: { sources: sourcesDir },
       solidity: {
-        version: '0.8.28',
+        version: solcVersion,
         settings: {
           optimizer: settings['optimizer'] ?? { enabled: false, runs: 200 },
           evmVersion: settings['evmVersion'] ?? 'cancun',

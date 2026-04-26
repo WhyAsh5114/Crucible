@@ -16,7 +16,7 @@ import {
   type GetAbiInput,
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
-import { compileSolidity } from './compiler.ts';
+import { compileSolidity, type SolcSettings } from './compiler.ts';
 import {
   storeContracts,
   resolveContract,
@@ -38,7 +38,10 @@ function errorResult(message: string): CallToolResult {
   };
 }
 
-export function createCompilerServer(opts: { workspaceRoot: string }): McpServer {
+export function createCompilerServer(opts: {
+  workspaceRoot: string;
+  solcVersion?: string | undefined;
+}): McpServer {
   const server = new McpServer({
     name: 'crucible-compiler',
     version: '0.0.0',
@@ -62,7 +65,10 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
         if (rel.startsWith('..') || isAbsolute(rel)) {
           return errorResult('compile failed: sourcePath must resolve within the workspace root');
         }
-        const result = await compileSolidity(absolutePath, settings as Record<string, unknown>);
+        const result = await compileSolidity(absolutePath, {
+          version: opts.solcVersion,
+          ...(settings ?? {}),
+        } as SolcSettings);
         storeContracts(result.contracts, basename(absolutePath));
         await persistArtifacts(opts.workspaceRoot, result.contracts);
 
