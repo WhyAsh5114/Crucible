@@ -2,7 +2,7 @@
   "name": "@crucible/mcp-compiler",
   "version": "0.0.0",
   "private": true,
-  "description": "MCP server — solc-js Solidity compilation against workspace files.",
+  "description": "MCP server — Hardhat-based Solidity compilation against workspace files.",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
