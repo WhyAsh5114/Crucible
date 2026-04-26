@@ -50,6 +50,14 @@ export function requireNode(): NodeEntry {
   return currentNode;
 }
 
+/** Stop the current node and clear the singleton. Useful for graceful shutdown and test cleanup. */
+export async function stopNode(): Promise<void> {
+  if (currentNode) {
+    await currentNode.server.close();
+    currentNode = null;
+  }
+}
+
 /** Start (or restart) the local Hardhat node. */
 export async function startNode(input: StartNodeInput): Promise<NodeEntry> {
   // Kill any previously running node for this server instance
