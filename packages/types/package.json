@@ -20,7 +20,7 @@
     "build": "tsc -p tsconfig.json",
     "check-types": "tsc --noEmit",
     "test": "bun test",
-    "lint": "eslint \"src/**/*.ts\" --max-warnings=0"
+    "lint": "eslint ."
   },
   "dependencies": {
     "viem": "^2.21.55",

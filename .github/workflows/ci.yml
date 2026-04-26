@@ -24,5 +24,30 @@ jobs:
         env:
           DATABASE_URL: 'postgresql://postgres:postgres@postgres:5432/crucible'
 
+      - name: Cache Hardhat compiler binaries
+        id: cache-hardhat
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: hardhat-compilers-v2-solc-0.8.28
+
+      - name: Setup Node.js 22 (for Hardhat cache warm-up)
+        if: steps.cache-hardhat.outputs.cache-hit != 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Warm Hardhat compiler cache (Node.js)
+        if: steps.cache-hardhat.outputs.cache-hit != 'true'
+        working-directory: packages/mcp-compiler
+        # Use Node.js 22 (not Bun) to trigger Hardhat's own download machinery.
+        # Bun has a known Linux webstreams_adapters crash in Hardhat's fetch-based
+        # compiler downloader; Node.js does not. Node.js 22 is required because
+        # Hardhat 3.x uses Iterator.prototype.flatMap which only landed in Node.js 22
+        # (ubuntu-latest ships Node.js 20 by default).
+        run: node node_modules/.bin/hardhat compile
+
       - name: Run CI verification
-        run: bun run ci:verify
+        run: bun run ci:full
+        env:
+          DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/crucible'

@@ -23,6 +23,8 @@
     "useUnknownInCatchVariables": true,
 
     "noEmit": true,
-    "incremental": true
+    "incremental": true,
+
+    "types": ["bun-types"]
   }
 }

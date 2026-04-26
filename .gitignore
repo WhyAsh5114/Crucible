@@ -28,5 +28,11 @@ logs/
 
 # Workspace data (per ARCHITECTURE.md)
 data/
+
+# Compiled contract artifacts
 .crucible/
+artifacts/
+cache/
+
+# Backend generated files (Prisma client)
 packages/backend/src/generated
