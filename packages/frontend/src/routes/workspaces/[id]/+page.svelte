@@ -22,13 +22,73 @@
 
 	const workspaceId = $derived(page.params.id);
 
+	// Poll the workspace endpoint while the runtime is still booting so the
+	// status bar / terminal / preview pick up `terminalSessionId`, `chainState`,
+	// and `previewUrl` once the Docker container reports ready. The single
+	// initial fetch alone leaves the UI permanently stuck if the container
+	// hasn't finished booting by the time the page mounts (default 60s).
+	const POLL_INTERVAL_MS = 2000;
+	const POLL_MAX_MS = 120_000;
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let pollStartedAt = 0;
+	let pollWorkspaceId: string | null = null;
+
+	function workspaceIsBooted(ws: WorkspaceState | null): boolean {
+		// `previewUrl` is intentionally excluded — it depends on a not-yet-wired
+		// preview supervisor and would otherwise force polling forever.
+		return Boolean(ws && ws.chainState && ws.terminalSessionId);
+	}
+
+	function clearPoll(): void {
+		if (pollTimer) {
+			clearTimeout(pollTimer);
+			pollTimer = null;
+		}
+		pollWorkspaceId = null;
+	}
+
+	function schedulePoll(id: string): void {
+		if (pollTimer) clearTimeout(pollTimer);
+		pollTimer = setTimeout(() => {
+			void pollWorkspace(id);
+		}, POLL_INTERVAL_MS);
+	}
+
+	async function pollWorkspace(id: string): Promise<void> {
+		// Guard against stale timers firing after navigation/unmount.
+		if (pollWorkspaceId !== id) return;
+		try {
+			const next = await workspaceClient.getWorkspace(id);
+			if (pollWorkspaceId !== id) return;
+			workspace = next;
+			if (workspaceIsBooted(next)) {
+				clearPoll();
+				return;
+			}
+		} catch {
+			// Swallow transient polling errors; the next tick will retry. The
+			// initial load already surfaced any hard failure via `loadError`.
+		}
+		if (Date.now() - pollStartedAt >= POLL_MAX_MS) {
+			clearPoll();
+			return;
+		}
+		schedulePoll(id);
+	}
+
 	async function loadWorkspace(id: string): Promise<void> {
+		clearPoll();
 		loading = true;
 		loadError = null;
 		workspace = null;
 		try {
 			workspace = await workspaceClient.getWorkspace(id);
 			stream.start(workspace.id);
+			if (!workspaceIsBooted(workspace)) {
+				pollWorkspaceId = id;
+				pollStartedAt = Date.now();
+				schedulePoll(id);
+			}
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -49,6 +109,7 @@
 	});
 
 	onDestroy(() => {
+		clearPoll();
 		stream.stop();
 	});
 </script>
