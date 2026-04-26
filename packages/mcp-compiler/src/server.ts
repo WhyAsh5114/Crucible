@@ -6,7 +6,7 @@
  * real solc-js or mock implementations based on COMPILER_MOCK env flag.
  */
 
-import { basename, join } from 'node:path';
+import { basename, join, relative, isAbsolute } from 'node:path';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import {
   CompileInputSchema,
@@ -18,7 +18,12 @@ import {
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
 import { compileSolidity } from './compiler.ts';
-import { storeContracts, resolveContract, listContractNames, persistArtifacts } from './artifact-store.ts';
+import {
+  storeContracts,
+  resolveContract,
+  listContractNames,
+  persistArtifacts,
+} from './artifact-store.ts';
 import { mockCompile, mockGetAbi, mockGetBytecode, mockListContracts } from './mock.ts';
 
 const IS_MOCK = process.env['MOCK_COMPILER'] === 'true';
@@ -59,6 +64,10 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
         if (IS_MOCK) return toolResult(mockCompile(sourcePath));
 
         const absolutePath = join(opts.workspaceRoot, sourcePath);
+        const rel = relative(opts.workspaceRoot, absolutePath);
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          return errorResult('compile failed: sourcePath must resolve within the workspace root');
+        }
         const result = compileSolidity(absolutePath, settings as Record<string, unknown>);
         storeContracts(result.contracts, basename(absolutePath));
         await persistArtifacts(opts.workspaceRoot, result.contracts);

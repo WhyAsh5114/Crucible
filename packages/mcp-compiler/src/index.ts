@@ -12,6 +12,7 @@
 
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { localhostHostValidation } from '@modelcontextprotocol/hono';
+import { existsSync } from 'node:fs';
 import { Hono } from 'hono';
 import { mcp } from '@crucible/types';
 import { createCompilerServer } from './server.ts';
@@ -28,6 +29,10 @@ console.log(
     IS_MOCK ? 'mock' : 'real'
   }, workspaceRoot: ${WORKSPACE_ROOT})`,
 );
+
+if (!IS_MOCK && !existsSync(WORKSPACE_ROOT)) {
+  throw new Error(`[mcp-compiler] WORKSPACE_ROOT does not exist: ${WORKSPACE_ROOT}`);
+}
 
 const mcpServer = createCompilerServer({ workspaceRoot: WORKSPACE_ROOT });
 

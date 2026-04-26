@@ -29,7 +29,10 @@ export function storeContracts(contracts: CompiledContract[], sourceFile?: strin
   if (sourceFile !== undefined) {
     const previous = sourceFileMap.get(sourceFile) ?? [];
     for (const name of previous) store.delete(name);
-    sourceFileMap.set(sourceFile, contracts.map((c) => c.name));
+    sourceFileMap.set(
+      sourceFile,
+      contracts.map((c) => c.name),
+    );
   }
   for (const contract of contracts) {
     store.set(contract.name, contract);
