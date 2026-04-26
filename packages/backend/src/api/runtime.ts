@@ -9,8 +9,8 @@ import { Hono } from 'hono';
 import { prisma } from '../lib/prisma';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
-import { ensureWorkspaceContainer } from '../lib/runtime-docker';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
+import { ensureWorkspaceContainer, stopWorkspaceContainer } from '../lib/runtime-docker';
 
 export const runtimeApi = new Hono();
 
@@ -130,6 +130,54 @@ runtimeApi.post('/runtime', async (c) => {
       descriptors,
     });
     return c.json(response, 200);
+  }
+
+  if (parsed.data.type === 'close_workspace') {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: parsed.data.workspaceId },
+      include: { runtime: true },
+    });
+
+    if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    try {
+      await stopWorkspaceContainer(workspace.id);
+
+      if (workspace.runtime) {
+        await prisma.workspaceRuntime.update({
+          where: { workspaceId: workspace.id },
+          data: {
+            status: 'stopped',
+            previewUrl: null,
+            terminalSessionId: null,
+            chainPort: null,
+            compilerPort: null,
+            deployerPort: null,
+            walletPort: null,
+            terminalPort: null,
+            chainState: Prisma.JsonNull,
+          },
+        });
+      }
+
+      const response = RuntimeResponseSchema.parse({
+        correlationId: parsed.data.correlationId,
+        type: 'close_workspace',
+        ok: true,
+      });
+
+      return c.json(response, 200);
+    } catch (error) {
+      return c.json(
+        createApiErrorBody(
+          'runtime_unavailable',
+          error instanceof Error ? error.message : 'Failed to close runtime container',
+        ),
+        503,
+      );
+    }
   }
 
   return c.json(
