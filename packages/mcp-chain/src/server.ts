@@ -35,7 +35,7 @@ function errorResult(message: string): CallToolResult {
   };
 }
 
-export function createChainServer(): McpServer {
+export function createChainServer(workspaceId: string): McpServer {
   const server = new McpServer({
     name: 'crucible-chain',
     version: '0.0.0',
@@ -53,7 +53,7 @@ export function createChainServer(): McpServer {
     },
     async (input: StartNodeInput) => {
       try {
-        const node = await startNode(input);
+        const node = await startNode(workspaceId, input);
         return toolResult({ rpcUrl: node.rpcUrl, chainId: node.chainId });
       } catch (err) {
         return errorResult(`start_node failed: ${String(err)}`);
@@ -71,7 +71,7 @@ export function createChainServer(): McpServer {
     },
     async () => {
       try {
-        const node = requireNode();
+        const node = requireNode(workspaceId);
 
         const [rawBlock, rawGasPrice, accounts] = await Promise.all([
           rpc<string>(node.rpcUrl, 'eth_blockNumber'),
@@ -105,7 +105,7 @@ export function createChainServer(): McpServer {
     },
     async () => {
       try {
-        const node = requireNode();
+        const node = requireNode(workspaceId);
         const snapshotId = await rpc<string>(node.rpcUrl, 'evm_snapshot');
         node.snapshotIds.push(snapshotId);
         return toolResult({ snapshotId });
@@ -125,7 +125,7 @@ export function createChainServer(): McpServer {
     },
     async ({ snapshotId }: RevertInput) => {
       try {
-        const node = requireNode();
+        const node = requireNode(workspaceId);
         const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
         // evm_revert consumes the target snapshot and invalidates all later ones.
         if (success) {
@@ -153,7 +153,7 @@ export function createChainServer(): McpServer {
     },
     async ({ blocks }: MineInput) => {
       try {
-        const node = requireNode();
+        const node = requireNode(workspaceId);
         // hardhat_mine accepts hex-encoded block count
         await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
         const rawBlock = await rpc<string>(node.rpcUrl, 'eth_blockNumber');
@@ -175,7 +175,7 @@ export function createChainServer(): McpServer {
     },
     async (input: ForkInput) => {
       try {
-        const node = requireNode();
+        const node = requireNode(workspaceId);
         await forkNode(node.rpcUrl, {
           rpcUrl: input.rpcUrl,
           ...(input.blockNumber !== undefined ? { blockNumber: input.blockNumber } : {}),

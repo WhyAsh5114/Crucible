@@ -49,32 +49,38 @@ export interface NodeEntry {
   server: { close(): Promise<void> };
 }
 
-/** Singleton node state — one Hardhat node per MCP server instance. */
-let currentNode: NodeEntry | null = null;
+/** Per-workspace node state — one Hardhat node per workspace. */
+const nodes = new Map<string, NodeEntry>();
 
-export function getNode(): NodeEntry | null {
-  return currentNode;
+export function getNode(workspaceId: string): NodeEntry | null {
+  return nodes.get(workspaceId) ?? null;
 }
 
-export function requireNode(): NodeEntry {
-  if (!currentNode) throw new Error('No active Hardhat node — call start_node first');
-  return currentNode;
+export function requireNode(workspaceId: string): NodeEntry {
+  const node = nodes.get(workspaceId);
+  if (!node)
+    throw new Error(
+      `No active Hardhat node for workspace "${workspaceId}" — call start_node first`,
+    );
+  return node;
 }
 
-/** Stop the current node and clear the singleton. Useful for graceful shutdown and test cleanup. */
-export async function stopNode(): Promise<void> {
-  if (currentNode) {
-    await currentNode.server.close();
-    currentNode = null;
+/** Stop the node for a workspace and remove it from the registry. */
+export async function stopNode(workspaceId: string): Promise<void> {
+  const node = nodes.get(workspaceId);
+  if (node) {
+    await node.server.close();
+    nodes.delete(workspaceId);
   }
 }
 
-/** Start (or restart) the local Hardhat node. */
-export async function startNode(input: StartNodeInput): Promise<NodeEntry> {
-  // Kill any previously running node for this server instance
-  if (currentNode) {
-    await currentNode.server.close();
-    currentNode = null;
+/** Start (or restart) the Hardhat node for the given workspace. */
+export async function startNode(workspaceId: string, input: StartNodeInput): Promise<NodeEntry> {
+  // Kill any previously running node for this workspace
+  const existing = nodes.get(workspaceId);
+  if (existing) {
+    await existing.server.close();
+    nodes.delete(workspaceId);
   }
 
   const forkingConfig =
@@ -130,7 +136,7 @@ export async function startNode(input: StartNodeInput): Promise<NodeEntry> {
     server,
     ...(forkBlock !== undefined ? { forkBlock } : {}),
   };
-  currentNode = entry;
+  nodes.set(workspaceId, entry);
   return entry;
 }
 
