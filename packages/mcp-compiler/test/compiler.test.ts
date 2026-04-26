@@ -19,7 +19,9 @@ describe('compileSolidity — Counter.sol', () => {
 
   it('returns a fully-qualified contract name', async () => {
     const { contracts } = await compileSolidity(FIXTURE);
-    expect(contracts[0]?.name).toBe('Counter.sol:Counter');
+    // sourceName is the workspace-relative path emitted by Hardhat (e.g.
+    // "packages/mcp-compiler/test/fixtures/Counter.sol:Counter").
+    expect(contracts[0]?.name).toMatch(/Counter\.sol:Counter$/);
   });
 
   it('returns a non-empty ABI array', async () => {
