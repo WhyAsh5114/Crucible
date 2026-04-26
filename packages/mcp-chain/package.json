@@ -10,7 +10,7 @@
     "start": "bun run src/index.ts",
     "build": "echo 'Bun runtime — no compile step'",
     "check-types": "tsc --noEmit",
-    "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
+    "lint": "eslint .",
     "test": "bun test"
   },
   "dependencies": {
