@@ -8,7 +8,7 @@
  */
 
 import { readFile, readdir } from 'node:fs/promises';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { createHardhatRuntimeEnvironment } from 'hardhat/hre';
 import { defineConfig } from 'hardhat/config';
 import { FileBuildResultType } from 'hardhat/types/solidity';
@@ -93,20 +93,29 @@ export async function compileSolidity(
       if (result.contractArtifactsGenerated.length > 0) {
         artifactPaths.push(...result.contractArtifactsGenerated);
       } else {
-        // Use sourcesDir (== dirname(absolutePath)) as the base so rel is always
-        // just the filename and can never contain ".." segments that would
-        // allow the artifactDir to escape hre.config.paths.artifacts.
-        const rel = relative(sourcesDir, absolutePath);
+        // Hardhat stores artifacts keyed by workspace-relative path (relative to
+        // cwd), e.g. artifacts/packages/foo/Bar.sol/Bar.json. Use cwd-relative
+        // path so we look in the correct directory.
+        const rel = relative(process.cwd(), absolutePath);
         const artifactDir = join(hre.config.paths.artifacts, rel);
-        try {
-          const files = await readdir(artifactDir);
-          artifactPaths.push(
-            ...files
-              .filter((f) => f.endsWith('.json') && f !== 'artifacts.d.ts')
-              .map((f) => join(artifactDir, f)),
-          );
-        } catch {
-          // directory may not exist if the file had no contracts
+        // Containment check: ensure the resolved dir is still inside the
+        // Hardhat artifacts root (guards against absolutePath outside cwd).
+        const artifactsRoot = resolve(hre.config.paths.artifacts);
+        const resolvedArtifactDir = resolve(artifactDir);
+        if (
+          resolvedArtifactDir.startsWith(artifactsRoot + sep) ||
+          resolvedArtifactDir === artifactsRoot
+        ) {
+          try {
+            const files = await readdir(resolvedArtifactDir);
+            artifactPaths.push(
+              ...files
+                .filter((f) => f.endsWith('.json') && f !== 'artifacts.d.ts')
+                .map((f) => join(resolvedArtifactDir, f)),
+            );
+          } catch {
+            // directory may not exist if the file had no contracts
+          }
         }
       }
     } else {
