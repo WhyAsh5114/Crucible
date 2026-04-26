@@ -91,7 +91,7 @@ export async function persistArtifacts(
   await mkdir(artifactsDir, { recursive: true });
   await Promise.all(
     contracts.map((c) => {
-      const fileName = `${c.name.replace(':', '__')}.json`;
+      const fileName = `${c.name.replace(/[:/\\]/g, '__')}.json`;
       return writeFile(join(artifactsDir, fileName), JSON.stringify(c, null, 2), 'utf8');
     }),
   );

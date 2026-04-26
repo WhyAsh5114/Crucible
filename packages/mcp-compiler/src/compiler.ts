@@ -8,7 +8,7 @@
  */
 
 import { readFile, readdir } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createHardhatRuntimeEnvironment } from 'hardhat/hre';
 import { defineConfig } from 'hardhat/config';
 import { FileBuildResultType } from 'hardhat/types/solidity';
@@ -93,10 +93,10 @@ export async function compileSolidity(
       if (result.contractArtifactsGenerated.length > 0) {
         artifactPaths.push(...result.contractArtifactsGenerated);
       } else {
-        // Hardhat stores artifacts keyed by workspace-relative path (relative to
-        // cwd), e.g. artifacts/packages/foo/Bar.sol/Bar.json. Use cwd-relative
-        // path so we look in the correct directory.
-        const rel = relative(process.cwd(), absolutePath);
+        // Hardhat's configured sources directory IS dirname(absolutePath), so the
+        // sourceName Hardhat assigns is just basename(absolutePath) — no cwd
+        // dependency, no ".." segments when absolutePath is outside process.cwd().
+        const rel = basename(absolutePath);
         const artifactDir = join(hre.config.paths.artifacts, rel);
         // Containment check: ensure the resolved dir is still inside the
         // Hardhat artifacts root (guards against absolutePath outside cwd).
