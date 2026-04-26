@@ -70,18 +70,19 @@ export async function startNode(input: StartNodeInput): Promise<NodeEntry> {
     networks: {
       hardhat:
         forkingConfig !== undefined
-          ? { type: 'edr-simulated' as const, chainId: 31337, loggingEnabled: false, forking: forkingConfig }
+          ? {
+              type: 'edr-simulated' as const,
+              chainId: 31337,
+              loggingEnabled: false,
+              forking: forkingConfig,
+            }
           : { type: 'edr-simulated' as const, chainId: 31337, loggingEnabled: false },
     },
   });
 
   const hre = await createHardhatRuntimeEnvironment(config);
 
-  const server = await hre.network.createServer(
-    { network: 'hardhat' },
-    '127.0.0.1',
-    0,
-  );
+  const server = await hre.network.createServer({ network: 'hardhat' }, '127.0.0.1', 0);
 
   const { address, port } = await server.listen();
   const rpcUrl = `http://${address}:${port}`;

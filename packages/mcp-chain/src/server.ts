@@ -142,9 +142,9 @@ export function createChainServer(): McpServer {
         if (IS_MOCK) return toolResult(mockRevert(snapshotId));
         const node = requireNode();
         const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
-        // A snapshot can only be used once; remove it from tracking
+        // evm_revert consumes the target snapshot and invalidates all later ones.
         const idx = node.snapshotIds.indexOf(snapshotId);
-        if (idx !== -1) node.snapshotIds.splice(idx, 1);
+        if (idx !== -1) node.snapshotIds.splice(idx);
         return toolResult({ success });
       } catch (err) {
         return errorResult(`revert failed: ${String(err)}`);
@@ -179,12 +179,13 @@ export function createChainServer(): McpServer {
   server.registerTool(
     'fork',
     {
-      description: 'Switch the running node to fork from an external RPC endpoint.',
+      description:
+        'Switch the running node to fork from an external RPC endpoint. Requires start_node to have been called first.',
       inputSchema: ForkInputSchema,
     },
     async (input: ForkInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockFork());
+        if (IS_MOCK) return toolResult(mockFork(input.blockNumber));
         const node = requireNode();
         await forkNode(node.rpcUrl, {
           rpcUrl: input.rpcUrl,
@@ -192,7 +193,12 @@ export function createChainServer(): McpServer {
         });
         node.isForked = true;
         node.snapshotIds = [];
-        if (input.blockNumber !== undefined) node.forkBlock = input.blockNumber;
+        // Always update forkBlock — clear it when forking to latest.
+        if (input.blockNumber !== undefined) {
+          node.forkBlock = input.blockNumber;
+        } else {
+          delete node.forkBlock;
+        }
         return toolResult({ rpcUrl: node.rpcUrl, chainId: node.chainId });
       } catch (err) {
         return errorResult(`fork failed: ${String(err)}`);
