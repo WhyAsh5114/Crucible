@@ -12,11 +12,13 @@ import {
   mockRevert,
   mockMine,
   mockFork,
+  resetMockState,
 } from '../src/mock.ts';
 
-// Reset mock module-level state between tests by re-importing a fresh copy.
-// Bun's test runner executes each file in its own module scope, so we
-// manipulate the exported state through the public API only.
+// Reset all mock module-level state before every test for full isolation.
+beforeEach(() => {
+  resetMockState();
+});
 
 describe('mockStartNode', () => {
   it('returns a valid rpc URL and chain ID', () => {
@@ -62,6 +64,29 @@ describe('mockSnapshot / mockRevert', () => {
     const { success } = mockRevert(snapshotId);
     expect(success).toBe(false);
   });
+
+  it('reverting to an earlier snapshot invalidates all subsequent ones', () => {
+    const { snapshotId: first } = mockSnapshot();
+    const { snapshotId: second } = mockSnapshot();
+    const { snapshotId: third } = mockSnapshot();
+
+    // Revert to first — EVM semantics: first is consumed, second and third are invalid
+    const { success } = mockRevert(first);
+    expect(success).toBe(true);
+
+    expect(mockRevert(second).success).toBe(false);
+    expect(mockRevert(third).success).toBe(false);
+  });
+
+  it('reverting to a later snapshot keeps earlier snapshots usable', () => {
+    const { snapshotId: first } = mockSnapshot();
+    const { snapshotId: second } = mockSnapshot();
+
+    // Revert to second — first was taken before second, so it should still be valid
+    mockRevert(second);
+
+    expect(mockRevert(first).success).toBe(true);
+  });
 });
 
 describe('mockMine', () => {
@@ -70,6 +95,34 @@ describe('mockMine', () => {
     const { newBlockNumber } = mockMine(3);
     expect(newBlockNumber).toBe(before + 3);
     expect(mockGetState().blockNumber).toBe(before + 3);
+  });
+});
+
+describe('mockFork', () => {
+  it('sets isForked to true in subsequent get_state', () => {
+    expect(mockGetState().isForked).toBe(false);
+    mockFork();
+    expect(mockGetState().isForked).toBe(true);
+  });
+
+  it('clears active snapshots on fork', () => {
+    mockSnapshot();
+    mockSnapshot();
+    expect(mockGetState().activeSnapshotIds).toHaveLength(2);
+    mockFork();
+    expect(mockGetState().activeSnapshotIds).toHaveLength(0);
+  });
+
+  it('records forkBlock when a block number is provided', () => {
+    mockFork(12345678);
+    const state = mockGetState();
+    expect(state.forkBlock).toBe(12345678);
+  });
+
+  it('clears forkBlock when forking to latest (no blockNumber)', () => {
+    mockFork(12345678);
+    mockFork(); // fork to latest
+    expect(mockGetState().forkBlock).toBeUndefined();
   });
 });
 
