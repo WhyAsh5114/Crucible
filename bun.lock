@@ -21,6 +21,7 @@
       "name": "@crucible/mcp-chain",
       "version": "0.0.0",
       "dependencies": {
+        "@cfworker/json-schema": "^4.1.1",
         "@crucible/types": "workspace:*",
         "@modelcontextprotocol/hono": "2.0.0-alpha.2",
         "@modelcontextprotocol/server": "2.0.0-alpha.2",
@@ -38,6 +39,7 @@
       "name": "@crucible/mcp-compiler",
       "version": "0.0.0",
       "dependencies": {
+        "@cfworker/json-schema": "^4.1.1",
         "@crucible/types": "workspace:*",
         "@modelcontextprotocol/hono": "2.0.0-alpha.2",
         "@modelcontextprotocol/server": "2.0.0-alpha.2",
@@ -64,6 +66,8 @@
   },
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.1", "", {}, "sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ=="],
+
+    "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
 
     "@crucible/mcp-chain": ["@crucible/mcp-chain@workspace:packages/mcp-chain"],
 

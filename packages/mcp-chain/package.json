@@ -14,6 +14,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@crucible/types": "workspace:*",
     "@modelcontextprotocol/hono": "2.0.0-alpha.2",
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
