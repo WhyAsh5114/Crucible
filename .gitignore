@@ -26,10 +26,12 @@ bun.lockb
 *.log
 logs/
 
-# Workspace data (per ARCHITECTURE.md)
+# Workspace data
 data/
 
 # Compiled contract artifacts
 .crucible/
 artifacts/
 cache/
+
+# Backend generated files (Prisma client) — see packages/backend/.gitignore

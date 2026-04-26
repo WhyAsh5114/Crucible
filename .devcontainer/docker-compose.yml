@@ -6,11 +6,6 @@ services:
       - ..:/workspaces/Crucible:cached
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/crucible
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: '5432'
-      POSTGRES_DB: crucible
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
     depends_on:
       postgres:
         condition: service_healthy

@@ -70,11 +70,11 @@ This lets you keep the UX identical while moving the dangerous code execution bo
 | Compiler artifacts            | Persistent host volume | Stored under workspace `.crucible/artifacts/` |
 | Deployment metadata           | Persistent host volume | Stored under workspace `.crucible/state.json` |
 | Terminal logs                 | Persistent host volume | Stored under workspace `.crucible/logs/`      |
-| Session metadata              | SQLite on host volume  | Good enough for a single-host MVP             |
+| Session metadata              | PostgreSQL             | Required by better-auth's Prisma adapter      |
 | Agent memory / verified fixes | 0G Storage             | Cross-session, cross-node memory              |
 | Public-chain execution trail  | KeeperHub              | External provenance system                    |
 
-For the MVP, **SQLite + filesystem** is the right choice. Do not add Postgres unless you genuinely outgrow it.
+For the MVP, **PostgreSQL + filesystem** is the chosen configuration. The authentication layer (better-auth with the Prisma adapter) requires a relational database; PostgreSQL was selected over SQLite because the `@prisma/adapter-pg` driver provides the pg wire protocol and avoids Prisma's locked-file limitations in containerised environments. The devcontainer provisions a local Postgres service automatically.
 
 ---
 
@@ -160,7 +160,7 @@ Flow:
 
 Flow:
 
-- Control plane creates a workspace record in SQLite
+- Control plane creates a workspace record in PostgreSQL
 - Control plane creates a workspace directory on the persistent volume
 - Control plane starts a new workspace runner container if one is not already running
 - Runner mounts that workspace directory
@@ -241,7 +241,7 @@ Responsibilities:
 
 - Serves frontend shell
 - Auth / session management
-- SQLite metadata
+- PostgreSQL metadata
 - Agent orchestration
 - MCP coordination
 - Calls out to 0G, KeeperHub, AXL
