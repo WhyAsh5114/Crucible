@@ -18,7 +18,7 @@ import {
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
 import { compileSolidity } from './compiler.ts';
-import { storeContracts, resolveContract, listContractNames } from './artifact-store.ts';
+import { storeContracts, resolveContract, listContractNames, persistArtifacts } from './artifact-store.ts';
 import { mockCompile, mockGetAbi, mockGetBytecode, mockListContracts } from './mock.ts';
 
 const IS_MOCK = process.env['COMPILER_MOCK'] === 'true';
@@ -61,6 +61,7 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
         const absolutePath = join(opts.workspaceRoot, sourcePath);
         const result = compileSolidity(absolutePath, settings as Record<string, unknown>);
         storeContracts(result.contracts, basename(absolutePath));
+        await persistArtifacts(opts.workspaceRoot, result.contracts);
         return toolResult({ contracts: result.contracts });
       } catch (err) {
         return errorResult(`compile failed: ${String(err)}`);

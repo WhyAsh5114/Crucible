@@ -8,6 +8,8 @@
  * Key format: fully-qualified solc name, e.g. "Counter.sol:Counter".
  */
 
+import { writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { CompiledContract } from '@crucible/types';
 
 const store = new Map<string, CompiledContract>();
@@ -65,4 +67,27 @@ export function listContractNames(): string[] {
 export function clearStore(): void {
   store.clear();
   sourceFileMap.clear();
+}
+
+/**
+ * Write compiled artifacts to `{workspaceRoot}/.crucible/artifacts/`.
+ *
+ * One JSON file is written per contract. The filename is the fully-qualified
+ * contract name with `:` replaced by `__` so it is filesystem-safe:
+ * `Counter.sol:Counter` → `Counter.sol__Counter.json`.
+ *
+ * The directory is created if it does not already exist.
+ */
+export async function persistArtifacts(
+  workspaceRoot: string,
+  contracts: CompiledContract[],
+): Promise<void> {
+  const artifactsDir = join(workspaceRoot, '.crucible', 'artifacts');
+  await mkdir(artifactsDir, { recursive: true });
+  await Promise.all(
+    contracts.map((c) => {
+      const fileName = `${c.name.replace(':', '__')}.json`;
+      return writeFile(join(artifactsDir, fileName), JSON.stringify(c, null, 2), 'utf8');
+    }),
+  );
 }
