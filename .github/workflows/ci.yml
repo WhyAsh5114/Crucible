@@ -25,20 +25,26 @@ jobs:
 
       - name: Cache Hardhat compiler binaries
         id: cache-hardhat
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/hardhat-nodejs
-          key: hardhat-compilers-solc-0.8.28
+          key: hardhat-compilers-v2-solc-0.8.28
 
-      - name: Pre-download solc binary
+      - name: Setup Node.js 22 (for Hardhat cache warm-up)
         if: steps.cache-hardhat.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64
-          curl -sfL "https://binaries.soliditylang.org/linux-amd64/list.json" \
-            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/list.json
-          curl -sfL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a" \
-            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
-          chmod +x ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Warm Hardhat compiler cache (Node.js)
+        if: steps.cache-hardhat.outputs.cache-hit != 'true'
+        working-directory: packages/mcp-compiler
+        # Use Node.js 22 (not Bun) to trigger Hardhat's own download machinery.
+        # Bun has a known Linux webstreams_adapters crash in Hardhat's fetch-based
+        # compiler downloader; Node.js does not. Node.js 22 is required because
+        # Hardhat 3.x uses Iterator.prototype.flatMap which only landed in Node.js 22
+        # (ubuntu-latest ships Node.js 20 by default).
+        run: node node_modules/.bin/hardhat compile
 
       - name: Run CI verification
         run: bun run ci:full
