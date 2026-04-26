@@ -68,3 +68,59 @@ describe('compileSolidity — Counter.sol', () => {
     expect(names).toContain('reset');
   });
 });
+
+// ── Inline source (temp-file path) ────────────────────────────────────────
+
+const INLINE_SOURCE = `\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+contract Minimal {
+  uint256 public value;
+  function set(uint256 v) external { value = v; }
+}
+`;
+
+describe('compileSolidity — inline source via temp file', () => {
+  it('compiles inline source written to a temp directory', async () => {
+    const tempDir = await mkdtemp(join(resolve(import.meta.dir), '.tmp-inline-'));
+    const tempPath = join(tempDir, 'Minimal.sol');
+
+    try {
+      await writeFile(tempPath, INLINE_SOURCE, 'utf8');
+      const { contracts, errors } = await compileSolidity(tempPath);
+      expect(errors).toHaveLength(0);
+      expect(contracts.length).toBeGreaterThan(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('inline-compiled contract has 0x-prefixed bytecode', async () => {
+    const tempDir = await mkdtemp(join(resolve(import.meta.dir), '.tmp-inline-'));
+    const tempPath = join(tempDir, 'Minimal.sol');
+
+    try {
+      await writeFile(tempPath, INLINE_SOURCE, 'utf8');
+      const { contracts } = await compileSolidity(tempPath);
+      expect(contracts[0]?.bytecode.startsWith('0x')).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws for invalid Solidity', async () => {
+    const tempDir = await mkdtemp(join(resolve(import.meta.dir), '.tmp-inline-'));
+    const tempPath = join(tempDir, 'Bad.sol');
+
+    try {
+      await writeFile(
+        tempPath,
+        '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract {',
+        'utf8',
+      );
+      await expect(compileSolidity(tempPath)).rejects.toThrow(/solc compilation failed/);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});

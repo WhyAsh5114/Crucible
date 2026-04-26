@@ -125,3 +125,37 @@ describe('snapshot and revert', () => {
     expect(node.snapshotIds).not.toContain(id3);
   });
 });
+
+// ── fork (via startNode restart) ────────────────────────────────────────────
+//
+// The `fork` tool re-uses startNode to restart the node with fork config —
+// hardhat_reset is not supported in Hardhat v3's edr-simulated network.
+// These tests verify that startNode restart semantics work correctly, which
+// is all that fork depends on (external RPC connectivity is not tested in CI).
+
+describe('fork — node restart semantics', () => {
+  it('calling startNode twice replaces the existing node entry', async () => {
+    const first = await startNode('fork-ws', {});
+    const firstUrl = first.rpcUrl;
+    const second = await startNode('fork-ws', {});
+
+    // A fresh node gets a new port, so rpcUrl changes.
+    expect(second.rpcUrl).not.toBe(firstUrl);
+    expect(getNode('fork-ws')?.rpcUrl).toBe(second.rpcUrl);
+
+    await stopNode('fork-ws');
+  });
+
+  it('restarted node starts with empty snapshotIds and isForked false', async () => {
+    // Start, take a snapshot, then restart.
+    const first = await startNode('fork-ws2', {});
+    first.snapshotIds.push(await rpc<string>(first.rpcUrl, 'evm_snapshot'));
+    expect(first.snapshotIds).toHaveLength(1);
+
+    const second = await startNode('fork-ws2', {});
+    expect(second.snapshotIds).toHaveLength(0);
+    expect(second.isForked).toBe(false);
+
+    await stopNode('fork-ws2');
+  });
+});
