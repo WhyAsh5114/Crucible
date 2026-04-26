@@ -28,17 +28,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/hardhat-nodejs
-          key: hardhat-compilers-solc-0.8.28
+          key: hardhat-compilers-v2-solc-0.8.28
 
-      - name: Pre-download solc binary
+      - name: Warm Hardhat compiler cache (Node.js)
         if: steps.cache-hardhat.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64
-          curl -sfL "https://binaries.soliditylang.org/linux-amd64/list.json" \
-            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/list.json
-          curl -sfL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a" \
-            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
-          chmod +x ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
+        working-directory: packages/mcp-compiler
+        # Use Node.js (not Bun) to trigger Hardhat's own download machinery.
+        # Bun has a known Linux webstreams_adapters crash in Hardhat's fetch-based
+        # compiler downloader; Node.js does not. Hardhat manages its own cache layout
+        # and verification metadata, so the cached binary is trusted on subsequent runs.
+        run: node node_modules/.bin/hardhat compile
 
       - name: Run CI verification
         run: bun run ci:full
