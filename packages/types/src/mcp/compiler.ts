@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod';
-import { AbiSchema, CompiledContractSchema } from '../compiler.ts';
+import { AbiSchema, CompiledContractSchema, CompilerMessageSchema } from '../compiler.ts';
 import { HexSchema } from '../primitives.ts';
 
 export const CompileInputSchema = z.object({
@@ -14,6 +14,8 @@ export const CompileInputSchema = z.object({
 });
 export const CompileOutputSchema = z.object({
   contracts: z.array(CompiledContractSchema),
+  /** All warnings emitted across every contract in the file, deduplicated by message text. */
+  warnings: z.array(CompilerMessageSchema).optional(),
 });
 export type CompileInput = z.infer<typeof CompileInputSchema>;
 export type CompileOutput = z.infer<typeof CompileOutputSchema>;

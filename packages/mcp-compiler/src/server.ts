@@ -62,7 +62,20 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
         const result = compileSolidity(absolutePath, settings as Record<string, unknown>);
         storeContracts(result.contracts, basename(absolutePath));
         await persistArtifacts(opts.workspaceRoot, result.contracts);
-        return toolResult({ contracts: result.contracts });
+
+        // Deduplicate warnings by message text and surface them at the top level
+        // so the agent sees a clean summary without iterating over every contract.
+        const seen = new Set<string>();
+        const topWarnings = result.warnings.filter((w) => {
+          if (seen.has(w.message)) return false;
+          seen.add(w.message);
+          return true;
+        });
+
+        return toolResult({
+          contracts: result.contracts,
+          ...(topWarnings.length > 0 ? { warnings: topWarnings } : {}),
+        });
       } catch (err) {
         return errorResult(`compile failed: ${String(err)}`);
       }

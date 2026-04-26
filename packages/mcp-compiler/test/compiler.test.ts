@@ -19,22 +19,19 @@ describe('compileSolidity — Counter.sol', () => {
 
   it('returns a fully-qualified contract name', () => {
     const { contracts } = compileSolidity(FIXTURE);
-    const [c] = contracts;
-    expect(c.name).toBe('Counter.sol:Counter');
+    expect(contracts[0]?.name).toBe('Counter.sol:Counter');
   });
 
   it('returns a non-empty ABI array', () => {
     const { contracts } = compileSolidity(FIXTURE);
-    const [c] = contracts;
-    expect(Array.isArray(c.abi)).toBe(true);
-    expect(c.abi.length).toBeGreaterThan(0);
+    expect(Array.isArray(contracts[0]?.abi)).toBe(true);
+    expect((contracts[0]?.abi ?? []).length).toBeGreaterThan(0);
   });
 
   it('returns 0x-prefixed bytecode', () => {
     const { contracts } = compileSolidity(FIXTURE);
-    const [c] = contracts;
-    expect(c.bytecode.startsWith('0x')).toBe(true);
-    expect(c.deployedBytecode.startsWith('0x')).toBe(true);
+    expect(contracts[0]?.bytecode.startsWith('0x')).toBe(true);
+    expect(contracts[0]?.deployedBytecode.startsWith('0x')).toBe(true);
   });
 
   it('returns no errors for valid source', () => {
@@ -44,8 +41,8 @@ describe('compileSolidity — Counter.sol', () => {
 
   it('includes the increment, decrement, and reset functions in the ABI', () => {
     const { contracts } = compileSolidity(FIXTURE);
-    const [c] = contracts;
-    const names = (c.abi as Array<{ name?: string }>)
+    const abi = contracts[0]?.abi ?? [];
+    const names = (abi as unknown as Array<{ name?: string }>)
       .filter((item) => item.name)
       .map((item) => item.name as string);
     expect(names).toContain('increment');
