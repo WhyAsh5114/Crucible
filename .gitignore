@@ -29,3 +29,4 @@ logs/
 # Workspace data (per ARCHITECTURE.md)
 data/
 .crucible/
+packages/backend/src/generated
