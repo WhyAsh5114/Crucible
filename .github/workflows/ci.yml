@@ -23,5 +23,22 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cache Hardhat compiler binaries
+        id: cache-hardhat
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: hardhat-compilers-solc-0.8.28
+
+      - name: Pre-download solc binary
+        if: steps.cache-hardhat.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64
+          curl -sfL "https://binaries.soliditylang.org/linux-amd64/list.json" \
+            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/list.json
+          curl -sfL "https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a" \
+            -o ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
+          chmod +x ~/.cache/hardhat-nodejs/compilers-v3/linux-amd64/solc-linux-amd64-v0.8.28+commit.7893614a
+
       - name: Run CI verification
         run: bun run ci:full
