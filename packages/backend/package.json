@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "check-types": "tsc --noEmit",
     "test": "bun test",
-    "lint": "eslint \"src/**/*.ts\" --max-warnings=0"
+    "lint": "eslint \"src/**/*.ts\" --max-warnings=0",
+    "postinstall": "bunx --bun prisma generate"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
