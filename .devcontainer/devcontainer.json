@@ -6,6 +6,9 @@
   "runServices": ["workspace", "postgres"],
   "shutdownAction": "stopCompose",
   "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
   "remoteEnv": {
     "BUN_INSTALL": "/home/vscode/.bun",
     "PATH": "/home/vscode/.bun/bin:${containerEnv:PATH}"

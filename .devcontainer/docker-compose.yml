@@ -4,8 +4,10 @@ services:
     command: sleep infinity
     volumes:
       - ..:/workspaces/Crucible:cached
+      - crucible-workspaces-data:/var/lib/crucible/workspaces
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/crucible
+      CRUCIBLE_WORKSPACES_ROOT: /var/lib/crucible/workspaces
       POSTGRES_HOST: postgres
       POSTGRES_PORT: '5432'
       POSTGRES_DB: crucible
@@ -32,3 +34,4 @@ services:
 
 volumes:
   postgres-data:
+  crucible-workspaces-data:
