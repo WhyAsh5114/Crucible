@@ -10,6 +10,7 @@ import {
   stopWorkspaceContainer,
   ensureWorkspaceContainer,
   getWorkspaceContainerState,
+  getWorkspaceContainerPorts,
 } from '../lib/runtime-docker';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { prisma } from '../lib/prisma';
@@ -55,7 +56,19 @@ const runtimeRoute = createRoute({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-export const runtimeApi = new OpenAPIHono();
+export const runtimeApi = new OpenAPIHono({
+  // Convert OpenAPIHono's default validator errors into our ApiError shape so
+  // clients always see `{ code, message }` regardless of which layer rejected.
+  defaultHook: (result, c) => {
+    if (!result.success) {
+      return c.json(
+        createApiErrorBody('bad_request', result.error.issues[0]?.message ?? 'Validation failed'),
+        400,
+      );
+    }
+    return undefined;
+  },
+});
 
 function toDescriptor(runtime: {
   runtimeId: string;
@@ -114,18 +127,15 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
         });
       }
 
-      const container = await ensureWorkspaceContainer(
-        workspace.id,
-        workspaceHostPath(workspace.id),
-      );
-
-      const runtime = await prisma.workspaceRuntime.upsert({
+      // Mark the runtime as 'starting' so callers polling runtime_status
+      // see a meaningful status during container boot.
+      await prisma.workspaceRuntime.upsert({
         where: { workspaceId: workspace.id },
         create: {
           workspaceId: workspace.id,
-          status: 'ready',
-          startedAt: new Date(container.startedAtMs),
-          terminalSessionId: `${workspace.id}-terminal`,
+          status: 'starting',
+          startedAt: new Date(),
+          terminalSessionId: null,
           previewUrl: null,
           chainPort: null,
           compilerPort: null,
@@ -135,9 +145,28 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
           chainState: Prisma.JsonNull,
         },
         update: {
-          status: 'ready',
+          status: 'starting',
+          previewUrl: null,
+          terminalSessionId: null,
+        },
+        select: { runtimeId: true },
+      });
+
+      const container = await ensureWorkspaceContainer(
+        workspace.id,
+        workspaceHostPath(workspace.id),
+      );
+
+      // Container is confirmed running — transition to ready or degraded
+      // depending on whether the in-container MCP services answered HTTP.
+      const runtime = await prisma.workspaceRuntime.update({
+        where: { workspaceId: workspace.id },
+        data: {
+          status: container.ready ? 'ready' : 'degraded',
           startedAt: new Date(container.startedAtMs),
           terminalSessionId: `${workspace.id}-terminal`,
+          chainPort: container.ports.chain,
+          compilerPort: container.ports.compiler,
         },
       });
 
@@ -149,6 +178,15 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
 
       return c.json(response, 200);
     } catch (error) {
+      // If we left the runtime in 'starting', mark it crashed so the status
+      // is not misleading to subsequent runtime_status polls.
+      await prisma.workspaceRuntime
+        .updateMany({
+          where: { workspaceId: workspace.id, status: 'starting' },
+          data: { status: 'crashed' },
+        })
+        .catch(() => undefined);
+
       return c.json(
         createApiErrorBody(
           'runtime_unavailable',
@@ -164,13 +202,15 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
     const reconciled = await Promise.all(
       runtimes.map(async (runtime) => {
         const state = await getWorkspaceContainerState(runtime.workspaceId).catch(() => 'missing');
-        const expectedStopped = state === 'missing' || state === 'stopped';
+        const containerRunning = state === 'running';
 
-        if (expectedStopped && runtime.status !== 'stopped') {
+        if (!containerRunning && runtime.status !== 'stopped' && runtime.status !== 'crashed') {
+          // Container is gone — use 'crashed' if it was mid-launch, 'stopped' otherwise.
+          const newStatus = runtime.status === 'starting' ? 'crashed' : 'stopped';
           return prisma.workspaceRuntime.update({
             where: { runtimeId: runtime.runtimeId },
             data: {
-              status: 'stopped',
+              status: newStatus,
               previewUrl: null,
               terminalSessionId: null,
               chainPort: null,
@@ -179,6 +219,22 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
               walletPort: null,
               terminalPort: null,
               chainState: Prisma.JsonNull,
+            },
+          });
+        }
+
+        if (containerRunning && runtime.status === 'stopped') {
+          // Container was restarted externally — promote back to ready and
+          // re-discover the published host ports so tool_exec keeps working.
+          const ports = await getWorkspaceContainerPorts(runtime.workspaceId).catch(() => null);
+          return prisma.workspaceRuntime.update({
+            where: { runtimeId: runtime.runtimeId },
+            data: {
+              status: 'ready',
+              startedAt: new Date(),
+              terminalSessionId: `${runtime.workspaceId}-terminal`,
+              chainPort: ports?.chain ?? null,
+              compilerPort: ports?.compiler ?? null,
             },
           });
         }
