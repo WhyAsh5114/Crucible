@@ -5,6 +5,9 @@ import {
   RuntimeRequestSchema,
   RuntimeResponseSchema,
   ApiErrorSchema,
+  CallIdSchema,
+  StreamIdSchema,
+  TimestampMsSchema,
 } from '@crucible/types';
 import {
   stopWorkspaceContainer,
@@ -15,9 +18,11 @@ import {
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { prisma } from '../lib/prisma';
 import { Prisma } from '../generated/prisma/client';
+import { randomUUID } from 'node:crypto';
 import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
+import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -56,7 +61,7 @@ const runtimeRoute = createRoute({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-export const runtimeApi = new OpenAPIHono({
+const baseRuntimeApi = new OpenAPIHono({
   // Convert OpenAPIHono's default validator errors into our ApiError shape so
   // clients always see `{ code, message }` regardless of which layer rejected.
   defaultHook: (result, c) => {
@@ -105,7 +110,7 @@ function toDescriptor(runtime: {
   };
 }
 
-runtimeApi.openapi(runtimeRoute, async (c) => {
+export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const parsed = { success: true as const, data: c.req.valid('json') };
 
   if (parsed.data.type === 'open_workspace') {
@@ -310,6 +315,20 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
+    const callId = CallIdSchema.parse(`call-${randomUUID()}`);
+    const streamId = StreamIdSchema.parse(workspace.id);
+    const toolName = `${parsed.data.server}.${parsed.data.tool}`;
+
+    publishAgentEvent(workspace.id, {
+      streamId,
+      seq: nextAgentSeq(workspace.id),
+      emittedAt: TimestampMsSchema.parse(Date.now()),
+      type: 'tool_call',
+      callId,
+      tool: toolName,
+      args: parsed.data.args,
+    });
+
     const outcome = await executeRuntimeTool({
       workspaceId: workspace.id,
       server: parsed.data.server,
@@ -319,6 +338,15 @@ runtimeApi.openapi(runtimeRoute, async (c) => {
       ok: false as const,
       error: error instanceof Error ? error.message : 'Failed to execute runtime tool',
     }));
+
+    publishAgentEvent(workspace.id, {
+      streamId,
+      seq: nextAgentSeq(workspace.id),
+      emittedAt: TimestampMsSchema.parse(Date.now()),
+      type: 'tool_result',
+      callId,
+      outcome,
+    });
 
     const response = RuntimeResponseSchema.parse({
       correlationId: parsed.data.correlationId,

@@ -2,6 +2,7 @@ node_modules
 dist
 build
 .turbo
+.svelte-kit
 # Auto-generated — do not format-check
 **/src/generated/**
 *.tsbuildinfo

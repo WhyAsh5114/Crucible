@@ -2,8 +2,10 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { createMiddleware } from 'hono/factory';
 import { auth } from './lib/auth';
+import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { workspaceApi } from './api/workspace';
+import { inferenceApi } from './api/inference';
 
 const app = new OpenAPIHono();
 
@@ -49,13 +51,28 @@ const requireSession = createMiddleware(async (c, next) => {
 
 app.use('/api/workspace/*', requireSession);
 app.use('/api/runtime', requireSession);
+app.use('/api/agent/*', requireSession);
+app.use('/api/prompt', requireSession);
 
-app.route('/api', workspaceApi);
-app.route('/api', runtimeApi);
+const apiRoutes = app
+  .route('/api', workspaceApi)
+  .route('/api', runtimeApi)
+  .route('/api', agentApi)
+  .route('/api', inferenceApi);
 
-app.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
+apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
 
-// Export typed app for frontend use: import type { AppType } from '@crucible/backend'
-export type AppType = typeof app;
+// Export typed app for frontend Hono RPC use:
+//   import type { AppType } from '@crucible/backend';
+//   const client = hc<AppType>('/');
+export type AppType = typeof apiRoutes;
 
-export default app;
+// Bun's auto-serve uses a 10s idle timeout, which kills SSE streams before
+// the next keepalive ping. Use explicit Bun.serve and disable idle timeout
+// so long-lived `/api/agent/stream` connections stay open.
+const port = Number(process.env['PORT'] ?? 3000);
+export default {
+  port,
+  idleTimeout: 0,
+  fetch: apiRoutes.fetch,
+};
