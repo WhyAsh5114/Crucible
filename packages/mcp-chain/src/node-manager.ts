@@ -139,18 +139,3 @@ export async function startNode(workspaceId: string, input: StartNodeInput): Pro
   nodes.set(workspaceId, entry);
   return entry;
 }
-
-/** Reset the node by sending hardhat_reset, preserving fork config if any. */
-export async function forkNode(
-  rpcUrl: string,
-  forkConfig: { rpcUrl: string; blockNumber?: number },
-): Promise<void> {
-  await rpc(rpcUrl, 'hardhat_reset', [
-    {
-      forking: {
-        jsonRpcUrl: forkConfig.rpcUrl,
-        ...(forkConfig.blockNumber !== undefined ? { blockNumber: forkConfig.blockNumber } : {}),
-      },
-    },
-  ]);
-}
