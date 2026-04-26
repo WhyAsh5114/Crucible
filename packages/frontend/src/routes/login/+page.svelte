@@ -15,10 +15,7 @@
 		submitting = true;
 		error = null;
 
-		const endpoint =
-			mode === 'signin'
-				? '/api/auth/sign-in/email'
-				: '/api/auth/sign-up/email';
+		const endpoint = mode === 'signin' ? '/api/auth/sign-in/email' : '/api/auth/sign-up/email';
 
 		const body: Record<string, string> = { email, password };
 		if (mode === 'signup') body['name'] = name;
@@ -86,7 +83,7 @@
 						autocomplete="name"
 						required
 						bind:value={name}
-						class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+						class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-ring focus:outline-none"
 						placeholder="Ada Lovelace"
 					/>
 				</div>
@@ -100,7 +97,7 @@
 					autocomplete="email"
 					required
 					bind:value={email}
-					class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+					class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-ring focus:outline-none"
 					placeholder="you@example.com"
 				/>
 			</div>
@@ -114,7 +111,7 @@
 					required
 					minlength={8}
 					bind:value={password}
-					class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring"
+					class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:ring-1 focus:ring-ring focus:outline-none"
 					placeholder="••••••••"
 				/>
 			</div>
@@ -127,7 +124,7 @@
 				type="button"
 				disabled={submitting}
 				onclick={signInAnonymously}
-				class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-muted-foreground transition-colors disabled:opacity-50 hover:bg-muted hover:text-foreground"
+				class="rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
 			>
 				Continue anonymously
 			</button>
@@ -141,7 +138,7 @@
 			<button
 				type="submit"
 				disabled={submitting}
-				class="rounded-md bg-foreground px-3 py-2 font-mono text-sm font-medium text-background transition-opacity disabled:opacity-50 hover:opacity-80"
+				class="rounded-md bg-foreground px-3 py-2 font-mono text-sm font-medium text-background transition-opacity hover:opacity-80 disabled:opacity-50"
 			>
 				{#if submitting}
 					{mode === 'signin' ? 'Signing in…' : 'Creating account…'}

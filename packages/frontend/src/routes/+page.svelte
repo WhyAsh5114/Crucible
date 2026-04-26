@@ -25,11 +25,7 @@
 
 <main class="min-h-0 flex-1">
 	{#if error}
-		<EmptyState
-			variant="degraded"
-			title="Failed to start workspace"
-			description={error}
-		>
+		<EmptyState variant="degraded" title="Failed to start workspace" description={error}>
 			{#snippet actions()}
 				<Button variant="outline" size="sm" onclick={bootWorkspace}>Retry</Button>
 			{/snippet}
