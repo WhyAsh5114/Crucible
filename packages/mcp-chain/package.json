@@ -6,7 +6,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
+    "dev": "portless --name chain.crucible --app-port 3100 bun run --hot src/index.ts",
     "start": "bun run src/index.ts",
     "build": "echo 'Bun runtime — no compile step'",
     "check-types": "tsc --noEmit",
