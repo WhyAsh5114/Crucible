@@ -42,6 +42,10 @@ export async function collectWorkspaceFiles(workspaceDir: string): Promise<Works
     for (const entry of entries) {
       const fullPath = path.join(currentDir, entry.name);
       if (entry.isDirectory()) {
+        // Skip build-output and dependency directories — not source files.
+        if (entry.name === '.crucible' || entry.name === 'node_modules') {
+          continue;
+        }
         await walk(fullPath);
         continue;
       }
