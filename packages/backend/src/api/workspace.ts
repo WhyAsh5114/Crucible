@@ -74,7 +74,17 @@ const getWorkspaceRoute = createRoute({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-export const workspaceApi = new OpenAPIHono();
+export const workspaceApi = new OpenAPIHono({
+  defaultHook: (result, c) => {
+    if (!result.success) {
+      return c.json(
+        createApiErrorBody('bad_request', result.error.issues[0]?.message ?? 'Validation failed'),
+        400,
+      );
+    }
+    return undefined;
+  },
+});
 
 workspaceApi.openapi(createWorkspaceRoute, async (c) => {
   const { name } = c.req.valid('json');
@@ -125,7 +135,7 @@ workspaceApi.openapi(getWorkspaceRoute, async (c) => {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 
-  const chainState = ChainStateSchema.safeParse(row.chainState);
+  const chainState = ChainStateSchema.safeParse(row.runtime?.chainState);
   const deployments = DeploymentRecordSchema.array().safeParse(row.deployments);
   const files = await collectWorkspaceFiles(row.directoryPath || workspaceHostPath(row.id));
 

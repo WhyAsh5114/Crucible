@@ -12,7 +12,6 @@ model Workspace {
     directoryPath String            @unique
     createdAt     DateTime          @default(now())
     updatedAt     DateTime          @updatedAt
-    chainState    Json?
     deployments   Json              @default("[]")
     runtime       WorkspaceRuntime?
 
