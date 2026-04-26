@@ -19,7 +19,18 @@ const MOCK_ACCOUNTS = [
 
 let mockBlockNumber = 0;
 let mockSnapshotCounter = 0;
+let mockIsForked = false;
+let mockForkBlock: number | undefined;
 const mockSnapshots: string[] = [];
+
+/** Reset all mock state — call from test beforeEach to guarantee isolation. */
+export function resetMockState(): void {
+  mockBlockNumber = 0;
+  mockSnapshotCounter = 0;
+  mockIsForked = false;
+  mockForkBlock = undefined;
+  mockSnapshots.length = 0;
+}
 
 export function mockStartNode() {
   return { rpcUrl: 'http://127.0.0.1:8545', chainId: 31337 };
@@ -31,7 +42,8 @@ export function mockGetState() {
     blockNumber: mockBlockNumber,
     gasPrice: encodeBigInt(1_000_000_000n),
     accounts: [...MOCK_ACCOUNTS],
-    isForked: false,
+    isForked: mockIsForked,
+    ...(mockIsForked && mockForkBlock !== undefined ? { forkBlock: mockForkBlock } : {}),
     activeSnapshotIds: [...mockSnapshots],
   };
 }
@@ -54,6 +66,9 @@ export function mockMine(blocks: number) {
   return { newBlockNumber: mockBlockNumber };
 }
 
-export function mockFork() {
+export function mockFork(blockNumber?: number) {
+  mockIsForked = true;
+  mockSnapshots.length = 0;
+  mockForkBlock = blockNumber;
   return { rpcUrl: 'http://127.0.0.1:8545', chainId: 31337 };
 }
