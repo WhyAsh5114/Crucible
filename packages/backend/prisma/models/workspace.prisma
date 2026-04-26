@@ -1,0 +1,41 @@
+enum RuntimeStatus {
+    ready
+    crashed
+    stopped
+    starting
+    degraded
+}
+
+model Workspace {
+    id            String            @id @default(cuid())
+    name          String
+    directoryPath String            @unique
+    createdAt     DateTime          @default(now())
+    updatedAt     DateTime          @updatedAt
+    chainState    Json?
+    deployments   Json              @default("[]")
+    runtime       WorkspaceRuntime?
+
+    @@map("workspace")
+}
+
+model WorkspaceRuntime {
+    runtimeId         String        @id @default(cuid())
+    workspaceId       String        @unique
+    workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    status            RuntimeStatus
+    startedAt         DateTime
+    previewUrl        String?
+    terminalSessionId String?
+    chainPort         Int?
+    compilerPort      Int?
+    deployerPort      Int?
+    walletPort        Int?
+    terminalPort      Int?
+    chainState        Json?
+    createdAt         DateTime      @default(now())
+    updatedAt         DateTime      @updatedAt
+
+    @@index([status])
+    @@map("workspace_runtime")
+}
