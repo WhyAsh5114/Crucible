@@ -25,14 +25,14 @@ jobs:
 
       - name: Cache Hardhat compiler binaries
         id: cache-hardhat
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/hardhat-nodejs
           key: hardhat-compilers-v2-solc-0.8.28
 
       - name: Setup Node.js 22 (for Hardhat cache warm-up)
         if: steps.cache-hardhat.outputs.cache-hit != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
