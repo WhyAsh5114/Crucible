@@ -243,13 +243,25 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 | MCP Server        | Port       | Tools                                                                               | Purpose                                                                               |
 | :---------------- | :--------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------ |
 | **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                            |
-| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity/Vyper, extract artifacts                                             |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files or inline source strings, extract artifacts             |
 | **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy contracts, simulate & trace transactions locally                               |
 | **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                            |
 | **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                           |
 | **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL                     |
 | **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Own PTY-backed shell sessions and make terminal output visible to both user and agent |
 | **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains                        |
+
+### chain-mcp — Implementation Notes
+
+- **fork**: implemented by restarting the Hardhat node via `startNode` with fork config, not via `hardhat_reset`. Hardhat v3 (`edr-simulated` network) does not support `hardhat_reset`, so fork must be a full process restart.
+- **DEFAULT_FORK_RPC_URL**: the server reads this env var at startup and injects it as the default `rpcUrl` for `fork` and `start_node` when the caller omits the URL. Set it to a private RPC endpoint to avoid rate limiting.
+- **ALLOWED_HOSTS**: comma-separated list of additional hostnames to accept in the `Host` header. Required for remote access over Tailscale or other overlay networks (default only allows `localhost`/`127.0.0.1`/`::1`).
+
+### compiler-mcp — Implementation Notes
+
+- **compile** accepts either a `sourcePath` (absolute path to a `.sol` file on disk) or an inline `source` string, with an optional `fileName` (defaults to `Inline.sol`). Exactly one of the two must be provided; passing both or neither is a validation error.
+- Inline source is written to a temporary directory, compiled, then cleaned up. Artifacts are only persisted to `.crucible/artifacts/` when a real workspace `sourcePath` is used.
+- **ALLOWED_HOSTS**: same as chain-mcp — required for remote access.
 
 ---
 
