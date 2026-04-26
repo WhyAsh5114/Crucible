@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { auth } from './lib/auth';
+import { runtimeApi } from './api/runtime';
 import { workspaceApi } from './api/workspace';
 
 const app = new Hono();
@@ -22,5 +23,6 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => {
 });
 
 app.route('/api', workspaceApi);
+app.route('/api', runtimeApi);
 
 export default app;
