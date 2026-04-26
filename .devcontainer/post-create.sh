@@ -21,4 +21,11 @@ bun --version
 bun --revision
 bun install
 
+if command -v sudo >/dev/null 2>&1; then
+  sudo mkdir -p /var/lib/crucible/workspaces
+  sudo chown -R vscode:vscode /var/lib/crucible
+else
+  mkdir -p /var/lib/crucible/workspaces
+fi
+
 git config core.hooksPath .githooks
