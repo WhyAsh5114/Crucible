@@ -32,3 +32,8 @@ afterAll(async () => {
 // ── Docker / runtime defaults ─────────────────────────────────────────────────
 process.env['CRUCIBLE_RUNTIME_IMAGE'] ??= 'ubuntu:24.04';
 process.env['CRUCIBLE_RUNTIME_MOUNT_MODE'] ??= 'bind';
+
+// Tests use a generic base image (no MCP services), so the readiness probe
+// will always time out. Keep that timeout short to avoid blocking the suite.
+process.env['CRUCIBLE_RUNTIME_READY_TIMEOUT_MS'] ??= '500';
+process.env['CRUCIBLE_RUNTIME_READY_INTERVAL_MS'] ??= '100';
