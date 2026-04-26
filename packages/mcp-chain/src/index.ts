@@ -34,7 +34,9 @@ const PORT = process.env['CHAIN_MCP_PORT']
   ? parseInt(process.env['CHAIN_MCP_PORT'], 10)
   : mcp.DEFAULT_MCP_PORTS.chain;
 
-console.log(`[mcp-chain] starting on port ${PORT}`);
+const WORKSPACE_ID = process.env['WORKSPACE_ID'] ?? 'default';
+
+console.log(`[mcp-chain] starting on port ${PORT} (workspaceId: ${WORKSPACE_ID})`);
 
 // ── Error schema ────────────────────────────────────────────────────────────
 
@@ -138,7 +140,7 @@ const forkRoute = createRoute({
 
 // ── App ─────────────────────────────────────────────────────────────────────
 
-const mcpServer = createChainServer();
+const mcpServer = createChainServer(WORKSPACE_ID);
 
 type Env = { Variables: { parsedBody: unknown } };
 
@@ -166,7 +168,7 @@ app.use('*', async (c, next) => {
 app.openapi(startNodeRoute, async (c) => {
   try {
     const body = c.req.valid('json');
-    const node = await startNode(body ?? {});
+    const node = await startNode(WORKSPACE_ID, body ?? {});
     return c.json({ rpcUrl: node.rpcUrl, chainId: node.chainId }, 200);
   } catch (err) {
     return c.json({ error: String(err) }, 500);
@@ -175,7 +177,7 @@ app.openapi(startNodeRoute, async (c) => {
 
 app.openapi(getStateRoute, async (c) => {
   try {
-    const node = requireNode();
+    const node = requireNode(WORKSPACE_ID);
     const [rawBlock, rawGasPrice, accounts] = await Promise.all([
       rpc<string>(node.rpcUrl, 'eth_blockNumber'),
       rpc<string>(node.rpcUrl, 'eth_gasPrice'),
@@ -200,7 +202,7 @@ app.openapi(getStateRoute, async (c) => {
 
 app.openapi(snapshotRoute, async (c) => {
   try {
-    const node = requireNode();
+    const node = requireNode(WORKSPACE_ID);
     const snapshotId = await rpc<string>(node.rpcUrl, 'evm_snapshot');
     node.snapshotIds.push(snapshotId);
     return c.json({ snapshotId }, 200);
@@ -212,7 +214,7 @@ app.openapi(snapshotRoute, async (c) => {
 app.openapi(revertRoute, async (c) => {
   try {
     const { snapshotId } = c.req.valid('json');
-    const node = requireNode();
+    const node = requireNode(WORKSPACE_ID);
     const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
     if (success) {
       const idx = node.snapshotIds.indexOf(snapshotId);
@@ -231,7 +233,7 @@ app.openapi(revertRoute, async (c) => {
 app.openapi(mineRoute, async (c) => {
   try {
     const { blocks } = c.req.valid('json');
-    const node = requireNode();
+    const node = requireNode(WORKSPACE_ID);
     await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
     const rawBlock = await rpc<string>(node.rpcUrl, 'eth_blockNumber');
     return c.json({ newBlockNumber: parseInt(rawBlock, 16) }, 200);
@@ -243,7 +245,7 @@ app.openapi(mineRoute, async (c) => {
 app.openapi(forkRoute, async (c) => {
   try {
     const input = c.req.valid('json');
-    const node = requireNode();
+    const node = requireNode(WORKSPACE_ID);
     await forkNode(node.rpcUrl, {
       rpcUrl: input.rpcUrl,
       ...(input.blockNumber !== undefined ? { blockNumber: input.blockNumber } : {}),

@@ -9,6 +9,6 @@ import { createChainServer } from '../src/server.ts';
 
 describe('createChainServer', () => {
   it('constructs a server without throwing', () => {
-    expect(() => createChainServer()).not.toThrow();
+    expect(() => createChainServer('test-ws')).not.toThrow();
   });
 });

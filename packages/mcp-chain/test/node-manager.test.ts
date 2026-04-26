@@ -12,18 +12,18 @@ import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { getNode, requireNode, startNode, stopNode, rpc } from '../src/node-manager.ts';
 
 afterAll(async () => {
-  await stopNode();
+  await stopNode('test-ws');
 });
 
 // ── Initial state (before any startNode call) ──────────────────────────────
 
 describe('initial state — before startNode', () => {
   it('getNode returns null', () => {
-    expect(getNode()).toBeNull();
+    expect(getNode('test-ws')).toBeNull();
   });
 
   it('requireNode throws', () => {
-    expect(() => requireNode()).toThrow('No active Hardhat node');
+    expect(() => requireNode('test-ws')).toThrow('No active Hardhat node');
   });
 });
 
@@ -31,37 +31,37 @@ describe('initial state — before startNode', () => {
 
 describe('startNode', () => {
   beforeAll(async () => {
-    await startNode({});
+    await startNode('test-ws', {});
   });
 
   it('getNode returns the started node', () => {
-    expect(getNode()).not.toBeNull();
+    expect(getNode('test-ws')).not.toBeNull();
   });
 
   it('node has chainId 31337', () => {
-    expect(requireNode().chainId).toBe(31337);
+    expect(requireNode('test-ws').chainId).toBe(31337);
   });
 
   it('node rpcUrl is a loopback http address', () => {
-    expect(requireNode().rpcUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(requireNode('test-ws').rpcUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 
   it('node has pre-funded accounts', () => {
-    const { accounts } = requireNode();
+    const { accounts } = requireNode('test-ws');
     expect(Array.isArray(accounts)).toBe(true);
     expect(accounts.length).toBeGreaterThan(0);
   });
 
   it('node starts with an empty snapshotIds array', () => {
-    expect(requireNode().snapshotIds).toHaveLength(0);
+    expect(requireNode('test-ws').snapshotIds).toHaveLength(0);
   });
 
   it('isForked is false for a non-forked node', () => {
-    expect(requireNode().isForked).toBe(false);
+    expect(requireNode('test-ws').isForked).toBe(false);
   });
 
   it('requireNode no longer throws after start', () => {
-    expect(() => requireNode()).not.toThrow();
+    expect(() => requireNode('test-ws')).not.toThrow();
   });
 });
 
@@ -69,11 +69,11 @@ describe('startNode', () => {
 
 describe('mine', () => {
   beforeAll(async () => {
-    await startNode({});
+    await startNode('test-ws', {});
   });
 
   it('advances the block number by the requested count', async () => {
-    const { rpcUrl } = requireNode();
+    const { rpcUrl } = requireNode('test-ws');
     const before = parseInt(await rpc<string>(rpcUrl, 'eth_blockNumber'), 16);
     await rpc(rpcUrl, 'hardhat_mine', ['0x3']); // mine 3 blocks
     const after = parseInt(await rpc<string>(rpcUrl, 'eth_blockNumber'), 16);
@@ -85,7 +85,7 @@ describe('mine', () => {
 
 describe('snapshot and revert', () => {
   it('evm_revert removes the target and all later snapshot IDs', async () => {
-    const node = await startNode({});
+    const node = await startNode('test-ws', {});
 
     const id1 = await rpc<string>(node.rpcUrl, 'evm_snapshot');
     node.snapshotIds.push(id1);
@@ -106,7 +106,7 @@ describe('snapshot and revert', () => {
   });
 
   it('evm_revert preserves snapshot IDs that come before the target', async () => {
-    const node = await startNode({});
+    const node = await startNode('test-ws', {});
 
     const id1 = await rpc<string>(node.rpcUrl, 'evm_snapshot');
     node.snapshotIds.push(id1);
