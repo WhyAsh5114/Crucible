@@ -331,7 +331,7 @@ We do **not** need COOP/COEP for this wallet bridge. Those headers are only nece
 
 ```typescript
 // Tools
-start_node(config?: { fork?: string, blockNumber?: number }): { rpcUrl, chainId }
+start_node(config?: { fork?: { rpcUrl: string, blockNumber?: number } }): { rpcUrl, chainId }
 get_state(): { blockNumber, gasPrice, accounts: Address[] }
 snapshot(): { snapshotId }
 revert(snapshotId): { success }
@@ -343,7 +343,7 @@ fork(rpcUrl: string, blockNumber?: number): { rpcUrl, chainId }
 
 ```typescript
 // Tools
-compile(sourcePath: string): { abi, bytecode, errors?, warnings? }
+compile(sourcePath: string, settings?: Record<string, unknown>): { contracts: CompiledContract[], warnings?: CompilerMessage[] }
 get_abi(contractName: string): { abi }
 get_bytecode(contractName: string): { bytecode }
 list_contracts(): { contracts: string[] }
