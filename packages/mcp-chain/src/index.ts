@@ -1,16 +1,6 @@
 /**
  * mcp-chain entry point.
  *
- * Starts a Hono HTTP server on DEFAULT_MCP_PORTS.chain (3100) or the port
- * specified by the CHAIN_MCP_PORT environment variable.
- *
- * Environment flags:
- *   CHAIN_MCP_PORT=N    — override the listen port
- */
-
-/**
- * mcp-chain entry point.
- *
  * Starts an OpenAPIHono HTTP server on DEFAULT_MCP_PORTS.chain (3100) or the
  * port specified by the CHAIN_MCP_PORT environment variable.
  *
