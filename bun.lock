@@ -22,8 +22,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@crucible/types": "workspace:*",
-        "@modelcontextprotocol/hono": "latest",
-        "@modelcontextprotocol/server": "latest",
+        "@modelcontextprotocol/hono": "2.0.0-alpha.2",
+        "@modelcontextprotocol/server": "2.0.0-alpha.2",
         "hardhat": "^3.0.0",
         "hono": "^4.0.0",
         "viem": "^2.21.55",
@@ -39,8 +39,8 @@
       "version": "0.0.0",
       "dependencies": {
         "@crucible/types": "workspace:*",
-        "@modelcontextprotocol/hono": "latest",
-        "@modelcontextprotocol/server": "latest",
+        "@modelcontextprotocol/hono": "2.0.0-alpha.2",
+        "@modelcontextprotocol/server": "2.0.0-alpha.2",
         "hono": "^4.0.0",
         "solc": "^0.8.28",
         "zod": "^4.0.0",
