@@ -5,12 +5,17 @@ import {
   RuntimeRequestSchema,
   RuntimeResponseSchema,
 } from '@crucible/types';
+import {
+  stopWorkspaceContainer,
+  ensureWorkspaceContainer,
+  getWorkspaceContainerState,
+} from '../lib/runtime-docker';
 import { Hono } from 'hono';
 import { prisma } from '../lib/prisma';
 import { Prisma } from '../generated/prisma/client';
+import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
-import { ensureWorkspaceContainer, stopWorkspaceContainer } from '../lib/runtime-docker';
 
 export const runtimeApi = new Hono();
 
@@ -123,7 +128,33 @@ runtimeApi.post('/runtime', async (c) => {
 
   if (parsed.data.type === 'runtime_status') {
     const runtimes = await prisma.workspaceRuntime.findMany();
-    const descriptors = runtimes.map(toDescriptor);
+    const reconciled = await Promise.all(
+      runtimes.map(async (runtime) => {
+        const state = await getWorkspaceContainerState(runtime.workspaceId).catch(() => 'missing');
+        const expectedStopped = state === 'missing' || state === 'stopped';
+
+        if (expectedStopped && runtime.status !== 'stopped') {
+          return prisma.workspaceRuntime.update({
+            where: { runtimeId: runtime.runtimeId },
+            data: {
+              status: 'stopped',
+              previewUrl: null,
+              terminalSessionId: null,
+              chainPort: null,
+              compilerPort: null,
+              deployerPort: null,
+              walletPort: null,
+              terminalPort: null,
+              chainState: Prisma.JsonNull,
+            },
+          });
+        }
+
+        return runtime;
+      }),
+    );
+
+    const descriptors = reconciled.map(toDescriptor);
     const response = RuntimeResponseSchema.parse({
       correlationId: parsed.data.correlationId,
       type: 'runtime_status',
@@ -180,8 +211,33 @@ runtimeApi.post('/runtime', async (c) => {
     }
   }
 
-  return c.json(
-    createApiErrorBody('bad_request', `${parsed.data.type} is not implemented yet`),
-    501,
-  );
+  if (parsed.data.type === 'tool_exec') {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: parsed.data.workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const outcome = await executeRuntimeTool({
+      workspaceId: workspace.id,
+      server: parsed.data.server,
+      tool: parsed.data.tool,
+      args: parsed.data.args,
+    }).catch((error) => ({
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'Failed to execute runtime tool',
+    }));
+
+    const response = RuntimeResponseSchema.parse({
+      correlationId: parsed.data.correlationId,
+      type: 'tool_exec',
+      outcome,
+    });
+    return c.json(response, 200);
+  }
+
+  return c.json(createApiErrorBody('bad_request', 'Runtime request type is not implemented'), 501);
 });
