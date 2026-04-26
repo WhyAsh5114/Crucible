@@ -2,12 +2,10 @@
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { setAgentStream, AgentStream } from '$lib/state/agent-stream.svelte';
-	import { env } from '$env/dynamic/public';
 
 	let { children } = $props();
 
-	const fixtureMode = (env.PUBLIC_USE_FIXTURES ?? 'true') !== 'false';
-	const stream = new AgentStream({ mode: fixtureMode ? 'fixture' : 'live' });
+	const stream = new AgentStream();
 	setAgentStream(stream);
 </script>
 

@@ -3,7 +3,11 @@ dist
 build
 .turbo
 .svelte-kit
+# Auto-generated — do not format-check
+**/src/generated/**
 *.tsbuildinfo
 bun.lockb
 data
 .crucible
+artifacts
+cache

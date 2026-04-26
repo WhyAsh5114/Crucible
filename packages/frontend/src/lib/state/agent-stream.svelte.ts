@@ -1,25 +1,28 @@
 /**
- * Reactive store for the AgentEvent stream. Phase 0/1 only supports fixture
- * replay; the real `wss://.../ws/agent` path lands when the backend is up.
+ * Reactive store for the AgentEvent stream — real client over SSE.
+ *
+ * Backend exposes `GET /api/agent/stream?workspaceId=<id>` as a
+ * `text/event-stream`. Each frame is a Zod-validated `AgentEvent` from
+ * `@crucible/types`. There is no fixture or fallback path: the stream is
+ * either connected and silent, connected and producing real events, or
+ * errored. The chat rail surfaces whichever state is current.
  *
  * Pattern: factory class + Svelte context. Each layout instance creates its
  * own `AgentStream`, so SSR requests don't leak state into each other.
  */
 
 import { getContext, setContext } from 'svelte';
-import type { AgentEvent } from '@crucible/types';
-import { fixtureAgentEvents } from '$lib/fixtures/agent-events';
+import { AgentEventSchema, type AgentEvent } from '@crucible/types';
+import { apiClient } from '$lib/api/workspace';
 
-export type AgentStreamStatus = 'idle' | 'streaming' | 'done' | 'error';
-
-export type AgentStreamMode = 'fixture' | 'live' | 'disabled';
+export type AgentStreamStatus = 'idle' | 'connecting' | 'streaming' | 'error' | 'closed';
 
 export interface AgentStreamOptions {
-	/** Source of events. `fixture` replays canned data; `live` would attach a
-	 *  WebSocket (not yet implemented). `disabled` produces no events. */
-	mode: AgentStreamMode;
-	/** Milliseconds between fixture frames. Lower = snappier demos. */
-	fixtureCadenceMs?: number;
+	/**
+	 * Factory for the underlying `EventSource`. Defaults to the global
+	 * constructor. Tests can inject a fake to drive deterministic frames.
+	 */
+	eventSourceFactory?: (url: string) => EventSource;
 }
 
 export class AgentStream {
@@ -27,54 +30,67 @@ export class AgentStream {
 	status = $state<AgentStreamStatus>('idle');
 	error = $state<string | null>(null);
 
-	readonly mode: AgentStreamMode;
-	private readonly cadenceMs: number;
-	private timer: ReturnType<typeof setTimeout> | null = null;
+	private readonly factory: (url: string) => EventSource;
+	private source: EventSource | null = null;
 
-	constructor(opts: AgentStreamOptions) {
-		this.mode = opts.mode;
-		this.cadenceMs = opts.fixtureCadenceMs ?? 600;
+	constructor(opts: AgentStreamOptions = {}) {
+		this.factory =
+			opts.eventSourceFactory ?? ((url) => new EventSource(url, { withCredentials: true }));
 	}
 
-	start(): void {
-		if (this.status === 'streaming' || this.status === 'done') return;
+	/** Open the SSE connection for a given workspace. Idempotent. */
+	start(workspaceId: string): void {
+		if (this.source) return;
 		this.events = [];
 		this.error = null;
+		this.status = 'connecting';
 
-		if (this.mode === 'fixture') {
-			this.replayFixtures();
-			return;
-		}
-		if (this.mode === 'live') {
-			this.error = 'Live agent stream not yet wired (Phase 0/1 stub).';
-			this.status = 'error';
-			return;
-		}
-		this.status = 'idle';
-	}
+		// Hono RPC builds the URL from the typed route definition.
+		const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
+		const source = this.factory(url.toString());
 
-	stop(): void {
-		if (this.timer) {
-			clearTimeout(this.timer);
-			this.timer = null;
-		}
-	}
-
-	private replayFixtures(): void {
-		this.status = 'streaming';
-		let i = 0;
-		const tick = (): void => {
-			if (i >= fixtureAgentEvents.length) {
-				this.status = 'done';
-				this.timer = null;
-				return;
-			}
-			const next = fixtureAgentEvents[i];
-			if (next) this.events.push(next);
-			i += 1;
-			this.timer = setTimeout(tick, this.cadenceMs);
+		source.onopen = () => {
+			this.status = 'streaming';
 		};
-		this.timer = setTimeout(tick, this.cadenceMs);
+		source.onmessage = (msg) => this.handleFrame(msg.data);
+		source.onerror = () => {
+			// EventSource auto-retries on transient failures; only surface an
+			// error when the connection is irrecoverable.
+			if (source.readyState === source.CLOSED) {
+				this.status = 'error';
+				this.error = 'Agent stream connection closed';
+			}
+		};
+
+		this.source = source;
+	}
+
+	/** Close the SSE connection. */
+	stop(): void {
+		if (this.source) {
+			this.source.close();
+			this.source = null;
+		}
+		this.status = 'closed';
+	}
+
+	private handleFrame(data: unknown): void {
+		if (typeof data !== 'string') return;
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(data);
+		} catch {
+			this.status = 'error';
+			this.error = 'Received malformed agent event (invalid JSON)';
+			return;
+		}
+		const result = AgentEventSchema.safeParse(parsed);
+		if (!result.success) {
+			this.status = 'error';
+			this.error = `Agent event failed schema validation: ${result.error.issues[0]?.message ?? 'unknown'}`;
+			return;
+		}
+		this.events.push(result.data);
 	}
 }
 

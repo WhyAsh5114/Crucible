@@ -1,0 +1,37 @@
+{
+  "name": "@crucible/mcp-chain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MCP server — local Hardhat chain lifecycle and state.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "portless --name chain.crucible --app-port 3100 bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "echo 'Bun runtime — no compile step'",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@crucible/types": "workspace:*",
+    "@modelcontextprotocol/hono": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "hardhat": "^3.0.0",
+    "@hono/zod-openapi": "^1.3.0",
+    "hono": "^4.0.0",
+    "viem": "^2.21.55",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.6",
+    "typescript": "^5.7.3"
+  }
+}

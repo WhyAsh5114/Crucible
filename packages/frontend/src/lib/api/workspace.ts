@@ -1,52 +1,37 @@
 /**
- * Workspace API client. Speaks the typed contracts from `@crucible/types`.
- *
- * Phase 0/1: when `PUBLIC_USE_FIXTURES !== 'false'`, both calls return canned
- * data so the UI runs end-to-end without a backend. Flip the env var once
- * `/api/workspace` exists.
+ * Workspace API client. Built on Hono RPC against the backend's typed
+ * `AppType`, so request and response shapes are inferred end-to-end from
+ * the route definitions in `@crucible/backend`.
  */
 
-import { env } from '$env/dynamic/public';
-import {
-	type WorkspaceCreateRequest,
-	type WorkspaceCreateResponse,
-	type WorkspaceState
+import { hc } from 'hono/client';
+import type { AppType } from '@crucible/backend';
+import type {
+	WorkspaceCreateRequest,
+	WorkspaceCreateResponse,
+	WorkspaceState
 } from '@crucible/types';
-import { fixtureWorkspaceState } from '$lib/fixtures/workspace';
 
-const FIXTURES_ENABLED = (env.PUBLIC_USE_FIXTURES ?? 'true') !== 'false';
-
-export interface WorkspaceClientOptions {
-	/** Override the runtime fixture flag (used by tests). */
-	useFixtures?: boolean;
-}
+// Browser-relative base — Vite proxies `/api/*` to the backend in dev,
+// and the production reverse proxy serves both under one origin.
+export const apiClient = hc<AppType>('/', {
+	init: { credentials: 'include' }
+});
 
 export class WorkspaceClient {
-	private readonly useFixtures: boolean;
-
-	constructor(opts: WorkspaceClientOptions = {}) {
-		this.useFixtures = opts.useFixtures ?? FIXTURES_ENABLED;
-	}
-
 	async createWorkspace(req: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
-		if (this.useFixtures) {
-			return { id: fixtureWorkspaceState.id };
+		const res = await apiClient.api.workspace.$post({ json: req });
+		if (!res.ok) {
+			throw new Error(`createWorkspace failed: ${res.status} ${await res.text()}`);
 		}
-		const res = await fetch('/api/workspace', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify(req)
-		});
-		if (!res.ok) throw new Error(`createWorkspace failed: ${res.status}`);
 		return (await res.json()) as WorkspaceCreateResponse;
 	}
 
 	async getWorkspace(id: string): Promise<WorkspaceState> {
-		if (this.useFixtures) {
-			return fixtureWorkspaceState;
+		const res = await apiClient.api.workspace[':id'].$get({ param: { id } });
+		if (!res.ok) {
+			throw new Error(`getWorkspace failed: ${res.status} ${await res.text()}`);
 		}
-		const res = await fetch(`/api/workspace/${encodeURIComponent(id)}`);
-		if (!res.ok) throw new Error(`getWorkspace failed: ${res.status}`);
 		return (await res.json()) as WorkspaceState;
 	}
 }

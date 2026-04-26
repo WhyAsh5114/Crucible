@@ -1,6 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { env } from '$env/dynamic/public';
+	import { onDestroy, onMount } from 'svelte';
 	import type { WorkspaceState } from '@crucible/types';
 	import { workspaceClient } from '$lib/api/workspace';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
@@ -14,7 +13,6 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import { Button } from '$lib/components/ui/button';
 
-	const fixtureMode = (env.PUBLIC_USE_FIXTURES ?? 'true') !== 'false';
 	const stream = getAgentStream();
 
 	let workspace = $state<WorkspaceState | null>(null);
@@ -28,7 +26,7 @@
 		try {
 			const created = await workspaceClient.createWorkspace({ name: 'Vault demo' });
 			workspace = await workspaceClient.getWorkspace(created.id);
-			stream.start();
+			stream.start(workspace.id);
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -39,9 +37,13 @@
 	onMount(() => {
 		void openWorkspace();
 	});
+
+	onDestroy(() => {
+		stream.stop();
+	});
 </script>
 
-<StatusBar {workspace} {fixtureMode} />
+<StatusBar {workspace} />
 
 <main class="min-h-0 flex-1">
 	{#if loadError}

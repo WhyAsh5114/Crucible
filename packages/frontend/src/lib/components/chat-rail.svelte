@@ -1,7 +1,5 @@
 <script lang="ts">
 	import * as Conversation from '$lib/components/ai-elements/conversation';
-	import * as PromptInput from '$lib/components/ai-elements/prompt-input';
-	import type { Message } from '$lib/components/ai-elements/prompt-input';
 	import { Loader } from '$lib/components/ai-elements/loader';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import EventRow from './events/event-row.svelte';
@@ -11,16 +9,6 @@
 
 	const stream = getAgentStream();
 	let items = $derived(pairToolEvents(stream.events));
-
-	function onSubmit(_message: Message, event: SubmitEvent): void {
-		event.preventDefault();
-		// Phase 0/1: prompts don't reach a real backend yet. Restart the
-		// fixture stream so the user sees the loop animate again.
-		stream.stop();
-		stream.events = [];
-		stream.status = 'idle';
-		queueMicrotask(() => stream.start());
-	}
 </script>
 
 <aside class="flex h-full min-h-0 flex-col bg-background">
@@ -31,8 +19,11 @@
 				{#if stream.status === 'streaming'}
 					<Loader class="size-3 text-live" />
 					<span class="text-live">streaming</span>
-				{:else if stream.status === 'done'}
-					<span class="text-foreground">done</span>
+				{:else if stream.status === 'connecting'}
+					<Loader class="size-3 text-muted-foreground" />
+					<span class="text-muted-foreground">connecting</span>
+				{:else if stream.status === 'closed'}
+					<span class="text-muted-foreground">closed</span>
 				{:else if stream.status === 'error'}
 					<span class="text-destructive">error</span>
 				{:else}
@@ -44,16 +35,16 @@
 
 	<Conversation.Root class="min-h-0 flex-1">
 		<Conversation.Content class="!p-0">
-			{#if stream.events.length === 0 && stream.status === 'idle'}
-				<EmptyState
-					title="No agent activity yet"
-					description="Send a prompt or wait for the fixture stream to begin."
-				/>
-			{:else if stream.events.length === 0 && stream.status === 'error'}
+			{#if stream.events.length === 0 && stream.status === 'error'}
 				<EmptyState
 					variant="degraded"
 					title="Stream not connected"
-					description={stream.error ?? 'Live agent stream not yet wired.'}
+					description={stream.error ?? 'Agent stream connection failed.'}
+				/>
+			{:else if stream.events.length === 0}
+				<EmptyState
+					title="No agent activity yet"
+					description="The live agent stream is connected. Events will appear here as the backend produces them."
 				/>
 			{:else}
 				<ol class="flex flex-col">
@@ -73,14 +64,13 @@
 	</Conversation.Root>
 
 	<div class="shrink-0 border-t border-border p-3">
-		<PromptInput.Root {onSubmit}>
-			<PromptInput.Body>
-				<PromptInput.Textarea placeholder="Describe a dApp… (Phase 0/1 replays fixtures)" />
-			</PromptInput.Body>
-			<PromptInput.Toolbar>
-				<PromptInput.Tools />
-				<PromptInput.Submit />
-			</PromptInput.Toolbar>
-		</PromptInput.Root>
+		<div
+			class="flex items-center gap-2 rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 font-mono text-[11px] text-muted-foreground"
+		>
+			<span class="size-1.5 rounded-full bg-muted-foreground/40"></span>
+			<span>
+				Prompt input pending — agent inference is not yet wired (see PLAN.md POV-1).
+			</span>
+		</div>
 	</div>
 </aside>

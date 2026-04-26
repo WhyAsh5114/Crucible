@@ -6,10 +6,9 @@
 
 	interface Props {
 		workspace: WorkspaceState | null;
-		fixtureMode: boolean;
 	}
 
-	let { workspace, fixtureMode }: Props = $props();
+	let { workspace }: Props = $props();
 	const stream = getAgentStream();
 
 	type Tone = 'idle' | 'live' | 'degraded';
@@ -35,11 +34,13 @@
 	let agentPill = $derived<{ label: string; tone: Tone }>(
 		stream.status === 'streaming'
 			? { label: 'agent · streaming', tone: 'live' }
-			: stream.status === 'done'
-				? { label: 'agent · done', tone: 'idle' }
-				: stream.status === 'error'
-					? { label: 'agent · error', tone: 'degraded' }
-					: { label: 'agent · idle', tone: 'idle' }
+			: stream.status === 'connecting'
+				? { label: 'agent · connecting', tone: 'idle' }
+				: stream.status === 'closed'
+					? { label: 'agent · closed', tone: 'idle' }
+					: stream.status === 'error'
+						? { label: 'agent · error', tone: 'degraded' }
+						: { label: 'agent · idle', tone: 'idle' }
 	);
 
 	const toneTextClass: Record<Tone, string> = {
@@ -92,11 +93,5 @@
 				{pill.label}
 			</Badge>
 		{/each}
-
-		{#if fixtureMode}
-			<Badge variant="outline" class="h-6 font-mono text-[10px] text-muted-foreground">
-				fixture mode
-			</Badge>
-		{/if}
 	</div>
 </header>
