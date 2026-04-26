@@ -2,8 +2,7 @@
  * McpServer factory for mcp-chain.
  *
  * Registers all chain tools using schemas from @crucible/types/mcp/chain
- * and dispatches to either real Hardhat or mock implementations based on
- * the CHAIN_MOCK environment variable.
+ * and dispatches to real Hardhat implementations.
  */
 
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
@@ -21,16 +20,6 @@ import {
 } from '@crucible/types/mcp/chain';
 import { encodeBigInt } from '@crucible/types';
 import { startNode, forkNode, requireNode, rpc } from './node-manager.ts';
-import {
-  mockStartNode,
-  mockGetState,
-  mockSnapshot,
-  mockRevert,
-  mockMine,
-  mockFork,
-} from './mock.ts';
-
-const IS_MOCK = process.env['MOCK_CHAIN'] === 'true';
 
 function toolResult(data: unknown): CallToolResult {
   return {
@@ -64,7 +53,6 @@ export function createChainServer(): McpServer {
     },
     async (input: StartNodeInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockStartNode());
         const node = await startNode(input);
         return toolResult({ rpcUrl: node.rpcUrl, chainId: node.chainId });
       } catch (err) {
@@ -83,7 +71,6 @@ export function createChainServer(): McpServer {
     },
     async () => {
       try {
-        if (IS_MOCK) return toolResult(mockGetState());
         const node = requireNode();
 
         const [rawBlock, rawGasPrice, accounts] = await Promise.all([
@@ -118,7 +105,6 @@ export function createChainServer(): McpServer {
     },
     async () => {
       try {
-        if (IS_MOCK) return toolResult(mockSnapshot());
         const node = requireNode();
         const snapshotId = await rpc<string>(node.rpcUrl, 'evm_snapshot');
         node.snapshotIds.push(snapshotId);
@@ -139,7 +125,6 @@ export function createChainServer(): McpServer {
     },
     async ({ snapshotId }: RevertInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockRevert(snapshotId));
         const node = requireNode();
         const success = await rpc<boolean>(node.rpcUrl, 'evm_revert', [snapshotId]);
         // evm_revert consumes the target snapshot and invalidates all later ones.
@@ -162,7 +147,6 @@ export function createChainServer(): McpServer {
     },
     async ({ blocks }: MineInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockMine(blocks));
         const node = requireNode();
         // hardhat_mine accepts hex-encoded block count
         await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
@@ -185,7 +169,6 @@ export function createChainServer(): McpServer {
     },
     async (input: ForkInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockFork(input.blockNumber));
         const node = requireNode();
         await forkNode(node.rpcUrl, {
           rpcUrl: input.rpcUrl,

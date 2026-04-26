@@ -2,8 +2,7 @@
  * McpServer factory for mcp-compiler.
  *
  * Registers four tools — compile, get_abi, get_bytecode, list_contracts —
- * using schemas from @crucible/types/mcp/compiler and dispatches to either
- * real solc-js or mock implementations based on COMPILER_MOCK env flag.
+ * using schemas from @crucible/types/mcp/compiler.
  */
 
 import { basename, join, relative, isAbsolute } from 'node:path';
@@ -24,9 +23,6 @@ import {
   listContractNames,
   persistArtifacts,
 } from './artifact-store.ts';
-import { mockCompile, mockGetAbi, mockGetBytecode, mockListContracts } from './mock.ts';
-
-const IS_MOCK = process.env['MOCK_COMPILER'] === 'true';
 
 function toolResult(data: unknown): CallToolResult {
   return {
@@ -61,14 +57,12 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
     },
     async ({ sourcePath, settings }: CompileInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockCompile(sourcePath));
-
         const absolutePath = join(opts.workspaceRoot, sourcePath);
         const rel = relative(opts.workspaceRoot, absolutePath);
         if (rel.startsWith('..') || isAbsolute(rel)) {
           return errorResult('compile failed: sourcePath must resolve within the workspace root');
         }
-        const result = compileSolidity(absolutePath, settings as Record<string, unknown>);
+        const result = await compileSolidity(absolutePath, settings as Record<string, unknown>);
         storeContracts(result.contracts, basename(absolutePath));
         await persistArtifacts(opts.workspaceRoot, result.contracts);
 
@@ -103,8 +97,6 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
     },
     async ({ contractName }: GetAbiInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockGetAbi());
-
         const artifact = resolveContract(contractName);
         if (!artifact) {
           return errorResult(`Contract "${contractName}" not found. Run compile first.`);
@@ -126,8 +118,6 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
     },
     async ({ contractName }: GetBytecodeInput) => {
       try {
-        if (IS_MOCK) return toolResult(mockGetBytecode());
-
         const artifact = resolveContract(contractName);
         if (!artifact) {
           return errorResult(`Contract "${contractName}" not found. Run compile first.`);
@@ -152,7 +142,6 @@ export function createCompilerServer(opts: { workspaceRoot: string }): McpServer
     },
     async () => {
       try {
-        if (IS_MOCK) return toolResult(mockListContracts());
         return toolResult({ contracts: listContractNames() });
       } catch (err) {
         return errorResult(`list_contracts failed: ${String(err)}`);
