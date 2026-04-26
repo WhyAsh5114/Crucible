@@ -2,20 +2,28 @@ import { prisma } from './prisma';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 
-const betterAuthUrl = process.env['BETTER_AUTH_URL'];
+// Sensible defaults so the backend boots in dev/hackathon mode without
+// requiring every operator to populate a fresh .env. Override in production.
+const port = process.env['PORT'] ?? '5000';
+const betterAuthUrl = process.env['BETTER_AUTH_URL'] ?? `http://localhost:${port}`;
 const googleClientId = process.env['GOOGLE_CLIENT_ID'];
 const googleClientSecret = process.env['GOOGLE_CLIENT_SECRET'];
 
-if (!betterAuthUrl) {
-  throw new Error('Missing BETTER_AUTH_URL environment variable');
+if (!process.env['BETTER_AUTH_URL']) {
+  console.warn(
+    `[auth] BETTER_AUTH_URL not set — defaulting to ${betterAuthUrl}. ` +
+      `Set BETTER_AUTH_URL explicitly for hosted deployments.`,
+  );
 }
 
-if (!googleClientId) {
-  throw new Error('Missing GOOGLE_CLIENT_ID environment variable');
-}
+// Google social login is optional — both vars must be set to enable it.
+const googleProviderConfig =
+  googleClientId && googleClientSecret
+    ? { google: { clientId: googleClientId, clientSecret: googleClientSecret } }
+    : {};
 
-if (!googleClientSecret) {
-  throw new Error('Missing GOOGLE_CLIENT_SECRET environment variable');
+if (!googleClientId || !googleClientSecret) {
+  console.warn('[auth] Google OAuth credentials absent — social login disabled.');
 }
 
 export const auth = betterAuth({
@@ -23,10 +31,7 @@ export const auth = betterAuth({
   database: prismaAdapter(prisma, {
     provider: 'postgresql',
   }),
-  socialProviders: {
-    google: {
-      clientId: googleClientId,
-      clientSecret: googleClientSecret,
-    },
-  },
+  ...(Object.keys(googleProviderConfig).length > 0
+    ? { socialProviders: googleProviderConfig }
+    : {}),
 });
