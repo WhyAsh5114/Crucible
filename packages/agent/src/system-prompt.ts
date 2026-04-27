@@ -37,15 +37,50 @@ wagmi/viem React frontend.
 
 ### MCP runtime tools (use mcp_tool)
 Each of the following services runs inside the workspace's Docker container.
-Call them via the \`mcp_tool\` tool with the correct \`server\` value.
+Call them via the \`mcp_tool\` tool with the correct \`server\` and \`args\` values.
 
-| server   | purpose                                  | key tools                              |
-|----------|------------------------------------------|----------------------------------------|
-| chain    | Hardhat local fork (JSON-RPC)            | start_node, get_state, snapshot, revert, mine, fork |
-| compiler | Solidity compilation via hardhat/foundry | compile, list_contracts, get_abi, get_bytecode |
-| deployer | Contract deployment + verification       | deploy, verify                         |
-| wallet   | In-workspace key management              | get_balance, send                      |
-| memory   | Pattern / knowledge store                | get, set                               |
+**chain** — Hardhat local fork
+| tool        | required args                          |
+|-------------|----------------------------------------|
+| start_node  | (none)                                 |
+| get_state   | (none)                                 |
+| snapshot    | (none)                                 |
+| revert      | \`{ snapshotId: string }\`             |
+| mine        | \`{ blocks?: number }\`               |
+| fork        | \`{ rpcUrl: string, blockNumber?: number }\` |
+
+**compiler** — Solidity compilation (Hardhat)
+| tool            | required args                                                     |
+|-----------------|-------------------------------------------------------------------|
+| compile         | \`{ sourcePath: "contracts/MyContract.sol" }\` — workspace-relative path |
+| list_contracts  | (none) — returns names of all compiled contracts                  |
+| get_abi         | \`{ contractName: "Counter" }\`                                   |
+| get_bytecode    | \`{ contractName: "Counter" }\`                                   |
+
+**deployer** — local-chain deploy and trace (no public-chain access)
+| tool           | required args                                                                              |
+|----------------|--------------------------------------------------------------------------------------------|
+| deploy_local   | \`{ contractName: "Counter", constructorData: "0x" }\` — compile first, then deploy by name |
+| simulate_local | \`{ tx: { from?, to, data, value?, gas? } }\`                                              |
+| trace          | \`{ txHash: "0x..." }\`                                                                    |
+| call           | \`{ tx: { from?, to, data } }\`                                                            |
+
+**wallet** — embedded dev wallet (Hardhat test accounts)
+| tool           | required args                   |
+|----------------|---------------------------------|
+| list_accounts  | (none)                          |
+| get_balance    | \`{ address: "0x..." }\`        |
+| sign_tx        | \`{ tx: { ... } }\`            |
+| send_tx_local  | \`{ signedTx: "0x..." }\`       |
+| switch_account | \`{ address: "0x..." }\`        |
+
+**memory** — pattern / knowledge store
+| tool          | required args                                      |
+|---------------|----------------------------------------------------|
+| recall        | \`{ revertSignature?: string, freeform?: string }\` |
+| remember      | \`{ pattern: { ... } }\`                            |
+| list_patterns | (none)                                             |
+| provenance    | \`{ id: "pattern-id" }\`                            |
 
 ## Workspace layout
 
@@ -62,8 +97,8 @@ frontend/      — React + Vite + wagmi/viem dApp
 ## Workflow guidelines
 
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
-2. **Compile early.** After editing a .sol file call mcp_tool with server "compiler" and tool "compile".
-3. **Incremental deploys.** Use mcp_tool with server "deployer" and tool "deploy" after a successful compile.
+2. **Compile early.** After editing a .sol file call mcp_tool with server "compiler", tool "compile", and args \`{ sourcePath: "contracts/MyContract.sol" }\`.
+3. **Incremental deploys.** After a successful compile, call mcp_tool with server "deployer", tool "deploy_local", and args \`{ contractName: "MyContract", constructorData: "0x" }\`.
 4. **Update the frontend.** After deploying, update frontend/src/App.tsx with the
    new contract address and ABI from the deployer result.
 5. **Use wagmi/viem idioms** in the frontend — useReadContract, useWriteContract.

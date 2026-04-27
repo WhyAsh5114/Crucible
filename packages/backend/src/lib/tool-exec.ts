@@ -67,18 +67,39 @@ const COMPILER_ROUTES: Record<string, RouteSpec> = {
 };
 
 const DEPLOYER_ROUTES: Record<string, RouteSpec> = {
-  deploy: { method: 'POST', path: () => '/deploy', withBody: true },
-  verify: { method: 'POST', path: () => '/verify', withBody: true },
+  deploy_local: { method: 'POST', path: () => '/deploy_local', withBody: true },
+  simulate_local: { method: 'POST', path: () => '/simulate_local', withBody: true },
+  trace: { method: 'POST', path: () => '/trace', withBody: true },
+  call: { method: 'POST', path: () => '/call', withBody: true },
 };
 
 const WALLET_ROUTES: Record<string, RouteSpec> = {
-  get_balance: { method: 'GET', path: () => '/balance', withBody: false },
-  send: { method: 'POST', path: () => '/send', withBody: true },
+  list_accounts: { method: 'GET', path: () => '/accounts', withBody: false },
+  get_balance: {
+    method: 'GET',
+    path: (args) => {
+      const address = typeof args['address'] === 'string' ? args['address'] : '';
+      return address ? `/balance/${encodeURIComponent(address)}` : null;
+    },
+    withBody: false,
+  },
+  sign_tx: { method: 'POST', path: () => '/sign_tx', withBody: true },
+  send_tx_local: { method: 'POST', path: () => '/send_tx_local', withBody: true },
+  switch_account: { method: 'POST', path: () => '/switch_account', withBody: true },
 };
 
 const MEMORY_ROUTES: Record<string, RouteSpec> = {
-  get: { method: 'GET', path: () => '/memory', withBody: false },
-  set: { method: 'POST', path: () => '/memory', withBody: true },
+  recall: { method: 'POST', path: () => '/recall', withBody: true },
+  remember: { method: 'POST', path: () => '/remember', withBody: true },
+  list_patterns: { method: 'GET', path: () => '/patterns', withBody: false },
+  provenance: {
+    method: 'GET',
+    path: (args) => {
+      const id = typeof args['id'] === 'string' ? args['id'] : '';
+      return id ? `/provenance/${encodeURIComponent(id)}` : null;
+    },
+    withBody: false,
+  },
 };
 
 const MESH_ROUTES: Record<string, RouteSpec> = {};
