@@ -142,7 +142,11 @@ export async function runAgentTurn(
 
   try {
     const result = streamText({
-      model: openai(config.model),
+      // Use .chat() to target /v1/chat/completions (standard SSE format).
+      // The default callable routes to the Responses API (/v1/responses) which
+      // uses text-start/text-delta/text-end — a format most compatible
+      // providers don't implement, causing "text part not found" errors.
+      model: openai.chat(config.model),
       system: buildSystemPrompt(files),
       messages: [{ role: 'user', content: prompt }],
       stopWhen: stepCountIs(20),
