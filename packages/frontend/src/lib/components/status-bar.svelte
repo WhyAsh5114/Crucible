@@ -1,8 +1,10 @@
 <script lang="ts">
 	import type { WorkspaceState } from '@crucible/types';
+	import { resolve } from '$app/paths';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { cn } from '$lib/utils';
+	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
 
 	interface Props {
 		workspace: WorkspaceState | null;
@@ -69,6 +71,16 @@
 		<span class="size-1.5 rounded-full bg-primary shadow-[0_0_6px_var(--primary)]"></span>
 		<span class="font-medium tracking-tight text-foreground">Crucible</span>
 	</div>
+
+	<div class="h-4 w-px bg-border"></div>
+
+	<a
+		href={resolve('/workspaces')}
+		class="flex items-center gap-1 font-mono text-muted-foreground transition-colors hover:text-foreground"
+	>
+		<ArrowLeftIcon weight="bold" />
+		<span>workspaces</span>
+	</a>
 
 	<div class="h-4 w-px bg-border"></div>
 
