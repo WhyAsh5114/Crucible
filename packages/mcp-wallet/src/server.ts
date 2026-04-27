@@ -162,5 +162,88 @@ export function createWalletServer(opts: {
     },
   );
 
+  // ── prompts ────────────────────────────────────────────────────────────────
+
+  server.registerPrompt(
+    'wallet_workflow',
+    {
+      title: 'Dev Wallet Workflow',
+      description:
+        'Guide for managing local Hardhat test accounts, checking balances, and sending transactions.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              'You are connected to the crucible-wallet MCP server.',
+              'It manages the unlocked Hardhat test accounts on the local chain.',
+              '',
+              'Typical workflow:',
+              '1. Call list_accounts to see all available accounts with labels and balances.',
+              '   - Labels are stable (e.g. "deployer", "user1") and set in .crucible/state.json.',
+              '2. Call get_balance(address) for the current wei balance of a specific address.',
+              '3. Call switch_account(label) to set the active account for subsequent operations.',
+              '   - Persisted in .crucible/state.json.',
+              '4. Call send_tx_local(tx) to sign and broadcast a transaction on the local chain.',
+              '   - from, to, data, value, gas are the key fields.',
+              '   - Returns txHash; confirm with eth_getTransactionReceipt via the chain RPC.',
+              '5. Call sign_tx(tx) if you only need the signed payload without broadcasting.',
+              '',
+              'Tool reference:',
+              '  list_accounts  — Read-only: all accounts with labels and balances.',
+              '  get_balance    — Read-only: wei balance for one address.',
+              '  switch_account — Set active account label (persisted).',
+              '  send_tx_local  — Sign + broadcast a local-chain transaction.',
+              '  sign_tx        — Sign a transaction without broadcasting.',
+              '',
+              'Notes:',
+              '  - All accounts are Hardhat default accounts (unlocked, pre-funded with 10000 ETH).',
+              '  - Balances change when you deploy contracts or send transactions.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerPrompt(
+    'send_transaction',
+    {
+      title: 'Sign & Send a Local Transaction',
+      description:
+        'Step-by-step guide for constructing and broadcasting a transaction on the local Hardhat chain.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              'Sending a transaction on the local chain:',
+              '',
+              '1. list_accounts → pick a funded account (note its address).',
+              '2. Optionally switch_account(label) to make it the active sender.',
+              '3. Build the transaction object:',
+              '     { from, to, data, value?, gas? }',
+              '   - data is ABI-encoded calldata (use contract ABI from crucible-compiler).',
+              '   - value is optional ETH to send (in wei).',
+              '   - gas defaults to eth_estimateGas if omitted.',
+              '4. Call send_tx_local(tx) → returns { txHash, receipt }.',
+              '5. Check receipt.status: "0x1" = success, "0x0" = revert.',
+              '   - On revert, use crucible-deployer simulate_local or trace to diagnose.',
+              '',
+              'If you only need the signed bytes (e.g. to relay later):',
+              '  - Call sign_tx(tx) instead — returns { signedTx } without broadcasting.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
+  );
+
   return server;
 }
