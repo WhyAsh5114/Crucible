@@ -22,7 +22,9 @@ import { randomUUID } from 'node:crypto';
 import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
-import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
+import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
+import { auth } from '../lib/auth';
+import { cleanupWorkspacePty } from '../lib/pty-manager';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -112,6 +114,8 @@ function toDescriptor(runtime: {
 
 export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const parsed = { success: true as const, data: c.req.valid('json') };
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  const userId = session?.user.id ?? null;
 
   if (parsed.data.type === 'open_workspace') {
     const workspace = await prisma.workspace.findUnique({
@@ -120,6 +124,10 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
     });
 
     if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    if (workspace.userId !== null && workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -169,9 +177,11 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
         data: {
           status: container.ready ? 'ready' : 'degraded',
           startedAt: new Date(container.startedAtMs),
-          terminalSessionId: `${workspace.id}-terminal`,
           chainPort: container.ports.chain,
           compilerPort: container.ports.compiler,
+          deployerPort: container.ports.deployer,
+          walletPort: container.ports.wallet,
+          terminalPort: container.ports.terminal,
         },
       });
 
@@ -203,7 +213,13 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   }
 
   if (parsed.data.type === 'runtime_status') {
-    const runtimes = await prisma.workspaceRuntime.findMany();
+    const runtimes = await prisma.workspaceRuntime.findMany({
+      where: {
+        workspace: {
+          OR: [{ userId }, { userId: null }],
+        },
+      },
+    });
     const reconciled = await Promise.all(
       runtimes.map(async (runtime) => {
         const state = await getWorkspaceContainerState(runtime.workspaceId).catch(() => 'missing');
@@ -237,9 +253,11 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
             data: {
               status: 'ready',
               startedAt: new Date(),
-              terminalSessionId: `${runtime.workspaceId}-terminal`,
               chainPort: ports?.chain ?? null,
               compilerPort: ports?.compiler ?? null,
+              deployerPort: ports?.deployer ?? null,
+              walletPort: ports?.wallet ?? null,
+              terminalPort: ports?.terminal ?? null,
             },
           });
         }
@@ -267,8 +285,14 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
+    if (workspace.userId !== null && workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
     try {
       await stopWorkspaceContainer(workspace.id);
+      cleanupAgentBus(workspace.id);
+      cleanupWorkspacePty(workspace.id);
 
       if (workspace.runtime) {
         await prisma.workspaceRuntime.update({
@@ -308,10 +332,14 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   if (parsed.data.type === 'tool_exec') {
     const workspace = await prisma.workspace.findUnique({
       where: { id: parsed.data.workspaceId },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
 
     if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    if (workspace.userId !== null && workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 

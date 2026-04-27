@@ -5,9 +5,6 @@
  * The agent calls `POST /api/runtime` with `{type:'tool_exec', server, tool, args}`.
  * We resolve the captured host port for that workspace's service and forward
  * the request to its REST endpoint defined in `packages/mcp-{chain,compiler}`.
- *
- * Only `chain` and `compiler` are wired today (per Phase 0/1 issue #1 scope).
- * Other servers return a clean unsupported outcome.
  */
 
 import { getWorkspaceContainerPorts, runtimeServiceBaseUrl } from './runtime-docker';
@@ -16,7 +13,7 @@ type ToolExecInput = {
   tool: string;
   args: unknown;
   workspaceId: string;
-  server: 'chain' | 'compiler' | 'deployer' | 'wallet' | 'terminal';
+  server: 'chain' | 'compiler' | 'deployer' | 'wallet' | 'terminal' | 'memory' | 'mesh';
 };
 
 type ToolExecOutcome =
@@ -69,13 +66,39 @@ const COMPILER_ROUTES: Record<string, RouteSpec> = {
   },
 };
 
-function pickRoute(server: 'chain' | 'compiler', tool: string): RouteSpec | null {
-  const table = server === 'chain' ? CHAIN_ROUTES : COMPILER_ROUTES;
-  return table[tool] ?? null;
+const DEPLOYER_ROUTES: Record<string, RouteSpec> = {
+  deploy: { method: 'POST', path: () => '/deploy', withBody: true },
+  verify: { method: 'POST', path: () => '/verify', withBody: true },
+};
+
+const WALLET_ROUTES: Record<string, RouteSpec> = {
+  get_balance: { method: 'GET', path: () => '/balance', withBody: false },
+  send: { method: 'POST', path: () => '/send', withBody: true },
+};
+
+const MEMORY_ROUTES: Record<string, RouteSpec> = {
+  get: { method: 'GET', path: () => '/memory', withBody: false },
+  set: { method: 'POST', path: () => '/memory', withBody: true },
+};
+
+const MESH_ROUTES: Record<string, RouteSpec> = {};
+
+type KnownServer = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'mesh';
+
+function pickRoute(server: KnownServer, tool: string): RouteSpec | null {
+  const tables: Record<KnownServer, Record<string, RouteSpec>> = {
+    chain: CHAIN_ROUTES,
+    compiler: COMPILER_ROUTES,
+    deployer: DEPLOYER_ROUTES,
+    wallet: WALLET_ROUTES,
+    memory: MEMORY_ROUTES,
+    mesh: MESH_ROUTES,
+  };
+  return tables[server][tool] ?? null;
 }
 
 async function proxyToService(
-  server: 'chain' | 'compiler',
+  server: string,
   port: number,
   spec: RouteSpec,
   args: Record<string, unknown>,
@@ -85,7 +108,7 @@ async function proxyToService(
     return { ok: false, error: `tool requires a non-empty contractName argument` };
   }
 
-  const url = `${runtimeServiceBaseUrl(server, port)}${path}`;
+  const url = `${runtimeServiceBaseUrl(port)}${path}`;
   const init: RequestInit = {
     method: spec.method,
     headers: spec.withBody
@@ -129,10 +152,10 @@ async function proxyToService(
 }
 
 export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExecOutcome> {
-  if (input.server !== 'chain' && input.server !== 'compiler') {
+  if (input.server === 'terminal') {
     return {
       ok: false,
-      error: `tool_exec server '${input.server}' is not implemented yet`,
+      error: `terminal interaction is handled via the WebSocket PTY endpoint, not tool_exec`,
     };
   }
 
@@ -144,7 +167,16 @@ export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExec
     };
   }
 
-  const port = input.server === 'chain' ? ports.chain : ports.compiler;
+  const portMap: Record<string, number | null> = {
+    chain: ports.chain,
+    compiler: ports.compiler,
+    deployer: ports.deployer,
+    wallet: ports.wallet,
+    memory: ports.memory,
+    mesh: null,
+  };
+
+  const port = portMap[input.server] ?? null;
   if (port === null) {
     return {
       ok: false,
@@ -152,7 +184,7 @@ export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExec
     };
   }
 
-  const spec = pickRoute(input.server, input.tool);
+  const spec = pickRoute(input.server as KnownServer, input.tool);
   if (!spec) {
     return {
       ok: false,

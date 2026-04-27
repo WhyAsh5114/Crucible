@@ -10,15 +10,21 @@ import {
   WorkspaceGetResponseSchema,
   WorkspaceCreateRequestSchema,
   WorkspaceCreateResponseSchema,
+  FileWriteRequestSchema,
+  FileWriteResponseSchema,
   ApiErrorSchema,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
 import { ensureWorkspaceContainer } from '../lib/runtime-docker';
+import { auth } from '../lib/auth';
+import path from 'node:path';
+import { mkdir, writeFile, stat } from 'node:fs/promises';
 
 // ── OpenAPI route definitions ────────────────────────────────────────────────
 
@@ -73,6 +79,36 @@ const getWorkspaceRoute = createRoute({
   },
 });
 
+const fileWriteRoute = createRoute({
+  method: 'put',
+  path: '/workspace/{id}/file',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    body: {
+      content: { 'application/json': { schema: FileWriteRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: FileWriteResponseSchema } },
+      description: 'File written successfully',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+    500: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
 // ── Background runtime bootstrap ─────────────────────────────────────────────
 
 /**
@@ -104,9 +140,11 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
       data: {
         status: container.ready ? 'ready' : 'degraded',
         startedAt: new Date(container.startedAtMs),
-        terminalSessionId: `${workspaceId}-terminal`,
         chainPort: container.ports.chain,
         compilerPort: container.ports.compiler,
+        deployerPort: container.ports.deployer,
+        walletPort: container.ports.wallet,
+        terminalPort: container.ports.terminal,
       },
     });
   } catch (err) {
@@ -138,6 +176,8 @@ export const workspaceApi = new OpenAPIHono({
 })
   .openapi(createWorkspaceRoute, async (c) => {
     const { name } = c.req.valid('json');
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    const userId = session?.user.id ?? null;
     let createdId: string | null = null;
 
     try {
@@ -146,6 +186,7 @@ export const workspaceApi = new OpenAPIHono({
           deployments: [],
           name,
           directoryPath: `pending://${randomUUID()}`,
+          userId,
         },
         select: { id: true },
       });
@@ -180,6 +221,8 @@ export const workspaceApi = new OpenAPIHono({
   })
   .openapi(getWorkspaceRoute, async (c) => {
     const { id } = c.req.valid('param');
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    const userId = session?.user.id ?? null;
 
     const row = await prisma.workspace.findUnique({
       where: { id },
@@ -187,6 +230,10 @@ export const workspaceApi = new OpenAPIHono({
     });
 
     if (!row) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    if (row.userId !== null && row.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -206,4 +253,71 @@ export const workspaceApi = new OpenAPIHono({
     });
 
     return c.json(response, 200);
+  })
+  .openapi(fileWriteRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { path: filePath, content } = c.req.valid('json');
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    const userId = session?.user.id ?? null;
+
+    const row = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true, directoryPath: true },
+    });
+
+    if (!row) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    if (row.userId !== null && row.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const workspaceDir = row.directoryPath?.startsWith('pending://')
+      ? workspaceHostPath(row.id)
+      : (row.directoryPath ?? workspaceHostPath(row.id));
+
+    // Resolve the full path and verify it stays within the workspace directory
+    // (defense-in-depth against path traversal even though the schema blocks `..`).
+    const resolved = path.resolve(workspaceDir, filePath);
+    if (!resolved.startsWith(workspaceDir + path.sep) && resolved !== workspaceDir) {
+      return c.json(createApiErrorBody('bad_request', 'Path escapes the workspace directory'), 400);
+    }
+
+    try {
+      await mkdir(path.dirname(resolved), { recursive: true });
+      const encoded = Buffer.from(content, 'utf8');
+      await writeFile(resolved, encoded);
+      const fileStats = await stat(resolved);
+
+      const ext = path.extname(filePath).toLowerCase();
+      const langMap: Record<string, string> = {
+        '.sol': 'solidity',
+        '.ts': 'typescript',
+        '.tsx': 'typescript',
+        '.js': 'javascript',
+        '.jsx': 'javascript',
+        '.svelte': 'svelte',
+        '.json': 'json',
+        '.css': 'css',
+        '.html': 'html',
+        '.md': 'markdown',
+        '.txt': 'plaintext',
+      };
+
+      const response = FileWriteResponseSchema.parse({
+        path: filePath,
+        content,
+        lang: langMap[ext] ?? 'plaintext',
+        hash: createHash('sha256').update(encoded).digest('hex'),
+        modifiedAt: Math.trunc(fileStats.mtimeMs),
+      });
+
+      return c.json(response, 200);
+    } catch (error) {
+      return c.json(
+        createApiErrorBody('internal', error instanceof Error ? error.message : 'Write failed'),
+        500,
+      );
+    }
   });
