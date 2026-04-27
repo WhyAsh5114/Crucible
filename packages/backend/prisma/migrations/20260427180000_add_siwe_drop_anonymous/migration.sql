@@ -1,9 +1,6 @@
 -- DropForeignKey
 ALTER TABLE "workspace" DROP CONSTRAINT "workspace_userId_fkey";
 
--- AlterTable
-ALTER TABLE "user" DROP COLUMN "isAnonymous";
-
 -- CreateTable
 CREATE TABLE "walletAddress" (
     "id" TEXT NOT NULL,
