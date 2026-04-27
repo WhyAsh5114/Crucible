@@ -3,7 +3,13 @@ import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { WorkspaceFileLangSchema, type WorkspaceFile } from '@crucible/types';
 
-const WORKSPACES_ROOT = process.env['CRUCIBLE_WORKSPACES_ROOT'] ?? '/var/lib/crucible/workspaces';
+// Resolve to an absolute host path. An empty / unset env var must NOT be
+// allowed to fall through as a relative path — Docker bind mounts require
+// absolute paths, otherwise the source string is treated as a named-volume
+// name and the agent's file writes never reach the workspace container.
+const WORKSPACES_ROOT = path.resolve(
+  process.env['CRUCIBLE_WORKSPACES_ROOT']?.trim() || '/var/lib/crucible/workspaces',
+);
 const MAX_FILE_SIZE_BYTES = 512 * 1024; // 512 KiB — skip large binaries/generated files
 
 export function workspaceHostPath(workspaceId: string): string {

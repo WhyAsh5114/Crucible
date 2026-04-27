@@ -144,6 +144,16 @@ function workspaceBind(workspaceId: string, hostWorkspacePath: string): string {
     ? path.join(WORKSPACES_BIND_ROOT, workspaceId)
     : hostWorkspacePath;
 
+  // Docker treats a non-absolute bind source as a named-volume name, which
+  // silently disconnects the agent's file writes from the workspace container.
+  // Refuse to create such a container — surface the misconfiguration loudly.
+  if (!path.isAbsolute(bindSource)) {
+    throw new Error(
+      `workspace bind source must be an absolute path (got "${bindSource}"). ` +
+        `Set CRUCIBLE_WORKSPACES_ROOT or CRUCIBLE_RUNTIME_BIND_ROOT to an absolute path.`,
+    );
+  }
+
   return `${bindSource}:/workspace`;
 }
 
