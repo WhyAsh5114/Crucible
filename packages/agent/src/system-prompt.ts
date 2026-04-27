@@ -62,8 +62,8 @@ frontend/      — React + Vite + wagmi/viem dApp
 ## Workflow guidelines
 
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
-2. **Compile early.** After editing a .sol file call mcp_tool chain compiler/compile.
-3. **Incremental deploys.** Use deployer.deploy after a successful compile.
+2. **Compile early.** After editing a .sol file call mcp_tool with server "compiler" and tool "compile".
+3. **Incremental deploys.** Use mcp_tool with server "deployer" and tool "deploy" after a successful compile.
 4. **Update the frontend.** After deploying, update frontend/src/App.tsx with the
    new contract address and ABI from the deployer result.
 5. **Use wagmi/viem idioms** in the frontend — useReadContract, useWriteContract.

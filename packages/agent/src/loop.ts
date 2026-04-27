@@ -19,6 +19,7 @@ import {
   InferenceReceiptIdSchema,
   StreamIdSchema,
   type AgentEvent,
+  type FallbackReason,
   type WorkspaceFile,
 } from '@crucible/types';
 import { buildSystemPrompt } from './system-prompt.ts';
@@ -40,6 +41,12 @@ export interface AgentConfig {
    * Defaults to 'openai-compatible' when not set.
    */
   provider?: '0g-compute' | 'openai-compatible';
+  /**
+   * Why inference fell back from the primary provider (0G Compute) to the
+   * OpenAI-compatible path. Null when 0G is the active provider. Surfaced
+   * in the inference_receipt event so the UI can show honest fallback state.
+   */
+  fallbackReason?: FallbackReason | null;
 }
 
 /** Shell execution result returned by adapter.runShell. */
@@ -314,7 +321,8 @@ export async function runAgentTurn(
       provider: config.provider ?? 'openai-compatible',
       model: config.model,
       attestation: null,
-      fallbackReason: config.provider === '0g-compute' ? null : 'admin_override',
+      fallbackReason:
+        config.provider === '0g-compute' ? null : (config.fallbackReason ?? 'admin_override'),
       promptTokens,
       completionTokens,
       createdAt: Date.now(),
