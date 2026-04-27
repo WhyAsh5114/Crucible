@@ -26,6 +26,9 @@ COPY tsconfig.base.json ./
 COPY packages/types/package.json packages/types/
 COPY packages/mcp-chain/package.json packages/mcp-chain/
 COPY packages/mcp-compiler/package.json packages/mcp-compiler/
+COPY packages/mcp-deployer/package.json packages/mcp-deployer/
+COPY packages/mcp-wallet/package.json packages/mcp-wallet/
+COPY packages/mcp-memory/package.json packages/mcp-memory/
 
 RUN bun install --frozen-lockfile || bun install
 
@@ -33,6 +36,9 @@ RUN bun install --frozen-lockfile || bun install
 COPY packages/types ./packages/types
 COPY packages/mcp-chain ./packages/mcp-chain
 COPY packages/mcp-compiler ./packages/mcp-compiler
+COPY packages/mcp-deployer ./packages/mcp-deployer
+COPY packages/mcp-wallet ./packages/mcp-wallet
+COPY packages/mcp-memory ./packages/mcp-memory
 
 # /workspace is the per-workspace bind mount target.
 WORKDIR /workspace

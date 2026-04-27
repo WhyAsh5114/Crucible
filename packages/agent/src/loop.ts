@@ -193,6 +193,7 @@ export async function runAgentTurn(
   // ── MCP client setup ───────────────────────────────────────────────────────
   const mcpClients: MCPClient[] = [];
   const mcpToolNames = new Set<string>();
+  const toolToServer = new Map<string, string>(); // toolName → serverName for event emission
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mcpToolsObj: Record<string, any> = {};
   for (const [serverName, url] of Object.entries(config.mcpServerUrls ?? {})) {
@@ -200,11 +201,13 @@ export async function runAgentTurn(
     try {
       const client = await createMCPClient({ transport: { type: 'http', url } });
       mcpClients.push(client);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const serverTools = await client.tools({
-        schemas: getMcpSchemas(serverName as McpServerKey) as any,
+        schemas: getMcpSchemas(serverName as McpServerKey) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
       });
-      for (const name of Object.keys(serverTools)) mcpToolNames.add(name);
+      for (const name of Object.keys(serverTools)) {
+        mcpToolNames.add(name);
+        toolToServer.set(name, serverName);
+      }
       Object.assign(mcpToolsObj, serverTools);
     } catch (err) {
       console.warn(
@@ -328,11 +331,12 @@ export async function runAgentTurn(
           if (mcpToolNames.has(chunk.toolName)) {
             const callId = CallIdSchema.parse(crypto.randomUUID());
             pendingMcpCalls.set(chunk.toolCallId, callId);
+            const serverName = toolToServer.get(chunk.toolName) ?? 'mcp';
             emit({
               ...baseEvent(),
               type: 'tool_call',
               callId,
-              tool: chunk.toolName,
+              tool: `${serverName}.${chunk.toolName}`,
               args: chunk.input as Record<string, unknown>,
             });
           }
