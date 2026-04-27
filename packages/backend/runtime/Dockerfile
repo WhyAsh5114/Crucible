@@ -26,6 +26,9 @@ COPY tsconfig.base.json ./
 COPY packages/types/package.json packages/types/
 COPY packages/mcp-chain/package.json packages/mcp-chain/
 COPY packages/mcp-compiler/package.json packages/mcp-compiler/
+COPY packages/mcp-deployer/package.json packages/mcp-deployer/
+COPY packages/mcp-wallet/package.json packages/mcp-wallet/
+COPY packages/mcp-memory/package.json packages/mcp-memory/
 
 RUN bun install --frozen-lockfile || bun install
 
@@ -33,6 +36,9 @@ RUN bun install --frozen-lockfile || bun install
 COPY packages/types ./packages/types
 COPY packages/mcp-chain ./packages/mcp-chain
 COPY packages/mcp-compiler ./packages/mcp-compiler
+COPY packages/mcp-deployer ./packages/mcp-deployer
+COPY packages/mcp-wallet ./packages/mcp-wallet
+COPY packages/mcp-memory ./packages/mcp-memory
 
 # /workspace is the per-workspace bind mount target.
 WORKDIR /workspace
@@ -42,10 +48,14 @@ WORKDIR /workspace
 # both servers is widened via ALLOWED_HOSTS.
 ENV CHAIN_MCP_PORT=3100 \
     COMPILER_MCP_PORT=3101 \
+    DEPLOYER_MCP_PORT=3102 \
+    WALLET_MCP_PORT=3103 \
+    MEMORY_MCP_PORT=3104 \
+    TERMINAL_MCP_PORT=3105 \
     WORKSPACE_ROOT=/workspace \
     ALLOWED_HOSTS=host.docker.internal
 
-EXPOSE 3100 3101
+EXPOSE 3100 3101 3102 3103 3104 3105
 
 COPY packages/backend/runtime/entrypoint.sh /usr/local/bin/crucible-runtime-entrypoint
 RUN chmod +x /usr/local/bin/crucible-runtime-entrypoint

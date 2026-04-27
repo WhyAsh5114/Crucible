@@ -16,6 +16,7 @@ import { WorkspaceIdSchema } from '@crucible/types';
 import { prisma } from '../lib/prisma';
 import { subscribeAgentEvents } from '../lib/agent-bus';
 import { createApiErrorBody } from '../lib/api-error';
+import { auth } from '../lib/auth';
 
 const QuerySchema = z.object({
   workspaceId: WorkspaceIdSchema,
@@ -36,9 +37,15 @@ export const agentApi = new OpenAPIHono().get('/agent/stream', async (c) => {
 
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
-    select: { id: true },
+    select: { id: true, userId: true },
   });
   if (!workspace) {
+    return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+  }
+
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  const userId = session?.user.id ?? null;
+  if (workspace.userId !== null && workspace.userId !== userId) {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 

@@ -6,22 +6,32 @@
  * will fail gracefully if Docker is unavailable rather than being skipped.
  */
 
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { runtimeApi } from '../src/api/runtime';
+import { createTestSession, deleteTestUser, type TestSession } from './helpers';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const createdWorkspaceIds: string[] = [];
+let session: TestSession;
+
+beforeEach(async () => {
+  session = await createTestSession();
+});
+
+afterEach(async () => {
+  // Cascade deletes sessions, workspaces, and runtime rows.
+  await deleteTestUser(session.userId);
+});
 
 async function postRuntime(body: unknown) {
   return runtimeApi.request('/runtime', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Cookie: session.cookie },
     body: JSON.stringify(body),
   });
 }
 
-/** Create a workspace row directly via Prisma for runtime tests. */
+/** Create a workspace row owned by the current test user. */
 async function createTestWorkspace(name: string): Promise<string> {
   const { prisma } = await import('../src/lib/prisma');
   const { randomUUID } = await import('node:crypto');
@@ -30,20 +40,12 @@ async function createTestWorkspace(name: string): Promise<string> {
       name,
       directoryPath: `pending://${randomUUID()}`,
       deployments: [],
+      userId: session.userId,
     },
     select: { id: true },
   });
-  createdWorkspaceIds.push(workspace.id);
   return workspace.id;
 }
-
-afterEach(async () => {
-  const { prisma } = await import('../src/lib/prisma');
-  for (const id of createdWorkspaceIds.splice(0)) {
-    await prisma.workspaceRuntime.deleteMany({ where: { workspaceId: id } }).catch(() => undefined);
-    await prisma.workspace.delete({ where: { id } }).catch(() => undefined);
-  }
-});
 
 // ── Validation (no DB/Docker required) ───────────────────────────────────────
 
@@ -98,6 +100,18 @@ describe('POST /runtime — runtime_status', () => {
     expect(body.type).toBe('runtime_status');
     expect(body.correlationId).toBe('corr-status-1');
     expect(Array.isArray(body.descriptors)).toBe(true);
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    const res = await runtimeApi.request('/runtime', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'runtime_status', correlationId: 'corr-unauth' }),
+    });
+    expect(res.status).toBe(401);
+
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('unauthorized');
   });
 });
 

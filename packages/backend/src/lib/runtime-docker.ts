@@ -29,6 +29,10 @@ const WORKSPACES_VOLUME = process.env['CRUCIBLE_WORKSPACES_VOLUME'] ?? 'crucible
 // assigned dynamically by Docker and discovered after the container starts.
 const CONTAINER_CHAIN_PORT = 3100;
 const CONTAINER_COMPILER_PORT = 3101;
+const CONTAINER_DEPLOYER_PORT = 3102;
+const CONTAINER_WALLET_PORT = 3103;
+const CONTAINER_MEMORY_PORT = 3104;
+const CONTAINER_TERMINAL_PORT = 3105;
 
 const READINESS_TIMEOUT_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_TIMEOUT_MS'] ?? '60000');
 const READINESS_INTERVAL_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_INTERVAL_MS'] ?? '500');
@@ -139,6 +143,16 @@ function workspaceBind(workspaceId: string, hostWorkspacePath: string): string {
   const bindSource = WORKSPACES_BIND_ROOT
     ? path.join(WORKSPACES_BIND_ROOT, workspaceId)
     : hostWorkspacePath;
+
+  // Docker treats a non-absolute bind source as a named-volume name, which
+  // silently disconnects the agent's file writes from the workspace container.
+  // Refuse to create such a container — surface the misconfiguration loudly.
+  if (!path.isAbsolute(bindSource)) {
+    throw new Error(
+      `workspace bind source must be an absolute path (got "${bindSource}"). ` +
+        `Set CRUCIBLE_WORKSPACES_ROOT or CRUCIBLE_RUNTIME_BIND_ROOT to an absolute path.`,
+    );
+  }
 
   return `${bindSource}:/workspace`;
 }
@@ -298,6 +312,10 @@ export async function stopWorkspaceContainer(workspaceId: string): Promise<void>
 export type WorkspaceRuntimePorts = {
   chain: number | null;
   compiler: number | null;
+  deployer: number | null;
+  wallet: number | null;
+  memory: number | null;
+  terminal: number | null;
 };
 
 export type EnsureWorkspaceContainerResult = {
@@ -387,11 +405,18 @@ export async function ensureWorkspaceContainer(
             `WORKSPACE_ID=${workspaceId}`,
             `CHAIN_MCP_PORT=${CONTAINER_CHAIN_PORT}`,
             `COMPILER_MCP_PORT=${CONTAINER_COMPILER_PORT}`,
+            `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
+            `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
+            `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
             `WORKSPACE_ROOT=${workspaceDir}`,
           ],
           ExposedPorts: {
             [`${CONTAINER_CHAIN_PORT}/tcp`]: {},
             [`${CONTAINER_COMPILER_PORT}/tcp`]: {},
+            [`${CONTAINER_DEPLOYER_PORT}/tcp`]: {},
+            [`${CONTAINER_WALLET_PORT}/tcp`]: {},
+            [`${CONTAINER_MEMORY_PORT}/tcp`]: {},
+            [`${CONTAINER_TERMINAL_PORT}/tcp`]: {},
           },
           HostConfig: {
             RestartPolicy: { Name: 'unless-stopped' },
@@ -400,6 +425,10 @@ export async function ensureWorkspaceContainer(
             PortBindings: {
               [`${CONTAINER_CHAIN_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_COMPILER_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_DEPLOYER_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_WALLET_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_MEMORY_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_TERMINAL_PORT}/tcp`]: [{ HostPort: '' }],
             },
           },
         }),
@@ -430,6 +459,10 @@ export async function ensureWorkspaceContainer(
   const ports: WorkspaceRuntimePorts = {
     chain: freshInspect ? extractHostPort(freshInspect, CONTAINER_CHAIN_PORT) : null,
     compiler: freshInspect ? extractHostPort(freshInspect, CONTAINER_COMPILER_PORT) : null,
+    deployer: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEPLOYER_PORT) : null,
+    wallet: freshInspect ? extractHostPort(freshInspect, CONTAINER_WALLET_PORT) : null,
+    memory: freshInspect ? extractHostPort(freshInspect, CONTAINER_MEMORY_PORT) : null,
+    terminal: freshInspect ? extractHostPort(freshInspect, CONTAINER_TERMINAL_PORT) : null,
   };
 
   const ready = await waitForRuntimeReady(ports);
@@ -452,9 +485,13 @@ export async function getWorkspaceContainerPorts(
   return {
     chain: extractHostPort(inspect, CONTAINER_CHAIN_PORT),
     compiler: extractHostPort(inspect, CONTAINER_COMPILER_PORT),
+    deployer: extractHostPort(inspect, CONTAINER_DEPLOYER_PORT),
+    wallet: extractHostPort(inspect, CONTAINER_WALLET_PORT),
+    memory: extractHostPort(inspect, CONTAINER_MEMORY_PORT),
+    terminal: extractHostPort(inspect, CONTAINER_TERMINAL_PORT),
   };
 }
 
-export function runtimeServiceBaseUrl(_server: 'chain' | 'compiler', port: number): string {
+export function runtimeServiceBaseUrl(port: number): string {
   return `http://${RUNTIME_HOST}:${port}`;
 }

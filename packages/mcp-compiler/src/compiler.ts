@@ -143,6 +143,8 @@ export async function compileSolidity(
         },
       },
     }),
+    undefined,
+    sourcesDir, // projectRoot — prevents Hardhat from defaulting to process.cwd()
   );
 
   const buildResult = await hre.solidity.build([normalizedAbsolutePath]);

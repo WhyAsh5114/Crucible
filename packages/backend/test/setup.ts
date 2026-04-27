@@ -14,9 +14,10 @@ import { afterAll } from 'bun:test';
 // Default to the devcontainer Postgres service. Override via DATABASE_URL.
 process.env['DATABASE_URL'] ??= 'postgresql://postgres:postgres@localhost:5432/crucible';
 
-// ── Auth stubs (not exercised by route tests, but lib/auth.ts is not imported
-//    when testing sub-apps directly) ─────────────────────────────────────────
+// ── Auth stubs ───────────────────────────────────────────────────────────────
 process.env['BETTER_AUTH_URL'] ??= 'http://localhost:5000';
+process.env['BETTER_AUTH_SECRET'] ??=
+  'crucible-test-secret-not-for-productionet-not-for-production';
 process.env['GOOGLE_CLIENT_ID'] ??= 'test-client-id';
 process.env['GOOGLE_CLIENT_SECRET'] ??= 'test-client-secret';
 
