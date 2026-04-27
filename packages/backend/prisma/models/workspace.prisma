@@ -13,8 +13,8 @@ model Workspace {
     createdAt     DateTime          @default(now())
     updatedAt     DateTime          @updatedAt
     deployments   Json              @default("[]")
-    userId        String?
-    user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+    userId        String
+    user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
     runtime       WorkspaceRuntime?
 
     @@index([userId])
