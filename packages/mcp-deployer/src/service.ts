@@ -257,8 +257,31 @@ function callFramesToDecodedCalls(
 export function createDeployerService(opts: {
   chainRpcUrl: string;
   workspaceRoot: string;
+  compilerUrl?: string;
 }): DeployerService {
-  const { chainRpcUrl } = opts;
+  const { chainRpcUrl, compilerUrl = 'http://localhost:3101' } = opts;
+
+  /**
+   * Fetch contract bytecode from mcp-compiler.
+   * Throws if the contract is not found in the artifact store.
+   */
+  async function getCompiledBytecode(contractName: string): Promise<string> {
+    const res = await fetch(`${compilerUrl}/bytecode/${contractName}`);
+    if (!res.ok) {
+      if (res.status === 404) {
+        throw new Error(
+          `Contract "${contractName}" not found in artifact store — compile it first or provide raw bytecode`,
+        );
+      }
+      const text = await res.text().catch(() => '');
+      throw new Error(`Failed to fetch bytecode from compiler: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { bytecode?: string };
+    if (!data.bytecode) {
+      throw new Error(`Compiler returned no bytecode for "${contractName}"`);
+    }
+    return data.bytecode;
+  }
 
   return {
     async deployLocal(input) {
@@ -269,7 +292,8 @@ export function createDeployerService(opts: {
           throw new Error('No local chain accounts available');
         })();
 
-      const data = `${input.bytecode}${input.constructorData.slice(2)}`;
+      const bytecode = await getCompiledBytecode(input.contractName);
+      const data = `${bytecode}${input.constructorData.slice(2)}`;
       const txHash = await rpc<string>(chainRpcUrl, 'eth_sendTransaction', [
         {
           from: sender,

@@ -40,7 +40,12 @@ describe('mcp-deployer service', () => {
   });
 
   it('deployLocal sends tx and returns address/hash/gas from receipt', async () => {
-    globalThis.fetch = (async (_url, init) => {
+    globalThis.fetch = (async (url, init) => {
+      // Compiler bytecode endpoint
+      if (typeof url === 'string' && url.includes('/bytecode/')) {
+        return jsonResponse({ bytecode: '0x60006000' });
+      }
+
       const body = JSON.parse(String(init?.body ?? '{}')) as {
         method?: string;
       };
@@ -71,10 +76,14 @@ describe('mcp-deployer service', () => {
       }
     }) as typeof fetch;
 
-    const service = createDeployerService({ chainRpcUrl: 'http://rpc.local', workspaceRoot });
+    const service = createDeployerService({
+      chainRpcUrl: 'http://rpc.local',
+      workspaceRoot,
+      compilerUrl: 'http://compiler.local',
+    });
 
     const output = await service.deployLocal({
-      bytecode: '0x60006000',
+      contractName: 'Counter',
       constructorData: '0x',
     });
 

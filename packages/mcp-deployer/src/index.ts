@@ -9,9 +9,10 @@
  *   REST routes — typed endpoints consumable via hc<AppType> from the frontend
  *
  * Environment flags:
- *   DEPLOYER_MCP_PORT=N   — override the listen port
- *   CHAIN_RPC_URL=<url>   — chain RPC endpoint (defaults to http://localhost:3100)
- *   WORKSPACE_ROOT=<path> — workspace root for path checks (defaults to cwd)
+ *   DEPLOYER_MCP_PORT=N    — override the listen port
+ *   CHAIN_RPC_URL=<url>    — chain RPC endpoint (defaults to http://localhost:3100/rpc)
+ *   COMPILER_URL=<url>     — compiler service URL (defaults to http://localhost:3101)
+ *   WORKSPACE_ROOT=<path>  — workspace root for path checks (defaults to cwd)
  */
 
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
@@ -33,11 +34,12 @@ const PORT = process.env['DEPLOYER_MCP_PORT']
   ? parseInt(process.env['DEPLOYER_MCP_PORT'], 10)
   : mcp.DEFAULT_MCP_PORTS.deployer;
 
-const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100';
+const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc';
+const COMPILER_URL = process.env['COMPILER_URL'] ?? 'http://localhost:3101';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 
 console.log(
-  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL})`,
+  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL})`,
 );
 
 if (!existsSync(WORKSPACE_ROOT)) {
@@ -47,6 +49,7 @@ if (!existsSync(WORKSPACE_ROOT)) {
 const service = createDeployerService({
   chainRpcUrl: CHAIN_RPC_URL,
   workspaceRoot: WORKSPACE_ROOT,
+  compilerUrl: COMPILER_URL,
 });
 
 const ErrorSchema = z.object({ error: z.string() });
@@ -177,6 +180,7 @@ const callRoute = createRoute({
 const mcpServer = createDeployerServer({
   chainRpcUrl: CHAIN_RPC_URL,
   workspaceRoot: WORKSPACE_ROOT,
+  compilerUrl: COMPILER_URL,
 });
 
 type Env = { Variables: { parsedBody: unknown } };
