@@ -188,7 +188,6 @@ export async function runAgentTurn(
 
   let promptTokens = 0;
   let completionTokens = 0;
-  let fullResponse = '';
 
   // ── MCP client setup ───────────────────────────────────────────────────────
   const mcpClients: MCPClient[] = [];
@@ -324,8 +323,7 @@ export async function runAgentTurn(
 
         case 'text-delta':
           // Stream each response token immediately so the chat rail updates
-          // in real time. Also accumulate for the inference receipt token count.
-          fullResponse += chunk.text;
+          // in real time. Token counts come from the 'finish' chunk.
           emit({ ...baseEvent(), type: 'message_delta', text: chunk.text });
           break;
 
@@ -405,9 +403,6 @@ export async function runAgentTurn(
   } finally {
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
-
-  // No final `message` emit — response text was already streamed as
-  // `message_delta` events and accumulated by the frontend.
 
   // Emit inference receipt so the frontend can display cost / provenance.
   emit({

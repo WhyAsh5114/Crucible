@@ -5,6 +5,8 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { siwe } from 'better-auth/plugins/siwe';
 import { verifyMessage } from 'viem';
 import { parseSiweMessage, validateSiweMessage } from 'viem/siwe';
+import { createMiddleware } from 'hono/factory';
+import { createApiErrorBody } from './api-error';
 
 const port = process.env['PORT'] ?? '3000';
 const betterAuthUrl = process.env['BETTER_AUTH_URL'] ?? `http://localhost:${port}`;
@@ -82,3 +84,27 @@ export const auth = betterAuth({
     ? { socialProviders: googleProviderConfig }
     : {}),
 });
+
+/**
+ * Hono middleware that requires a valid better-auth session.
+ *
+ * Sets `c.get('userId')` on success; returns 401 otherwise.
+ *
+ * Fast-path: if `userId` is already set on the context (e.g. by a parent-app
+ * middleware when this sub-app is mounted via `app.route()`), skip the DB call
+ * to avoid a redundant round-trip in production.
+ */
+export const requireSession = createMiddleware<{ Variables: { userId: string } }>(
+  async (c, next) => {
+    if (c.get('userId')) {
+      await next();
+      return;
+    }
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) {
+      return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+    }
+    c.set('userId', session.user.id);
+    await next();
+  },
+);

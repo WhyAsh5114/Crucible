@@ -25,6 +25,7 @@ import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace
 import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
 import { cleanupWorkspacePty } from '../lib/pty-manager';
 import { startPreview, stopPreview } from '../lib/preview-manager';
+import { requireSession } from '../lib/auth';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -80,6 +81,9 @@ const baseRuntimeApi = new OpenAPIHono<{ Variables: { userId: string } }>({
     return undefined;
   },
 });
+
+// Auth guard: every route in this sub-app requires a valid session.
+baseRuntimeApi.use('*', requireSession);
 
 function toDescriptor(runtime: {
   runtimeId: string;

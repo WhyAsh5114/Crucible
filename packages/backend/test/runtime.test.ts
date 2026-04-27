@@ -53,7 +53,7 @@ describe('POST /runtime — request validation', () => {
   it('returns 400 for an empty body', async () => {
     const res = await runtimeApi.request('/runtime', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: session.cookie },
       body: '{}',
     });
     expect(res.status).toBe(400);
@@ -73,7 +73,7 @@ describe('POST /runtime — request validation', () => {
   it('returns 400 for a non-JSON body', async () => {
     const res = await runtimeApi.request('/runtime', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: session.cookie },
       body: 'not json',
     });
     expect(res.status).toBe(400);

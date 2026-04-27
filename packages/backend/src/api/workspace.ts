@@ -26,6 +26,7 @@ import { createApiErrorBody } from '../lib/api-error';
 import { ensureWorkspaceContainer } from '../lib/runtime-docker';
 import { startPreview } from '../lib/preview-manager';
 import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
+import { requireSession } from '../lib/auth';
 
 type ApiVariables = { userId: string };
 
@@ -199,7 +200,7 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-export const workspaceApi = new OpenAPIHono<{ Variables: ApiVariables }>({
+const workspaceApiBase = new OpenAPIHono<{ Variables: ApiVariables }>({
   defaultHook: (result, c) => {
     if (!result.success) {
       return c.json(
@@ -209,7 +210,14 @@ export const workspaceApi = new OpenAPIHono<{ Variables: ApiVariables }>({
     }
     return undefined;
   },
-})
+});
+
+// Auth guard: every route in this sub-app requires a valid session.
+// Fast-path skips DB round-trip when userId was already set by a parent
+// middleware (e.g. when mounted via app.route() in index.ts).
+workspaceApiBase.use('*', requireSession);
+
+export const workspaceApi = workspaceApiBase
   .openapi(createWorkspaceRoute, async (c) => {
     const { name } = c.req.valid('json');
     const userId = c.get('userId');
