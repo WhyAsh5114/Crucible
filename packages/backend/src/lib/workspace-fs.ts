@@ -209,13 +209,18 @@ function detectWorkspaceFileLang(filePath: string) {
  * Write `content` to a workspace-relative `filePath`, creating parent
  * directories as needed.  Validates that the resolved path stays within the
  * workspace root (defense-in-depth on top of schema-level `..` blocks).
+ *
+ * @param overrideDir - Use this directory instead of the default
+ *   `workspaceHostPath(workspaceId)`. Pass the DB-stored `directoryPath` when
+ *   available so the two sources of truth stay consistent.
  */
 export async function writeWorkspaceFile(
   workspaceId: string,
   filePath: string,
   content: string,
+  overrideDir?: string,
 ): Promise<WorkspaceFile> {
-  const workspaceDir = workspaceHostPath(workspaceId);
+  const workspaceDir = overrideDir ?? workspaceHostPath(workspaceId);
   const resolved = path.resolve(workspaceDir, filePath);
 
   // Path traversal guard.

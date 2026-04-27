@@ -25,6 +25,7 @@ import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace
 import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
 import { auth } from '../lib/auth';
 import { cleanupWorkspacePty } from '../lib/pty-manager';
+import { startPreview, stopPreview } from '../lib/preview-manager';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -193,6 +194,11 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
         },
       });
 
+      // Start the per-workspace Vite preview server in the background.
+      void startPreview(workspace.id, workspaceHostPath(workspace.id)).catch((err) => {
+        console.warn(`[runtime ${workspace.id}] preview start failed:`, err);
+      });
+
       const response = RuntimeResponseSchema.parse({
         correlationId: parsed.data.correlationId,
         type: 'open_workspace',
@@ -297,6 +303,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
 
     try {
       await stopWorkspaceContainer(workspace.id);
+      stopPreview(workspace.id);
       cleanupAgentBus(workspace.id);
       cleanupWorkspacePty(workspace.id);
 

@@ -13,6 +13,7 @@ import {
   PromptRequestSchema,
   PromptResponseSchema,
   StreamIdSchema,
+  type FallbackReason,
 } from '@crucible/types';
 import { runAgentTurn, type AgentAdapter, type AgentConfig } from '@crucible/agent';
 import { exec } from 'node:child_process';
@@ -22,6 +23,7 @@ import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
 import { collectWorkspaceFiles, workspaceHostPath, writeWorkspaceFile } from '../lib/workspace-fs';
 import { executeRuntimeTool } from '../lib/tool-exec';
 import { buildOgAgentConfig } from '../lib/og-adapter';
+import { auth } from '../lib/auth';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -34,15 +36,18 @@ import { buildOgAgentConfig } from '../lib/og-adapter';
 async function resolveAgentConfig(): Promise<
   { ok: true; config: AgentConfig } | { ok: false; reason: string }
 > {
+  let fallbackReason: FallbackReason;
+
   try {
     const og = await buildOgAgentConfig();
     if (og) return { ok: true, config: og };
+    // buildOgAgentConfig returned null — 0G env vars not configured.
+    fallbackReason = 'admin_override';
   } catch (err) {
     // 0G init failed (e.g. no balance, provider offline) — fall through.
-    console.warn(
-      '[inference] 0G Compute init failed, falling back:',
-      err instanceof Error ? err.message : String(err),
-    );
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[inference] 0G Compute init failed, falling back:', msg);
+    fallbackReason = 'provider_unavailable';
   }
 
   // OpenAI-compatible fallback.
@@ -59,6 +64,7 @@ async function resolveAgentConfig(): Promise<
       apiKey,
       model,
       provider: 'openai-compatible',
+      fallbackReason,
     },
   };
 }
@@ -67,7 +73,17 @@ async function resolveAgentConfig(): Promise<
 
 function buildAdapter(): AgentAdapter {
   return {
-    getWorkspaceFiles: async (workspaceId) => collectWorkspaceFiles(workspaceHostPath(workspaceId)),
+    getWorkspaceFiles: async (workspaceId) => {
+      const ws = await prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { directoryPath: true },
+      });
+      const dir =
+        ws?.directoryPath && !ws.directoryPath.startsWith('pending://')
+          ? ws.directoryPath
+          : workspaceHostPath(workspaceId);
+      return collectWorkspaceFiles(dir);
+    },
 
     writeFile: async (workspaceId, filePath, content) =>
       writeWorkspaceFile(workspaceId, filePath, content),
@@ -156,6 +172,10 @@ const promptRoute = createRoute({
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Bad request',
     },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Workspace not found',
@@ -182,11 +202,21 @@ export const inferenceApi = new OpenAPIHono({
 }).openapi(promptRoute, async (c) => {
   const { workspaceId, prompt } = c.req.valid('json');
 
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  const userId = session?.user.id ?? null;
+
+  if (!userId) {
+    return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+  }
+
   const workspace = await prisma.workspace.findUnique({
     where: { id: workspaceId },
-    select: { id: true },
+    select: { id: true, userId: true },
   });
   if (!workspace) {
+    return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+  }
+  if (workspace.userId !== userId) {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 

@@ -2,6 +2,7 @@ import {
   workspaceHostPath,
   collectWorkspaceFiles,
   provisionWorkspaceDirectory,
+  writeWorkspaceFile,
 } from '../lib/workspace-fs';
 import {
   ChainStateSchema,
@@ -13,18 +14,18 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ApiErrorSchema,
+  StreamIdSchema,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
-import { createHash } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
 import { ensureWorkspaceContainer } from '../lib/runtime-docker';
+import { startPreview } from '../lib/preview-manager';
+import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
 import { auth } from '../lib/auth';
-import path from 'node:path';
-import { mkdir, writeFile, stat } from 'node:fs/promises';
 
 // ── OpenAPI route definitions ────────────────────────────────────────────────
 
@@ -50,6 +51,10 @@ const createWorkspaceRoute = createRoute({
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Conflict',
     },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
     500: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Internal error',
@@ -71,6 +76,10 @@ const getWorkspaceRoute = createRoute({
     400: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
     },
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
@@ -97,6 +106,10 @@ const fileWriteRoute = createRoute({
     400: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
     },
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
@@ -147,6 +160,12 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
         terminalPort: container.ports.terminal,
       },
     });
+
+    // Start the per-workspace preview server in the background so
+    // GET /api/workspace/:id eventually returns a non-null previewUrl.
+    void startPreview(workspaceId, directoryPath).catch((err) => {
+      console.warn(`[workspace ${workspaceId}] preview start failed:`, err);
+    });
   } catch (err) {
     // Mark the runtime crashed so the UI can show a degraded state instead
     // of looking idle forever. The error itself is intentionally swallowed:
@@ -178,6 +197,11 @@ export const workspaceApi = new OpenAPIHono({
     const { name } = c.req.valid('json');
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     const userId = session?.user.id ?? null;
+
+    if (!userId) {
+      return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+    }
+
     let createdId: string | null = null;
 
     try {
@@ -224,6 +248,10 @@ export const workspaceApi = new OpenAPIHono({
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     const userId = session?.user.id ?? null;
 
+    if (!userId) {
+      return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+    }
+
     const row = await prisma.workspace.findUnique({
       where: { id },
       include: { runtime: true },
@@ -233,7 +261,7 @@ export const workspaceApi = new OpenAPIHono({
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    if (row.userId !== null && row.userId !== userId) {
+    if (row.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -260,6 +288,10 @@ export const workspaceApi = new OpenAPIHono({
     const session = await auth.api.getSession({ headers: c.req.raw.headers });
     const userId = session?.user.id ?? null;
 
+    if (!userId) {
+      return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+    }
+
     const row = await prisma.workspace.findUnique({
       where: { id },
       select: { id: true, userId: true, directoryPath: true },
@@ -269,7 +301,7 @@ export const workspaceApi = new OpenAPIHono({
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    if (row.userId !== null && row.userId !== userId) {
+    if (row.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -277,43 +309,24 @@ export const workspaceApi = new OpenAPIHono({
       ? workspaceHostPath(row.id)
       : (row.directoryPath ?? workspaceHostPath(row.id));
 
-    // Resolve the full path and verify it stays within the workspace directory
-    // (defense-in-depth against path traversal even though the schema blocks `..`).
-    const resolved = path.resolve(workspaceDir, filePath);
-    if (!resolved.startsWith(workspaceDir + path.sep) && resolved !== workspaceDir) {
-      return c.json(createApiErrorBody('bad_request', 'Path escapes the workspace directory'), 400);
-    }
-
     try {
-      await mkdir(path.dirname(resolved), { recursive: true });
-      const encoded = Buffer.from(content, 'utf8');
-      await writeFile(resolved, encoded);
-      const fileStats = await stat(resolved);
+      const wf = await writeWorkspaceFile(row.id, filePath, content, workspaceDir);
 
-      const ext = path.extname(filePath).toLowerCase();
-      const langMap: Record<string, string> = {
-        '.sol': 'solidity',
-        '.ts': 'typescript',
-        '.tsx': 'typescript',
-        '.js': 'javascript',
-        '.jsx': 'javascript',
-        '.svelte': 'svelte',
-        '.json': 'json',
-        '.css': 'css',
-        '.html': 'html',
-        '.md': 'markdown',
-        '.txt': 'plaintext',
-      };
-
-      const response = FileWriteResponseSchema.parse({
-        path: filePath,
-        content,
-        lang: langMap[ext] ?? 'plaintext',
-        hash: createHash('sha256').update(encoded).digest('hex'),
-        modifiedAt: Math.trunc(fileStats.mtimeMs),
+      // Publish a file_write event so SSE subscribers (e.g. the editor)
+      // see the change without polling.
+      const streamId = StreamIdSchema.parse(row.id);
+      publishAgentEvent(row.id, {
+        streamId,
+        seq: nextAgentSeq(row.id),
+        emittedAt: Date.now(),
+        type: 'file_write',
+        path: wf.path,
+        lang: wf.lang,
+        hash: wf.hash,
+        content: wf.content,
       });
 
-      return c.json(response, 200);
+      return c.json(FileWriteResponseSchema.parse(wf), 200);
     } catch (error) {
       return c.json(
         createApiErrorBody('internal', error instanceof Error ? error.message : 'Write failed'),
