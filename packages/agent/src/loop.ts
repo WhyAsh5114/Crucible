@@ -316,9 +316,17 @@ export async function runAgentTurn(
 
     for await (const chunk of result.fullStream) {
       switch (chunk.type) {
-        case 'text-delta':
-          fullResponse += chunk.text;
+        case 'reasoning-delta':
+          // Model's chain-of-thought / reasoning tokens — show as collapsible
+          // "Thinking…" block in the chat rail.
           emit({ ...baseEvent(), type: 'thinking', text: chunk.text });
+          break;
+
+        case 'text-delta':
+          // Stream each response token immediately so the chat rail updates
+          // in real time. Also accumulate for the inference receipt token count.
+          fullResponse += chunk.text;
+          emit({ ...baseEvent(), type: 'message_delta', text: chunk.text });
           break;
 
         case 'finish':
@@ -398,10 +406,8 @@ export async function runAgentTurn(
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
 
-  // Emit consolidated assistant reply.
-  if (fullResponse.trim().length > 0) {
-    emit({ ...baseEvent(), type: 'message', content: fullResponse });
-  }
+  // No final `message` emit — response text was already streamed as
+  // `message_delta` events and accumulated by the frontend.
 
   // Emit inference receipt so the frontend can display cost / provenance.
   emit({
