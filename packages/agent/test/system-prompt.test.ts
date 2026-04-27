@@ -38,6 +38,7 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('read_file');
     expect(prompt).toContain('write_file');
     expect(prompt).toContain('run_shell');
-    expect(prompt).toContain('mcp_tool');
+    expect(prompt).toContain('compile');
+    expect(prompt).toContain('deploy_local');
   });
 });
