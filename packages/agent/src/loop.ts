@@ -97,7 +97,7 @@ export interface AgentAdapter {
 
 type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory';
 
-function getMcpSchemas(server: McpServerKey) {
+function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.ZodTypeAny }> {
   switch (server) {
     case 'chain':
       return {
@@ -194,15 +194,14 @@ export async function runAgentTurn(
   const mcpClients: MCPClient[] = [];
   const mcpToolNames = new Set<string>();
   const toolToServer = new Map<string, string>(); // toolName → serverName for event emission
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mcpToolsObj: Record<string, any> = {};
+  const mcpToolsObj: Awaited<ReturnType<MCPClient['tools']>> = {};
   for (const [serverName, url] of Object.entries(config.mcpServerUrls ?? {})) {
     if (!url) continue;
     try {
       const client = await createMCPClient({ transport: { type: 'http', url } });
       mcpClients.push(client);
       const serverTools = await client.tools({
-        schemas: getMcpSchemas(serverName as McpServerKey) as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+        schemas: getMcpSchemas(serverName as McpServerKey),
       });
       for (const name of Object.keys(serverTools)) {
         mcpToolNames.add(name);
