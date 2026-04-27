@@ -135,5 +135,82 @@ export function createMemoryServer(opts: { workspaceRoot: string }): McpServer {
     },
   );
 
+  // ── prompts ────────────────────────────────────────────────────────────────
+
+  server.registerPrompt(
+    'memory_workflow',
+    {
+      title: 'Memory Workflow',
+      description:
+        'Guide for storing and retrieving verified revert-fix patterns using crucible-memory.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              'You are connected to the crucible-memory MCP server.',
+              'It stores and retrieves verified revert→fix patterns to accelerate debugging.',
+              '',
+              'Typical workflow:',
+              '1. Call recall(query) with a revert signature or freeform description.',
+              '   - Returns top matching patterns ranked by similarity.',
+              '   - Each hit includes revertSignature, fix, contractName, and provenance.',
+              '2. Apply the suggested fix from the top hit to your contract or transaction.',
+              '3. Verify the fix resolves the issue (re-simulate in crucible-deployer).',
+              '4. Call remember(pattern) to persist the confirmed fix for future use.',
+              '   - Required fields: revertSignature, fix, contractName.',
+              '   - Optional: scope (file path), tags, notes.',
+              '5. Call list_patterns for paginated browsing of all stored patterns.',
+              '6. Call provenance(id) to see the source and timestamps for a specific pattern.',
+              '',
+              'Tool reference:',
+              '  recall         — Semantic search over stored patterns.',
+              '  remember       — Persist a verified revert→fix pattern.',
+              '  list_patterns  — Paginated list of all patterns.',
+              '  provenance     — Full metadata for a pattern by id.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
+  );
+
+  server.registerPrompt(
+    'debug_and_learn',
+    {
+      title: 'Debug & Learn Loop',
+      description:
+        'Guide for using crucible-memory together with crucible-deployer to diagnose reverts and build up a fix-pattern library.',
+    },
+    () => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: [
+              'Debug-and-learn loop using crucible-deployer and crucible-memory:',
+              '',
+              '1. [deployer]  simulate_local or trace → extract the revert signature.',
+              '2. [memory]    recall(revertSignature) → check if a fix pattern already exists.',
+              '   a) Hit found   → apply the suggested fix, skip to step 5.',
+              '   b) No hit      → investigate manually (steps 3–4).',
+              '3. Diagnose the root cause from the trace (call stack, storage, events).',
+              '4. Apply a fix to the contract or transaction inputs.',
+              '5. [deployer]  simulate_local again → confirm the revert is resolved.',
+              '6. [memory]    remember({ revertSignature, fix, contractName, ... })',
+              '   - Captures the revert→fix mapping so future agents can skip steps 3–4.',
+              '',
+              'Over time this builds a project-specific fix library that reduces debugging time.',
+            ].join('\n'),
+          },
+        },
+      ],
+    }),
+  );
+
   return server;
 }
