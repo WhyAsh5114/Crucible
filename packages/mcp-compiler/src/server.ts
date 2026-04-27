@@ -37,12 +37,18 @@ export async function assertContainedInWorkspace(
   workspaceRoot: string,
   candidatePath: string,
 ): Promise<string> {
-  const [resolvedRoot, resolvedCandidate] = await Promise.all([
-    realpath(workspaceRoot),
-    // candidatePath may not exist yet; fall back to the un-resolved path so
-    // compilation errors surface from solc rather than from path validation.
-    realpath(candidatePath).catch(() => candidatePath),
-  ]);
+  const resolvedRoot = await realpath(workspaceRoot);
+  let resolvedCandidate: string;
+  try {
+    resolvedCandidate = await realpath(candidatePath);
+  } catch {
+    // File doesn't exist yet. Swap the raw workspaceRoot prefix for the
+    // resolved root so symlink differences (e.g. /tmp → /private/tmp on macOS)
+    // don't cause a false "outside workspace" rejection.
+    resolvedCandidate = candidatePath.startsWith(workspaceRoot)
+      ? resolvedRoot + candidatePath.slice(workspaceRoot.length)
+      : candidatePath;
+  }
   const rel = relative(resolvedRoot, resolvedCandidate);
   if (rel.startsWith('..') || isAbsolute(rel)) {
     throw new Error('sourcePath must resolve within the workspace root');

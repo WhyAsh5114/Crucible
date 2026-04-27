@@ -14,47 +14,29 @@ describe('createCompilerServer', () => {
   });
 });
 
-// ── CompileInputSchema — mutual exclusion ──────────────────────────────────
+// ── CompileInputSchema ─────────────────────────────────────────────────────
 
 describe('CompileInputSchema', () => {
   it('accepts sourcePath alone', () => {
-    const result = CompileInputSchema.safeParse({ sourcePath: '/workspace/Counter.sol' });
+    const result = CompileInputSchema.safeParse({ sourcePath: 'contracts/Counter.sol' });
     expect(result.success).toBe(true);
   });
 
-  it('accepts source alone', () => {
+  it('accepts sourcePath with optional settings', () => {
     const result = CompileInputSchema.safeParse({
-      source: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract A {}',
+      sourcePath: 'contracts/Counter.sol',
+      settings: { optimizer: { enabled: true } },
     });
     expect(result.success).toBe(true);
   });
 
-  it('accepts source with an explicit fileName', () => {
-    const result = CompileInputSchema.safeParse({
-      source: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract A {}',
-      fileName: 'MyToken.sol',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects when both sourcePath and source are provided', () => {
-    const result = CompileInputSchema.safeParse({
-      sourcePath: '/workspace/Counter.sol',
-      source: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract A {}',
-    });
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects when neither sourcePath nor source are provided', () => {
+  it('rejects when sourcePath is missing', () => {
     const result = CompileInputSchema.safeParse({});
     expect(result.success).toBe(false);
   });
 
-  it('rejects a fileName that does not end in .sol', () => {
-    const result = CompileInputSchema.safeParse({
-      source: '// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\ncontract A {}',
-      fileName: 'Token.ts',
-    });
+  it('rejects when sourcePath is empty', () => {
+    const result = CompileInputSchema.safeParse({ sourcePath: '' });
     expect(result.success).toBe(false);
   });
 });
