@@ -21,7 +21,7 @@ import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
 import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
 import { collectWorkspaceFiles, workspaceHostPath, writeWorkspaceFile } from '../lib/workspace-fs';
-import { executeRuntimeTool } from '../lib/tool-exec';
+import { getWorkspaceContainerPorts, runtimeServiceBaseUrl } from '../lib/runtime-docker';
 import { buildOgAgentConfig } from '../lib/og-adapter';
 import { auth } from '../lib/auth';
 
@@ -101,24 +101,6 @@ function buildAdapter(): AgentAdapter {
       });
     },
 
-    executeMcpTool: async (workspaceId, server, toolName, args) => {
-      const outcome = await executeRuntimeTool({
-        workspaceId,
-        server: server as
-          | 'chain'
-          | 'compiler'
-          | 'deployer'
-          | 'wallet'
-          | 'terminal'
-          | 'memory'
-          | 'mesh',
-        tool: toolName,
-        args,
-      });
-      if (!outcome.ok) throw new Error(outcome.error);
-      return outcome.result;
-    },
-
     publishEvent: (workspaceId, event) => publishAgentEvent(workspaceId, event),
 
     nextSeq: (workspaceId) => nextAgentSeq(workspaceId),
@@ -149,7 +131,23 @@ async function runInference(workspaceId: string, prompt: string): Promise<void> 
     return;
   }
 
-  await runAgentTurn(workspaceId, prompt, resolved.config, buildAdapter());
+  // Build MCP server URLs from the live container port map.
+  const mcpServerUrls: Partial<
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>
+  > = {};
+  try {
+    const ports = await getWorkspaceContainerPorts(workspaceId);
+    if (ports) {
+      for (const key of ['chain', 'compiler', 'deployer', 'wallet', 'memory'] as const) {
+        const port = ports[key];
+        if (port !== null) mcpServerUrls[key] = `${runtimeServiceBaseUrl(port)}/mcp`;
+      }
+    }
+  } catch {
+    // Container not running yet — agent will degrade without MCP tools.
+  }
+
+  await runAgentTurn(workspaceId, prompt, { ...resolved.config, mcpServerUrls }, buildAdapter());
 }
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────

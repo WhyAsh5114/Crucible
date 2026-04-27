@@ -35,52 +35,38 @@ wagmi/viem React frontend.
   root). Prefer \`bun\` for package management, \`npx hardhat\` or \`forge\` for
   contract tooling. Stdout + stderr are returned; exitCode 0 means success.
 
-### MCP runtime tools (use mcp_tool)
-Each of the following services runs inside the workspace's Docker container.
-Call them via the \`mcp_tool\` tool with the correct \`server\` and \`args\` values.
+### MCP runtime tools — call these directly by name
+Each tool is a first-class function with a strict input schema; the SDK enforces
+required arguments at the protocol level. **Always prefer these tools over
+\`run_shell hardhat …\`** — the MCP services share the workspace's running
+Hardhat node, while shell-spawned hardhat would start its own ephemeral chain
+and you would lose all deployed state.
 
-**chain** — Hardhat local fork
-| tool        | required args                          |
-|-------------|----------------------------------------|
-| start_node  | (none)                                 |
-| get_state   | (none)                                 |
-| snapshot    | (none)                                 |
-| revert      | \`{ snapshotId: string }\`             |
-| mine        | \`{ blocks?: number }\`               |
-| fork        | \`{ rpcUrl: string, blockNumber?: number }\` |
+**chain** — workspace Hardhat node
+- \`start_node()\` — start the node (required before any deploy or RPC call)
+- \`get_state()\` — chainId, blockNumber, gasPrice, accounts
+- \`snapshot()\` → returns \`{ snapshotId }\`
+- \`revert({ snapshotId })\`
 
-**compiler** — Solidity compilation (Hardhat)
-| tool            | required args                                                     |
-|-----------------|-------------------------------------------------------------------|
-| compile         | \`{ sourcePath: "contracts/MyContract.sol" }\` — workspace-relative path |
-| list_contracts  | (none) — returns names of all compiled contracts                  |
-| get_abi         | \`{ contractName: "Counter" }\`                                   |
-| get_bytecode    | \`{ contractName: "Counter" }\`                                   |
+**compiler** — Hardhat-driven Solidity compilation
+- \`compile({ sourcePath: "contracts/Counter.sol" })\` — sourcePath is required
+- \`list_contracts()\`
+- \`get_abi({ contractName: "Counter" })\`
+- \`get_bytecode({ contractName: "Counter" })\`
 
-**deployer** — local-chain deploy and trace (no public-chain access)
-| tool           | required args                                                                              |
-|----------------|--------------------------------------------------------------------------------------------|
-| deploy_local   | \`{ contractName: "Counter", constructorData: "0x" }\` — compile first, then deploy by name |
-| simulate_local | \`{ tx: { from?, to, data, value?, gas? } }\`                                              |
-| trace          | \`{ txHash: "0x..." }\`                                                                    |
-| call           | \`{ tx: { from?, to, data } }\`                                                            |
+**deployer** — local-chain deploy and trace (no public chain)
+- \`deploy_local({ contractName: "Counter", constructorData: "0x" })\`
+- \`simulate_local({ tx: { to, data, from? } })\`
+- \`trace({ txHash })\`
 
-**wallet** — embedded dev wallet (Hardhat test accounts)
-| tool           | required args                   |
-|----------------|---------------------------------|
-| list_accounts  | (none)                          |
-| get_balance    | \`{ address: "0x..." }\`        |
-| sign_tx        | \`{ tx: { ... } }\`            |
-| send_tx_local  | \`{ signedTx: "0x..." }\`       |
-| switch_account | \`{ address: "0x..." }\`        |
+**wallet** — embedded dev wallet
+- \`list_accounts()\`
+- \`get_balance({ address })\`
+- \`send_tx_local({ tx: { from, to, data, chainId } })\`
 
-**memory** — pattern / knowledge store
-| tool          | required args                                      |
-|---------------|----------------------------------------------------|
-| recall        | \`{ revertSignature?: string, freeform?: string }\` |
-| remember      | \`{ pattern: { ... } }\`                            |
-| list_patterns | (none)                                             |
-| provenance    | \`{ id: "pattern-id" }\`                            |
+**memory** — pattern store
+- \`recall({ revertSignature?, freeform? })\` — at least one field required
+- \`list_patterns()\`
 
 ## Workspace layout
 
@@ -97,8 +83,8 @@ frontend/      — React + Vite + wagmi/viem dApp
 ## Workflow guidelines
 
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
-2. **Compile early.** After editing a .sol file call mcp_tool with server "compiler", tool "compile", and args \`{ sourcePath: "contracts/MyContract.sol" }\`.
-3. **Incremental deploys.** After a successful compile, call mcp_tool with server "deployer", tool "deploy_local", and args \`{ contractName: "MyContract", constructorData: "0x" }\`.
+2. **Compile early.** After editing a .sol file call \`compile({ sourcePath: "contracts/MyContract.sol" })\`.
+3. **Incremental deploys.** After a successful compile call \`deploy_local({ contractName: "MyContract", constructorData: "0x" })\`.
 4. **Update the frontend.** After deploying, update frontend/src/App.tsx with the
    new contract address and ABI from the deployer result.
 5. **Use wagmi/viem idioms** in the frontend — useReadContract, useWriteContract.

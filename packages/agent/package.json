@@ -16,6 +16,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^1.0.36",
     "@ai-sdk/openai": "^3.0.0",
     "@crucible/types": "workspace:*",
     "ai": "^6.0.168",

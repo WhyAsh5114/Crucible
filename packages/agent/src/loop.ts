@@ -13,14 +13,17 @@
 
 import { streamText, tool, stepCountIs } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
+import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
 import { z } from 'zod';
 import {
   CallIdSchema,
   InferenceReceiptIdSchema,
   StreamIdSchema,
   type AgentEvent,
+  type CallId,
   type FallbackReason,
   type WorkspaceFile,
+  mcp,
 } from '@crucible/types';
 import { buildSystemPrompt } from './system-prompt.ts';
 
@@ -47,6 +50,14 @@ export interface AgentConfig {
    * in the inference_receipt event so the UI can show honest fallback state.
    */
   fallbackReason?: FallbackReason | null;
+  /**
+   * Per-server MCP endpoint URLs for the workspace container.
+   * Key is the logical server name; value is the full MCP transport URL
+   * (e.g. `http://127.0.0.1:32768/mcp`).
+   * When present, the agent connects to that server directly via the AI SDK
+   * MCP client rather than routing through the REST proxy in tool-exec.ts.
+   */
+  mcpServerUrls?: Partial<Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>>;
 }
 
 /** Shell execution result returned by adapter.runShell. */
@@ -75,19 +86,58 @@ export interface AgentAdapter {
   /** Run `cmd` in a shell scoped to the workspace directory. */
   runShell(workspaceId: string, cmd: string): Promise<ShellResult>;
 
-  /** Proxy a tool call to one of the workspace's MCP microservices. */
-  executeMcpTool(
-    workspaceId: string,
-    server: string,
-    toolName: string,
-    args: Record<string, unknown>,
-  ): Promise<unknown>;
-
   /** Publish an event to the agent bus for this workspace. */
   publishEvent(workspaceId: string, event: AgentEvent): void;
 
   /** Allocate the next monotonic sequence number for this workspace's stream. */
   nextSeq(workspaceId: string): number;
+}
+
+// ── MCP schema registry ──────────────────────────────────────────────────────
+
+type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory';
+
+function getMcpSchemas(server: McpServerKey) {
+  switch (server) {
+    case 'chain':
+      return {
+        start_node: { inputSchema: mcp.chain.StartNodeInputSchema },
+        get_state: { inputSchema: mcp.chain.GetStateInputSchema },
+        snapshot: { inputSchema: mcp.chain.SnapshotInputSchema },
+        revert: { inputSchema: mcp.chain.RevertInputSchema },
+        mine: { inputSchema: mcp.chain.MineInputSchema },
+        fork: { inputSchema: mcp.chain.ForkInputSchema },
+      };
+    case 'compiler':
+      return {
+        compile: { inputSchema: mcp.compiler.CompileInputSchema },
+        list_contracts: { inputSchema: mcp.compiler.ListContractsInputSchema },
+        get_abi: { inputSchema: mcp.compiler.GetAbiInputSchema },
+        get_bytecode: { inputSchema: mcp.compiler.GetBytecodeInputSchema },
+      };
+    case 'deployer':
+      return {
+        deploy_local: { inputSchema: mcp.deployer.DeployLocalInputSchema },
+        simulate_local: { inputSchema: mcp.deployer.SimulateLocalInputSchema },
+        trace: { inputSchema: mcp.deployer.TraceInputSchema },
+        call: { inputSchema: mcp.deployer.CallInputSchema },
+      };
+    case 'wallet':
+      return {
+        list_accounts: { inputSchema: mcp.wallet.ListAccountsInputSchema },
+        get_balance: { inputSchema: mcp.wallet.GetBalanceInputSchema },
+        sign_tx: { inputSchema: mcp.wallet.SignTxInputSchema },
+        send_tx_local: { inputSchema: mcp.wallet.SendTxLocalInputSchema },
+        switch_account: { inputSchema: mcp.wallet.SwitchAccountInputSchema },
+      };
+    case 'memory':
+      return {
+        recall: { inputSchema: mcp.memory.RecallInputSchema },
+        remember: { inputSchema: mcp.memory.RememberInputSchema },
+        list_patterns: { inputSchema: mcp.memory.ListPatternsInputSchema },
+        provenance: { inputSchema: mcp.memory.ProvenanceInputSchema },
+      };
+  }
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -139,6 +189,33 @@ export async function runAgentTurn(
   let promptTokens = 0;
   let completionTokens = 0;
   let fullResponse = '';
+
+  // ── MCP client setup ───────────────────────────────────────────────────────
+  const mcpClients: MCPClient[] = [];
+  const mcpToolNames = new Set<string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mcpToolsObj: Record<string, any> = {};
+  for (const [serverName, url] of Object.entries(config.mcpServerUrls ?? {})) {
+    if (!url) continue;
+    try {
+      const client = await createMCPClient({ transport: { type: 'http', url } });
+      mcpClients.push(client);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const serverTools = await client.tools({
+        schemas: getMcpSchemas(serverName as McpServerKey) as any,
+      });
+      for (const name of Object.keys(serverTools)) mcpToolNames.add(name);
+      Object.assign(mcpToolsObj, serverTools);
+    } catch (err) {
+      console.warn(
+        `[agent] MCP client init failed for ${serverName}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // toolCallId → AgentEvent callId — links tool_call and tool_result events.
+  const pendingMcpCalls = new Map<string, CallId>();
 
   try {
     const result = streamText({
@@ -230,48 +307,8 @@ export async function runAgentTurn(
           },
         }),
 
-        // ── mcp_tool ───────────────────────────────────────────────────────
-        mcp_tool: tool({
-          description:
-            'Call a tool on one of the workspace MCP microservices. ' +
-            'Servers: chain (Hardhat fork), compiler, deployer, wallet, memory.',
-          inputSchema: z.object({
-            server: z
-              .enum(['chain', 'compiler', 'deployer', 'wallet', 'memory'])
-              .describe('MCP server to call'),
-            tool: z.string().min(1).describe('Tool name on that server'),
-            args: z.record(z.string(), z.unknown()).describe('Tool arguments as a JSON object'),
-          }),
-          execute: async ({ server, tool: toolName, args }) => {
-            const callId = CallIdSchema.parse(crypto.randomUUID());
-            emit({
-              ...baseEvent(),
-              type: 'tool_call',
-              callId,
-              tool: `${server}.${toolName}`,
-              args,
-            });
-            try {
-              const result = await adapter.executeMcpTool(workspaceId, server, toolName, args);
-              emit({
-                ...baseEvent(),
-                type: 'tool_result',
-                callId,
-                outcome: { ok: true, result },
-              });
-              return result;
-            } catch (err) {
-              const error = err instanceof Error ? err.message : String(err);
-              emit({
-                ...baseEvent(),
-                type: 'tool_result',
-                callId,
-                outcome: { ok: false, error },
-              });
-              return { error };
-            }
-          },
-        }),
+        // ── MCP tools (connected directly via @ai-sdk/mcp) ────────────────
+        ...mcpToolsObj,
       },
     });
 
@@ -287,6 +324,53 @@ export async function runAgentTurn(
           completionTokens = chunk.totalUsage.outputTokens ?? 0;
           break;
 
+        case 'tool-call':
+          if (mcpToolNames.has(chunk.toolName)) {
+            const callId = CallIdSchema.parse(crypto.randomUUID());
+            pendingMcpCalls.set(chunk.toolCallId, callId);
+            emit({
+              ...baseEvent(),
+              type: 'tool_call',
+              callId,
+              tool: chunk.toolName,
+              args: chunk.input as Record<string, unknown>,
+            });
+          }
+          break;
+
+        case 'tool-result':
+          if (mcpToolNames.has(chunk.toolName)) {
+            const callId = pendingMcpCalls.get(chunk.toolCallId);
+            if (callId) {
+              pendingMcpCalls.delete(chunk.toolCallId);
+              const raw = chunk.output as {
+                isError?: boolean;
+                content?: Array<{ type: string; text?: string }>;
+              };
+              if (raw.isError) {
+                const error =
+                  raw.content
+                    ?.filter((c) => c.type === 'text')
+                    .map((c) => c.text ?? '')
+                    .join('\n') ?? 'MCP tool error';
+                emit({
+                  ...baseEvent(),
+                  type: 'tool_result',
+                  callId,
+                  outcome: { ok: false, error },
+                });
+              } else {
+                emit({
+                  ...baseEvent(),
+                  type: 'tool_result',
+                  callId,
+                  outcome: { ok: true, result: raw },
+                });
+              }
+            }
+          }
+          break;
+
         case 'error':
           emit({
             ...baseEvent(),
@@ -296,8 +380,6 @@ export async function runAgentTurn(
           break;
 
         default:
-          // tool-call / tool-result / step events are handled inside each
-          // tool's execute function above; we don't need to re-process them.
           break;
       }
     }
@@ -309,6 +391,8 @@ export async function runAgentTurn(
     });
     emit({ ...baseEvent(), type: 'done' });
     return;
+  } finally {
+    await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
 
   // Emit consolidated assistant reply.
