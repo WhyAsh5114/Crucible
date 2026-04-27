@@ -1,0 +1,272 @@
+/**
+ * mcp-deployer entry point.
+ *
+ * Starts an OpenAPIHono HTTP server on DEFAULT_MCP_PORTS.deployer (3102) or
+ * the port specified by DEPLOYER_MCP_PORT.
+ *
+ * Exposes both:
+ *   POST /mcp   — MCP protocol transport (hidden from OpenAPI docs)
+ *   REST routes — typed endpoints consumable via hc<AppType> from the frontend
+ *
+ * Environment flags:
+ *   DEPLOYER_MCP_PORT=N   — override the listen port
+ *   CHAIN_RPC_URL=<url>   — chain RPC endpoint (defaults to http://localhost:3100)
+ *   WORKSPACE_ROOT=<path> — workspace root for path checks (defaults to cwd)
+ */
+
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
+import { hostHeaderValidation } from '@modelcontextprotocol/hono';
+import { existsSync } from 'node:fs';
+import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
+import { z } from 'zod';
+import { mcp } from '@crucible/types';
+import {
+  DeployLocalInputSchema,
+  SimulateLocalInputSchema,
+  TraceInputSchema,
+  CallInputSchema,
+} from '@crucible/types/mcp/deployer';
+import { createDeployerServer } from './server.ts';
+import { createDeployerService } from './service.ts';
+
+const PORT = process.env['DEPLOYER_MCP_PORT']
+  ? parseInt(process.env['DEPLOYER_MCP_PORT'], 10)
+  : mcp.DEFAULT_MCP_PORTS.deployer;
+
+const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100';
+const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+
+console.log(
+  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL})`,
+);
+
+if (!existsSync(WORKSPACE_ROOT)) {
+  throw new Error(`[mcp-deployer] WORKSPACE_ROOT does not exist: ${WORKSPACE_ROOT}`);
+}
+
+const service = createDeployerService({
+  chainRpcUrl: CHAIN_RPC_URL,
+  workspaceRoot: WORKSPACE_ROOT,
+});
+
+const ErrorSchema = z.object({ error: z.string() });
+
+// Wire-format schemas (no branded/transformed outputs) for OpenAPI route typing.
+const DeployLocalOutputWireSchema = z.object({
+  address: z.string(),
+  txHash: z.string(),
+  gasUsed: z.string(),
+});
+
+const SimulateLocalOutputWireSchema = z.object({
+  result: z.string(),
+  gasEstimate: z.string(),
+  revertReason: z.string().optional(),
+  logs: z.array(
+    z.object({
+      address: z.string(),
+      topics: z.array(z.string()),
+      data: z.string(),
+    }),
+  ),
+});
+
+const TraceOutputWireSchema = z.object({
+  txHash: z.string(),
+  decodedCalls: z.array(
+    z.object({
+      depth: z.number().int().nonnegative(),
+      to: z.string(),
+      fn: z.string(),
+      args: z.array(z.unknown()),
+      result: z.unknown().nullable(),
+      reverted: z.boolean(),
+    }),
+  ),
+  storageReads: z.array(
+    z.object({
+      contract: z.string(),
+      slot: z.string(),
+      value: z.string(),
+    }),
+  ),
+  storageWrites: z.array(
+    z.object({
+      contract: z.string(),
+      slot: z.string(),
+      value: z.string(),
+    }),
+  ),
+  events: z.array(
+    z.object({
+      contract: z.string(),
+      name: z.string(),
+      args: z.record(z.string(), z.unknown()),
+      signatureHash: z.string(),
+    }),
+  ),
+  revertReason: z.string().optional(),
+  gasUsed: z.string(),
+});
+
+const CallOutputWireSchema = z.object({ result: z.string() });
+
+const deployLocalRoute = createRoute({
+  method: 'post',
+  path: '/deploy_local',
+  request: {
+    body: { content: { 'application/json': { schema: DeployLocalInputSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: DeployLocalOutputWireSchema } },
+      description: 'Deployed locally',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
+const simulateLocalRoute = createRoute({
+  method: 'post',
+  path: '/simulate_local',
+  request: {
+    body: {
+      content: { 'application/json': { schema: SimulateLocalInputSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: SimulateLocalOutputWireSchema } },
+      description: 'Simulation result',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
+const traceRoute = createRoute({
+  method: 'post',
+  path: '/trace',
+  request: {
+    body: { content: { 'application/json': { schema: TraceInputSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: TraceOutputWireSchema } },
+      description: 'Transaction trace',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
+const callRoute = createRoute({
+  method: 'post',
+  path: '/call',
+  request: {
+    body: { content: { 'application/json': { schema: CallInputSchema } }, required: true },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: CallOutputWireSchema } },
+      description: 'Read-only call result',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
+const mcpServer = createDeployerServer({
+  chainRpcUrl: CHAIN_RPC_URL,
+  workspaceRoot: WORKSPACE_ROOT,
+});
+
+type Env = { Variables: { parsedBody: unknown } };
+
+const transport = new WebStandardStreamableHTTPServerTransport();
+await mcpServer.connect(transport);
+
+const app = new OpenAPIHono<Env>();
+
+const extraHosts = process.env['ALLOWED_HOSTS']
+  ? process.env['ALLOWED_HOSTS']
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean)
+  : [];
+app.use('*', hostHeaderValidation(['localhost', '127.0.0.1', '::1', '[::1]', ...extraHosts]));
+
+app.use('*', async (c, next) => {
+  if (c.req.header('content-type')?.includes('application/json')) {
+    try {
+      c.set('parsedBody', await c.req.json<unknown>());
+    } catch {
+      // non-JSON or empty body
+    }
+  }
+  await next();
+});
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === '/doc') {
+    await next();
+    return;
+  }
+  const start = Date.now();
+  console.log(`[mcp-deployer] → ${c.req.method} ${path}`);
+  await next();
+  const ms = Date.now() - start;
+  const status = c.res?.status ?? 0;
+  const logFn = status >= 500 ? console.error : status >= 400 ? console.warn : console.log;
+  logFn(`[mcp-deployer] ← ${status} (${ms}ms)`);
+});
+
+app.openapi(deployLocalRoute, async (c) => {
+  try {
+    const output = await service.deployLocal(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] deploy_local error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.openapi(simulateLocalRoute, async (c) => {
+  try {
+    const output = await service.simulateLocal(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] simulate_local error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.openapi(traceRoute, async (c) => {
+  try {
+    const output = await service.trace(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] trace error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.openapi(callRoute, async (c) => {
+  try {
+    const output = await service.call(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] call error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.all('/mcp', (c) => transport.handleRequest(c.req.raw, { parsedBody: c.get('parsedBody') }));
+
+app.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-deployer' } });
+
+export type AppType = typeof app;
+
+export default {
+  port: PORT,
+  fetch: app.fetch,
+};
