@@ -34,7 +34,7 @@ const PORT = process.env['WALLET_MCP_PORT']
   ? parseInt(process.env['WALLET_MCP_PORT'], 10)
   : mcp.DEFAULT_MCP_PORTS.wallet;
 
-const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100';
+const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 
 console.log(
