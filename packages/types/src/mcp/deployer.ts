@@ -18,13 +18,19 @@ const TxRequestSchema = z.object({
 });
 export type TxRequest = z.infer<typeof TxRequestSchema>;
 
+/**
+ * Deploy by compiled contract name — bytecode is auto-fetched from mcp-compiler.
+ * Run compile first, then pass the contract name here.
+ */
 export const DeployLocalInputSchema = z.object({
-  bytecode: HexSchema,
+  /** Compiled contract name (e.g. "Counter"). Compile first via compiler-mcp. */
+  contractName: z.string().min(1),
   /** Encoded constructor calldata appended to the bytecode. May be empty `0x`. */
   constructorData: HexSchema,
   sender: AddressSchema.optional(),
   value: BigIntStringSchema.optional(),
 });
+
 export const DeployLocalOutputSchema = z.object({
   address: AddressSchema,
   txHash: HashSchema,
