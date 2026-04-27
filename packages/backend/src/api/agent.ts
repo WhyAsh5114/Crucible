@@ -23,49 +23,64 @@ const QuerySchema = z.object({
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 
-export const agentApi = new OpenAPIHono().get('/agent/stream', async (c) => {
-  const parsed = QuerySchema.safeParse({ workspaceId: c.req.query('workspaceId') });
-  if (!parsed.success) {
-    return c.json(
-      createApiErrorBody('bad_request', parsed.error.issues[0]?.message ?? 'Invalid workspaceId'),
-      400,
-    );
-  }
+export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get(
+  '/agent/stream',
+  async (c) => {
+    const parsed = QuerySchema.safeParse({ workspaceId: c.req.query('workspaceId') });
+    if (!parsed.success) {
+      return c.json(
+        createApiErrorBody('bad_request', parsed.error.issues[0]?.message ?? 'Invalid workspaceId'),
+        400,
+      );
+    }
 
-  const { workspaceId } = parsed.data;
+    const { workspaceId } = parsed.data;
+    const userId = c.get('userId');
 
-  const workspace = await prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: { id: true },
-  });
-  if (!workspace) {
-    return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
-  }
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
 
-  const subscription = subscribeAgentEvents(workspaceId);
-  const encoder = new TextEncoder();
+    const subscription = subscribeAgentEvents(workspaceId);
+    const encoder = new TextEncoder();
 
-  const body = new ReadableStream({
-    start(controller) {
-      // Keepalive: SSE comment frames every 15s so intermediaries don't close
-      // idle connections.
-      const keepalive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
-        } catch {
-          clearInterval(keepalive);
-        }
-      }, KEEPALIVE_INTERVAL_MS);
-
-      // Drain the async iterator in the background.
-      void (async () => {
-        try {
-          for await (const event of subscription.events) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+    const body = new ReadableStream({
+      start(controller) {
+        // Keepalive: SSE comment frames every 15s so intermediaries don't close
+        // idle connections.
+        const keepalive = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(': keepalive\n\n'));
+          } catch {
+            clearInterval(keepalive);
           }
-        } catch {
-          // Subscription closed or stream cancelled.
-        } finally {
+        }, KEEPALIVE_INTERVAL_MS);
+
+        // Drain the async iterator in the background.
+        void (async () => {
+          try {
+            for await (const event of subscription.events) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+            }
+          } catch {
+            // Subscription closed or stream cancelled.
+          } finally {
+            clearInterval(keepalive);
+            subscription.unsubscribe();
+            try {
+              controller.close();
+            } catch {
+              // Already closed.
+            }
+          }
+        })();
+
+        // Clean up when the client disconnects.
+        c.req.raw.signal.addEventListener('abort', () => {
           clearInterval(keepalive);
           subscription.unsubscribe();
           try {
@@ -73,31 +88,20 @@ export const agentApi = new OpenAPIHono().get('/agent/stream', async (c) => {
           } catch {
             // Already closed.
           }
-        }
-      })();
-
-      // Clean up when the client disconnects.
-      c.req.raw.signal.addEventListener('abort', () => {
-        clearInterval(keepalive);
+        });
+      },
+      cancel() {
         subscription.unsubscribe();
-        try {
-          controller.close();
-        } catch {
-          // Already closed.
-        }
-      });
-    },
-    cancel() {
-      subscription.unsubscribe();
-    },
-  });
+      },
+    });
 
-  return new Response(body, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
-});
+    return new Response(body, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  },
+);

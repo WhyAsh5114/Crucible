@@ -61,7 +61,7 @@ const runtimeRoute = createRoute({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-const baseRuntimeApi = new OpenAPIHono({
+const baseRuntimeApi = new OpenAPIHono<{ Variables: { userId: string } }>({
   // Convert OpenAPIHono's default validator errors into our ApiError shape so
   // clients always see `{ code, message }` regardless of which layer rejected.
   defaultHook: (result, c) => {
@@ -113,13 +113,15 @@ function toDescriptor(runtime: {
 export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const parsed = { success: true as const, data: c.req.valid('json') };
 
+  const userId = c.get('userId');
+
   if (parsed.data.type === 'open_workspace') {
     const workspace = await prisma.workspace.findUnique({
       where: { id: parsed.data.workspaceId },
       include: { runtime: true },
     });
 
-    if (!workspace) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -203,7 +205,9 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   }
 
   if (parsed.data.type === 'runtime_status') {
-    const runtimes = await prisma.workspaceRuntime.findMany();
+    const runtimes = await prisma.workspaceRuntime.findMany({
+      where: { workspace: { userId } },
+    });
     const reconciled = await Promise.all(
       runtimes.map(async (runtime) => {
         const state = await getWorkspaceContainerState(runtime.workspaceId).catch(() => 'missing');
@@ -263,7 +267,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       include: { runtime: true },
     });
 
-    if (!workspace) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -308,10 +312,10 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   if (parsed.data.type === 'tool_exec') {
     const workspace = await prisma.workspace.findUnique({
       where: { id: parsed.data.workspaceId },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
 
-    if (!workspace) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 

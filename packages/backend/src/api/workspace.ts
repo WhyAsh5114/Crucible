@@ -10,6 +10,7 @@ import {
   WorkspaceGetResponseSchema,
   WorkspaceCreateRequestSchema,
   WorkspaceCreateResponseSchema,
+  WorkspaceListResponseSchema,
   ApiErrorSchema,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
@@ -19,6 +20,8 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
 import { ensureWorkspaceContainer } from '../lib/runtime-docker';
+
+type ApiVariables = { userId: string };
 
 // ── OpenAPI route definitions ────────────────────────────────────────────────
 
@@ -69,6 +72,17 @@ const getWorkspaceRoute = createRoute({
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Not found',
+    },
+  },
+});
+
+const listWorkspacesRoute = createRoute({
+  method: 'get',
+  path: '/workspaces',
+  responses: {
+    200: {
+      content: { 'application/json': { schema: WorkspaceListResponseSchema } },
+      description: 'Workspaces owned by the authenticated user',
     },
   },
 });
@@ -125,7 +139,7 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-export const workspaceApi = new OpenAPIHono({
+export const workspaceApi = new OpenAPIHono<{ Variables: ApiVariables }>({
   defaultHook: (result, c) => {
     if (!result.success) {
       return c.json(
@@ -138,6 +152,7 @@ export const workspaceApi = new OpenAPIHono({
 })
   .openapi(createWorkspaceRoute, async (c) => {
     const { name } = c.req.valid('json');
+    const userId = c.get('userId');
     let createdId: string | null = null;
 
     try {
@@ -146,6 +161,7 @@ export const workspaceApi = new OpenAPIHono({
           deployments: [],
           name,
           directoryPath: `pending://${randomUUID()}`,
+          userId,
         },
         select: { id: true },
       });
@@ -180,13 +196,16 @@ export const workspaceApi = new OpenAPIHono({
   })
   .openapi(getWorkspaceRoute, async (c) => {
     const { id } = c.req.valid('param');
+    const userId = c.get('userId');
 
     const row = await prisma.workspace.findUnique({
       where: { id },
       include: { runtime: true },
     });
 
-    if (!row) {
+    // Treat foreign workspaces as 404 to avoid leaking the existence of
+    // someone else's workspace IDs to a probing client.
+    if (!row || row.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -203,6 +222,26 @@ export const workspaceApi = new OpenAPIHono({
       chainState: chainState.success ? chainState.data : null,
       deployments: deployments.success ? deployments.data : [],
       terminalSessionId: row.runtime?.terminalSessionId ?? null,
+    });
+
+    return c.json(response, 200);
+  })
+  .openapi(listWorkspacesRoute, async (c) => {
+    const userId = c.get('userId');
+
+    const rows = await prisma.workspace.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      include: { runtime: { select: { status: true } } },
+    });
+
+    const response = WorkspaceListResponseSchema.parse({
+      workspaces: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        createdAt: row.createdAt.getTime(),
+        runtimeStatus: row.runtime?.status ?? null,
+      })),
     });
 
     return c.json(response, 200);
