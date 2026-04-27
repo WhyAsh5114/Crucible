@@ -90,7 +90,39 @@ export class AgentStream {
 			this.error = `Agent event failed schema validation: ${result.error.issues[0]?.message ?? 'unknown'}`;
 			return;
 		}
-		this.events.push(result.data);
+		const incoming = result.data;
+		// Accumulate consecutive thinking deltas into a single event so the chat
+		// rail renders one collapsible block instead of one row per token.
+		if (incoming.type === 'thinking' && this.events.length > 0) {
+			const last = this.events[this.events.length - 1];
+			if (last?.type === 'thinking' && last.streamId === incoming.streamId) {
+				this.events[this.events.length - 1] = { ...last, text: last.text + incoming.text };
+				return;
+			}
+		}
+		// Convert streaming message_delta tokens into a single accumulated
+		// `message` event so the chat rail renders one row that grows in place.
+		if (incoming.type === 'message_delta') {
+			const last = this.events.length > 0 ? this.events[this.events.length - 1] : undefined;
+			if (last?.type === 'message' && last.streamId === incoming.streamId) {
+				// Append to the existing message row.
+				this.events[this.events.length - 1] = {
+					...last,
+					content: last.content + incoming.text
+				};
+			} else {
+				// First delta for this stream — seed a new message row.
+				this.events.push({
+					type: 'message',
+					streamId: incoming.streamId,
+					seq: incoming.seq,
+					emittedAt: incoming.emittedAt,
+					content: incoming.text
+				});
+			}
+			return;
+		}
+		this.events.push(incoming);
 	}
 }
 
