@@ -16,7 +16,7 @@ type ToolExecInput = {
   tool: string;
   args: unknown;
   workspaceId: string;
-  server: 'chain' | 'compiler' | 'deployer' | 'wallet' | 'terminal';
+  server: 'chain' | 'compiler' | 'deployer' | 'wallet' | 'terminal' | 'memory' | 'mesh';
 };
 
 type ToolExecOutcome =

@@ -6,8 +6,7 @@
  */
 
 import { join, relative, isAbsolute } from 'node:path';
-import { realpath, writeFile, mkdir, rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { realpath } from 'node:fs/promises';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import {
   CompileInputSchema,
@@ -38,12 +37,18 @@ export async function assertContainedInWorkspace(
   workspaceRoot: string,
   candidatePath: string,
 ): Promise<string> {
-  const [resolvedRoot, resolvedCandidate] = await Promise.all([
-    realpath(workspaceRoot),
-    // candidatePath may not exist yet; fall back to the un-resolved path so
-    // compilation errors surface from solc rather than from path validation.
-    realpath(candidatePath).catch(() => candidatePath),
-  ]);
+  const resolvedRoot = await realpath(workspaceRoot);
+  let resolvedCandidate: string;
+  try {
+    resolvedCandidate = await realpath(candidatePath);
+  } catch {
+    // File doesn't exist yet. Swap the raw workspaceRoot prefix for the
+    // resolved root so symlink differences (e.g. /tmp → /private/tmp on macOS)
+    // don't cause a false "outside workspace" rejection.
+    resolvedCandidate = candidatePath.startsWith(workspaceRoot)
+      ? resolvedRoot + candidatePath.slice(workspaceRoot.length)
+      : candidatePath;
+  }
   const rel = relative(resolvedRoot, resolvedCandidate);
   if (rel.startsWith('..') || isAbsolute(rel)) {
     throw new Error('sourcePath must resolve within the workspace root');
@@ -82,11 +87,10 @@ export function createCompilerServer(opts: {
     {
       title: 'Compile Solidity',
       description:
-        'Compile a Solidity contract. Provide either:\n' +
-        '  • sourcePath — workspace-relative path of an existing .sol file, OR\n' +
-        '  • source    — inline Solidity source code (string); use fileName to set the .sol name.\n' +
-        'Exactly one of sourcePath/source must be supplied. Passing both is an error.\n' +
-        'Stores artifacts in-process for subsequent get_abi / get_bytecode calls. ' +
+        'Compile a Solidity source file from the workspace. ' +
+        'Provide sourcePath as a workspace-relative path to an existing .sol file ' +
+        '(e.g. "contracts/Counter.sol"). ' +
+        'Stores artifacts in-process for subsequent get_abi / get_bytecode / deploy_local calls. ' +
         'Returns all contracts found in the file, along with any compiler warnings.',
       inputSchema: CompileInputSchema,
       annotations: {
@@ -96,41 +100,23 @@ export function createCompilerServer(opts: {
         openWorldHint: false,
       },
     },
-    async ({ sourcePath, source, fileName, settings }: CompileInput) => {
-      let tempDir: string | undefined;
+    async ({ sourcePath, settings }: CompileInput) => {
       try {
-        let absolutePath: string;
+        log(`tool:compile path=${sourcePath}`);
+        const absolutePath = join(opts.workspaceRoot, sourcePath);
         let rel: string;
-
-        if (source !== undefined) {
-          // Inline source — write inside the workspace so Hardhat's project-root
-          // boundary check passes (files outside the project root are rejected).
-          const solFileName = fileName ?? 'Inline.sol';
-          log(`tool:compile inline=${solFileName} (${source.split('\n').length} lines)`);
-          tempDir = join(opts.workspaceRoot, '.crucible', 'tmp', `inline-${randomUUID()}`);
-          await mkdir(tempDir, { recursive: true });
-          absolutePath = join(tempDir, solFileName);
-          await writeFile(absolutePath, source, 'utf8');
-          rel = `<inline>/${solFileName}`;
-        } else {
-          log(`tool:compile path=${sourcePath}`);
-          absolutePath = join(opts.workspaceRoot, sourcePath!);
-          try {
-            rel = await assertContainedInWorkspace(opts.workspaceRoot, absolutePath);
-          } catch (e) {
-            logError(`tool:compile error: ${String(e)}`);
-            return errorResult(`compile failed: ${String(e)}`);
-          }
+        try {
+          rel = await assertContainedInWorkspace(opts.workspaceRoot, absolutePath);
+        } catch (e) {
+          logError(`tool:compile error: ${String(e)}`);
+          return errorResult(`compile failed: ${String(e)}`);
         }
         const result = await compileSolidity(absolutePath, {
           version: opts.solcVersion,
           ...(settings ?? {}),
         } as SolcSettings);
         store.storeContracts(result.contracts, rel);
-        // Only persist artifacts to disk for workspace files, not inline source.
-        if (!tempDir) {
-          await store.persistArtifacts(opts.workspaceRoot, result.contracts);
-        }
+        await store.persistArtifacts(opts.workspaceRoot, result.contracts);
 
         // Deduplicate warnings by message text and surface them at the top level
         // so the agent sees a clean summary without iterating over every contract.
@@ -155,10 +141,6 @@ export function createCompilerServer(opts: {
       } catch (err) {
         logError(`tool:compile error: ${String(err)}`);
         return errorResult(`compile failed: ${String(err)}`);
-      } finally {
-        if (tempDir) {
-          await rm(tempDir, { recursive: true, force: true });
-        }
       }
     },
   );
@@ -280,30 +262,25 @@ export function createCompilerServer(opts: {
               'You are connected to the crucible-compiler MCP server, which compiles Solidity source files.',
               '',
               'Typical workflow:',
-              '1. Call compile to compile a Solidity contract. Two modes:',
-              '   a) File mode: pass sourcePath (workspace-relative, e.g. "src/Counter.sol")',
-              '   b) Inline mode: pass source (raw Solidity code as a string) and optionally',
-              '      fileName (e.g. "Counter.sol") to control the artifact identifier.',
-              '   Only one of sourcePath or source may be provided — passing both is an error.',
-              '   Returns a list of contract names found in the file, plus any compiler warnings.',
-              '   Artifacts are cached in-process for the lifetime of the server.',
+              '1. Call compile(sourcePath) — a workspace-relative path to a .sol file',
+              '   (e.g. "contracts/Counter.sol"). Returns contract names and any warnings.',
+              '   Artifacts (ABI, bytecode) are persisted to .crucible/artifacts/.',
               '2. Call list_contracts to see all currently cached contract names.',
-              '3. Call get_abi with the contract name to retrieve its ABI.',
-              '   - The ABI is required by deployment and interaction tools.',
-              '4. Call get_bytecode with the contract name to retrieve creation + deployed bytecode.',
-              '   - Use creation bytecode when sending a deployment transaction.',
+              '3. Call get_abi(contractName) to retrieve the ABI.',
+              '   - Required by front-end clients and interaction tools.',
+              "4. Call get_bytecode for inspection only. crucible-deployer's deploy_local",
+              '   fetches bytecode automatically by contract name.',
               '',
               'Tool reference:',
-              '  compile        — Compile a .sol file or inline source; returns contract names and warnings.',
+              '  compile        — Compile a workspace .sol file; returns contract names and warnings.',
               '  list_contracts — Read-only: list all cached contract names.',
               '  get_abi        — Read-only: get the ABI for a compiled contract.',
               '  get_bytecode   — Read-only: get creation and deployed bytecode.',
               '',
               'Notes:',
-              '  - sourcePath must be relative to the workspace root, not an absolute path.',
-              '  - Inline source (source field) is compiled in a temp directory and not persisted.',
-              '  - Artifact cache is reset when the server restarts.',
-              '  - Recompile a file to pick up source changes.',
+              '  - sourcePath must be workspace-relative, not absolute.',
+              '  - Artifacts survive server restarts (stored on disk).',
+              '  - Recompile to pick up source changes.',
             ].join('\n'),
           },
         },
@@ -316,7 +293,7 @@ export function createCompilerServer(opts: {
     {
       title: 'Compile & Deploy Contract',
       description:
-        'End-to-end guide: compile a Solidity contract, retrieve its artifacts, then deploy it using the chain server.',
+        'End-to-end guide: compile a Solidity contract then deploy it via crucible-deployer.',
     },
     () => ({
       messages: [
@@ -325,22 +302,22 @@ export function createCompilerServer(opts: {
           content: {
             type: 'text' as const,
             text: [
-              'End-to-end deployment flow using both crucible-compiler and crucible-chain:',
+              'End-to-end deployment flow using crucible-compiler, crucible-chain, and crucible-deployer:',
               '',
-              '1. [compiler] compile the source file → note the contract name.',
-              '2. [compiler] get_abi  → save the ABI for later interaction.',
-              '3. [compiler] get_bytecode → get creation bytecode for the deploy tx.',
-              '4. [chain]    start_node → ensure a local EVM node is running.',
-              '5. [chain]    get_state → pick a funded account from the accounts list.',
-              '6. [chain]    snapshot → save state before deployment.',
-              '7. Deploy by sending an eth_sendTransaction (or equivalent) with:',
-              '     from: <funded account>',
-              '     data: <creation bytecode>',
-              '     gas:  estimate via eth_estimateGas first.',
-              '8. Confirm deployment by calling eth_getTransactionReceipt.',
-              '9. Interact with the deployed contract using its ABI and the returned address.',
+              '1. [compiler] compile(sourcePath) → note the contract name(s) returned.',
+              '2. [compiler] get_abi(contractName) → save the ABI for later interaction.',
+              '3. [chain]    start_node → ensure a local EVM node is running.',
+              '4. [chain]    snapshot → save state before deployment.',
+              '5. [deployer] deploy_local(contractName, constructorData) → returns address and txHash.',
+              '   - constructorData is ABI-encoded constructor args ("0x" if none).',
+              '   - Bytecode is fetched automatically from the compiler artifact store.',
+              '   - Optionally pass sender (defaults to first local account) and value.',
+              '6. Interact with the deployed contract using its ABI and the returned address.',
+              '7. [chain]    revert(snapshotId) to roll back between test scenarios.',
               '',
-              'To test multiple deployment scenarios, call revert between each run.',
+              'Tips:',
+              '  - If deploy_local returns "Contract not found", run compile first.',
+              '  - Take a new snapshot after each successful deploy to create a clean baseline.',
             ].join('\n'),
           },
         },

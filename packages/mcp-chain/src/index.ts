@@ -315,6 +315,38 @@ app.openapi(forkRoute, async (c) => {
   }
 });
 
+// JSON-RPC proxy — forwards raw JSON-RPC requests to the active Hardhat node.
+// mcp-wallet and mcp-deployer use this as their CHAIN_RPC_URL (port 3100/rpc).
+app.post('/rpc', async (c) => {
+  let node;
+  try {
+    node = requireNode(WORKSPACE_ID);
+  } catch {
+    return c.json(
+      {
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32000, message: 'No active node — call start_node first' },
+      },
+      503,
+    );
+  }
+  const body = c.get('parsedBody');
+  if (!body) {
+    return c.json(
+      { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } },
+      400,
+    );
+  }
+  const upstream = await fetch(node.rpcUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await upstream.json();
+  return c.json(data, upstream.status as 200);
+});
+
 // MCP protocol endpoint (hidden from OpenAPI spec).
 app.all('/mcp', (c) => transport.handleRequest(c.req.raw, { parsedBody: c.get('parsedBody') }));
 
