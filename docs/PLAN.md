@@ -13,6 +13,33 @@ The rule for the whole build: no milestone is considered done because a package 
 
 ---
 
+## Current Implementation Snapshot (April 27, 2026)
+
+What is actually wired on `main`, not what is documented as the eventual shape.
+
+| Layer                           | Status     | Notes                                                                                                                                     |
+| :------------------------------ | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------- |
+| `@crucible/types` contracts     | ✅ shipped | All boundary types (workspace / runtime / agent events / MCP I/O / preview bridge) are merged.                                            |
+| Postgres metadata via Prisma    | ✅ shipped | `workspace`, `workspace_runtime`, plus better-auth tables. Three migrations applied.                                                      |
+| Auth (better-auth)              | ✅ shipped | Anonymous plugin enabled; Google optional. All `/api/workspace`, `/api/runtime`, `/api/agent/*`, `/api/prompt` routes session-gated.      |
+| Per-workspace Docker runner     | ✅ shipped | `crucible-runtime:latest` image, dockerode supervisor, dynamic host ports, bind or volume mounts, readiness probe, status reconciliation. |
+| `mcp-chain` + `mcp-compiler`    | ✅ shipped | Run **inside** the runner container. Control plane HTTP-proxies `tool_exec` to them.                                                      |
+| Frontend shell                  | ✅ shipped | SvelteKit 2 + Svelte 5; chat rail / editor / preview / terminal panes; SSE agent stream; workspace boot polling.                          |
+| `mcp-deployer`                  | 🔴 missing | `tool_exec` returns "not implemented".                                                                                                    |
+| `mcp-wallet`                    | 🔴 missing | Same.                                                                                                                                     |
+| `mcp-terminal` + `/ws/terminal` | 🔴 missing | `terminalSessionId` recorded in DB but no PTY backend.                                                                                    |
+| Preview supervisor + bridge     | 🔴 missing | `previewUrl` stays `null`; no per-workspace dev server, no preview-origin gateway, no `__crucible/preview-bridge.js`.                     |
+| `@crucible/agent`               | 🔴 missing | Frontend currently consumes fixtures over the SSE bus.                                                                                    |
+| `mcp-memory` (0G Storage)       | 🔴 missing | —                                                                                                                                         |
+| `mcp-mesh` (AXL)                | 🔴 missing | —                                                                                                                                         |
+| KeeperHub `ship` adapter        | 🔴 missing | —                                                                                                                                         |
+| Inference router (0G primary)   | 🔴 missing | `/api/inference` endpoint exists but no real provider wiring.                                                                             |
+| Gateway / TLS / preview origin  | 🔴 missing | Single host today. Caddy + cloudflared still planned.                                                                                     |
+
+**Critical path to closing Phase 1 (POV-1):** `mcp-deployer` (in runner) → `mcp-wallet` (in runner) → `mcp-terminal` + `/ws/terminal` (in runner) → preview supervisor + EIP-1193 bridge → `@crucible/agent` driving real prompts. Until those land, the demo cannot get past "container starts, shows files, no real build → click loop".
+
+---
+
 ## Planning Principles
 
 1. **Prove the product before polishing the architecture.** The first thing to validate is not 0G, AXL, or KeeperHub depth. It is whether Crucible is meaningfully better than "chat plus editor plus wallet plus terminal" because the runtime is inspectable and the loop is coherent.
@@ -176,18 +203,29 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 1 — Prove POV-1: Inspectable Local Loop
 
-**Days 2-4 (April 26-28)**
+**Days 2-4 (April 26-28) — 🟡 In progress**
 
 **Goal:** Make one thin vertical slice work locally without any sponsor dependency beyond what is required for the agent to answer.
 
-**Required outputs:**
+**Status (April 27):**
 
-- Real workspace directory creation and persistence
-- PTY session reachable from the browser
-- Preview dev server managed per workspace with a readable preview URL
-- Real local chain lifecycle and local deploy path
-- Agent can take a prompt, write files, compile, deploy, and narrate progress
-- Frontend shows editor, preview, inspector shell, terminal, and event rail
+- ✅ Real workspace directory creation and persistence (`provisionWorkspaceDirectory`, host bind-mount).
+- ✅ Postgres metadata + better-auth session gating on every API route.
+- ✅ Per-workspace Docker runner container (`crucible-runtime:latest`) with `mcp-chain` + `mcp-compiler` supervised inside.
+- ✅ Control-plane HTTP proxy from `tool_exec` to in-container chain / compiler services with dynamic host port discovery.
+- ✅ Frontend shell with editor / preview / terminal / chat-rail / status-bar; agent SSE wired (`/api/agent/stream`); `/workspaces/[id]` polls boot status.
+- 🟡 Real local chain _lifecycle_ exists (`start_node`, snapshot, revert, mine, fork via the in-container chain MCP). Deploy path: `mcp-deployer` does **not** yet exist — `deployer.deploy_local` returns "not implemented" from `tool-exec.ts`.
+- 🔴 PTY session reachable from browser — `terminalSessionId` is recorded but `mcp-terminal` and the `/ws/terminal` channel are not wired.
+- 🔴 Preview dev server managed per workspace — `previewUrl` stays `null`; no preview gateway / bridge yet.
+- 🔴 Agent loop — `packages/agent` does not yet exist on `main`. The frontend prompts a stub and replays fixture events.
+
+**Closing Phase 1 means landing, in priority order:**
+
+1. `packages/mcp-deployer` inside the runner image, wired through `tool-exec.ts` (proxy to a fourth published port).
+2. `packages/mcp-wallet` inside the runner image (pre-funded dev accounts surfaced via the chain MCP).
+3. `packages/mcp-terminal` (node-pty) inside the runner image + `/ws/terminal` proxy on the control plane.
+4. Per-workspace preview dev-server supervisor + preview gateway origin (`https://preview.<workspaceId>.crucible.localhost`) + EIP-1193 bridge bootstrap.
+5. `packages/agent` (AI SDK v6 / OpenClaw) emitting real `AgentEvent` frames into the existing SSE bus instead of the fixture replayer.
 
 **Success demo:** User prompts a very small app such as a token minter or counter contract, the agent builds it, and the user clicks the preview successfully.
 
@@ -254,22 +292,26 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 5 — Prove POV-5: Hosted Runtime and Demo Hardening
 
-**CUT for hackathon — Post-Hackathon Only**
+**Partially landed early. Remaining scope: post-hackathon.**
 
-> With 9 days total, Phase 5 is explicitly out of scope. The judged demo runs in single-host trusted mode. The Docker Compose stack and runner isolation are post-hackathon work. See the kill criteria in Phase 4 — if shipping is stable, the demo is locked and the remaining time goes to demo hardening and the submission video, not runner extraction.
+> Originally planned as post-hackathon. The control-plane / runner-container split actually shipped in Phase 1 because building the runner-in-Docker first turned out to be cheaper than threading "child process or container" everywhere. What remains is gateway, AXL sidecar, and the operator polish.
 
-**Goal (post-hackathon):** Preserve the same mental model when moving from trusted demo mode to isolated runtime mode.
+**Already done:**
 
-**Required outputs:**
+- Control plane / workspace runner boundary is the **only** runtime path on `main`. `runtime-docker.ts` spawns one `crucible-runtime` container per workspace, dynamic host port mapping, bind or named-volume mounts, readiness probe, restart-policy reconciliation.
+- Cold-start works: `POST /api/workspace` returns immediately, the UI polls `GET /api/workspace/:id` every 2s while the container boots, status flips `starting → ready | degraded | crashed`.
+- Tool calls survive a runner restart: `runtime_status` re-discovers published ports.
 
-- Control plane / workspace runner boundary extracted and exercised
-- Docker Compose stack for gateway, control plane, runner, volume, and AXL sidecar
-- Clear cold-start, reconnect, and crash-restart behavior
-- Demo script with explicit fallback rules and operator playbook
+**Still required (post-hackathon unless trivially cheap):**
+
+- Gateway container (Caddy / Traefik) for TLS termination + preview-subdomain routing.
+- AXL sidecar container alongside the control plane.
+- Docker Compose top-level stack (gateway + control plane + AXL + cloudflared) — workspace runners stay dynamic.
+- Operator playbook covering cold start times, idle eviction, max active workspaces, and inference-budget kill switch.
 
 **Success demo:** External tester opens a hosted workspace, waits through a cold start, and still sees the same preview, terminal, and agent model as in local demo mode.
 
-**Kill criteria:** If runner isolation threatens demo stability, keep the judged demo on single-host trusted mode and ship the runner boundary as code-complete but not the required demo path.
+**Kill criteria:** If runner isolation threatens demo stability, freeze the gateway / sidecar work and run the judged demo against a locally-bound control plane talking to the same per-workspace runners on `127.0.0.1`.
 
 ---
 

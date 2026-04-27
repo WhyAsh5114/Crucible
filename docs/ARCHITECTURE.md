@@ -118,6 +118,50 @@ WebContainers are a poor fit for those constraints. The browser should render th
 
 ---
 
+## Runtime Topology — As Implemented
+
+This section describes the real runtime on `main` today. The rest of this document describes the eventual shape; treat anything not listed here as planned.
+
+```
+                ┌────────────────────────────────── Host (laptop / EC2) ──────────────────────────────────┐
+                │                                                                                          │
+  Browser ─────►│  Control plane (packages/backend, Bun + Hono)                                            │
+                │  • better-auth (anonymous + Google) ── Postgres (Prisma)                                 │
+                │  • REST: /api/workspace, /api/runtime, /api/agent/stream (SSE), /api/inference           │
+                │  • runtime-docker.ts ─── /var/run/docker.sock                                            │
+                │                            │                                                             │
+                │                            ▼   one per workspace, dynamic host port mapping              │
+                │  ┌─── crucible-ws-<id> (image: crucible-runtime:latest) ────────────────────┐            │
+                │  │   bind / volume mount:  /workspace ◄── ${CRUCIBLE_WORKSPACES_ROOT}/<id>  │            │
+                │  │   • mcp-chain   (in-container 3100, host port published dynamically)     │            │
+                │  │   • mcp-compiler(in-container 3101, host port published dynamically)     │            │
+                │  │   • [planned] mcp-deployer 3102                                          │            │
+                │  │   • [planned] mcp-wallet   3103                                          │            │
+                │  │   • [planned] mcp-terminal 3106                                          │            │
+                │  └──────────────────────────────────────────────────────────────────────────┘            │
+                │                                                                                          │
+                │  Postgres ── workspace, workspace_runtime, user, session, account, verification          │
+                │  Disk     ── ${CRUCIBLE_WORKSPACES_ROOT}/<id>/{contracts,frontend,.crucible/...}         │
+                └──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Boundaries that hold today:
+
+- **Browser ↔ control plane only.** No browser code knows about the runner container's host port.
+- **Control plane ↔ runner = HTTP over `127.0.0.1:<published>`.** Discovered from `docker inspect`, persisted in `workspace_runtime.{chainPort,compilerPort,...}`, recovered automatically after a runner restart.
+- **One runner per workspace.** Hard isolation between workspaces; `tool_exec` on workspace A cannot reach workspace B.
+- **Workspace files on host disk.** Mounted into the runner. The runner is disposable; the volume is not.
+- **Auth in the control plane only.** The runner has no auth concept — it trusts loopback callers from the control plane. This is why the runner's host ports must stay bound to `127.0.0.1` (or a private overlay network) and never be exposed publicly.
+
+What is **not** here yet, and where it will land when added:
+
+- `mcp-deployer`, `mcp-wallet`, `mcp-terminal` — go inside the runner image (workspace-scoped).
+- `mcp-memory`, `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
+- KeeperHub `ship` — control-plane HTTP client, never inside a runner.
+- Preview gateway + per-workspace dev server — preview origin lives behind a separate gateway hostname; the dev server runs inside the runner image as a fourth supervised process.
+
+---
+
 ## Hosting and Storage Model
 
 Crucible is a **stateful web application**. Yes, we need real servers for the runtime.
