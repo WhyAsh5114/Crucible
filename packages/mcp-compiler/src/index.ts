@@ -113,6 +113,7 @@ const listContractsRoute = createRoute({
 const mcpServer = createCompilerServer({
   workspaceRoot: WORKSPACE_ROOT,
   solcVersion: SOLC_VERSION,
+  store,
 });
 
 type Env = { Variables: { parsedBody: unknown } };

@@ -1,9 +1,13 @@
 /**
- * Shared test utilities: sign in anonymously through the real better-auth
- * handler so the session token is in exactly the format the middleware expects.
+ * Shared test utilities: create sessions directly in the DB so tests do not
+ * depend on any HTTP auth endpoint (anonymous sign-in was removed in favour
+ * of SIWE).
+ *
+ * Session cookie format matches what better-auth / Hono's `setSignedCookie`
+ * produces: `{token}.{base64url(HMAC-SHA256(token, secret))}`.
  */
 
-import { auth } from '../src/lib/auth';
+import { randomBytes } from 'node:crypto';
 import { prisma } from '../src/lib/prisma';
 
 export interface TestSession {
@@ -13,64 +17,58 @@ export interface TestSession {
 }
 
 /**
- * Sign in anonymously via the better-auth handler and return the userId and
- * ready-to-use cookie string.
- *
- * Better-auth uses signed cookies (token.HMAC_SIGNATURE). We MUST use the
- * Set-Cookie value from the response — not the raw token in the JSON body —
- * because auth.api.getSession verifies the HMAC before looking up the session.
+ * Sign a value using the same HMAC-SHA256 + base64url algorithm that
+ * Hono's `setSignedCookie` uses, so `auth.api.getSession()` accepts the cookie.
+ */
+async function signCookieValue(value: string, secret: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(value));
+  // better-call's getSignedCookie requires standard base64 WITH padding
+  // (exactly 44 chars, ending in "="). Do NOT use base64url here.
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(sig)));
+  return `${value}.${b64}`;
+}
+
+/**
+ * Create a unique test user + session directly in the DB and return a
+ * signed session cookie that `auth.api.getSession()` will accept.
  *
  * Call `deleteTestUser(session.userId)` in afterEach/afterAll to clean up;
  * cascades to sessions and workspaces.
  */
 export async function createTestSession(): Promise<TestSession> {
-  const response = await auth.handler(
-    new Request(
-      `${process.env['BETTER_AUTH_URL'] ?? 'http://localhost:5000'}/api/auth/sign-in/anonymous`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      },
-    ),
-  );
+  const userId = `test-${randomBytes(8).toString('hex')}`;
+  const email = `${userId}@crucible.test`;
 
-  // Read body first (consuming the stream), then inspect headers.
-  const body = (await response.json()) as Record<string, unknown>;
+  await prisma.user.create({
+    data: { id: userId, name: 'Test User', email, emailVerified: false },
+  });
 
-  if (!response.ok) {
-    throw new Error(`Anonymous sign-in failed: ${response.status} — ${JSON.stringify(body)}`);
-  }
+  const token = randomBytes(32).toString('hex');
+  await prisma.session.create({
+    data: {
+      id: randomBytes(16).toString('hex'),
+      token,
+      userId,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    },
+  });
 
-  const user = body['user'] as { id: string } | undefined;
-  if (!user?.id) {
-    throw new Error(`No user in sign-in response: ${JSON.stringify(body)}`);
-  }
-
-  // Extract the SIGNED cookie value from Set-Cookie.
-  // Bun 1.x supports getSetCookie(); fall back to parsing get('set-cookie').
-  const setCookies: string[] =
-    (response.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ??
-    (response.headers.get('set-cookie') ?? '').split(/,\s*(?=[^;]+(?:;|$))/);
-
-  let signedCookieValue: string | undefined;
-  for (const raw of setCookies) {
-    const match = raw.match(/^better-auth\.session_token=([^;]+)/);
-    if (match?.[1]) {
-      signedCookieValue = match[1].trim();
-      break;
-    }
-  }
-
-  if (!signedCookieValue) {
-    throw new Error(
-      `Session cookie not set in sign-in response. Set-Cookie: ${setCookies.join(' | ')}`,
-    );
-  }
+  const secret =
+    process.env['BETTER_AUTH_SECRET'] ??
+    'crucible-test-secret-not-for-productionet-not-for-production';
+  const signedValue = await signCookieValue(token, secret);
 
   return {
-    userId: user.id,
-    cookie: `better-auth.session_token=${signedCookieValue}`,
+    userId,
+    cookie: `better-auth.session_token=${signedValue}`,
   };
 }
 

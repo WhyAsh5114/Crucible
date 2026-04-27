@@ -9,6 +9,7 @@ import type { AppType } from '@crucible/backend';
 import type {
 	WorkspaceCreateRequest,
 	WorkspaceCreateResponse,
+	WorkspaceListResponse,
 	WorkspaceState,
 	PromptRequest,
 	PromptResponse
@@ -38,6 +39,14 @@ export class WorkspaceClient {
 			throw new Error(`getWorkspace failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as WorkspaceState;
+	}
+
+	async listWorkspaces(): Promise<WorkspaceListResponse> {
+		const res = await apiClient.api.workspaces.$get();
+		if (!res.ok) {
+			throw new Error(`listWorkspaces failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as WorkspaceListResponse;
 	}
 
 	/**

@@ -1,0 +1,1 @@
+-- No-op: userId column, index, and FK were already added in 20260427000000_add_workspace_user_id

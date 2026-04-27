@@ -76,6 +76,13 @@ const Message = base.extend({
   content: z.string(),
 });
 
+/** Streaming delta for the assistant's reply. Accumulated into a `message`
+ *  row by the frontend so text appears token-by-token. */
+const MessageDelta = base.extend({
+  type: z.literal('message_delta'),
+  text: z.string(),
+});
+
 const InferenceReceiptEvent = base.extend({
   type: z.literal('inference_receipt'),
   receipt: InferenceReceiptSchema,
@@ -148,6 +155,7 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   ToolResult,
   FileWrite,
   Message,
+  MessageDelta,
   InferenceReceiptEvent,
   RevertDetected,
   TraceCaptured,

@@ -2,38 +2,44 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { workspaceClient } from '$lib/api/workspace';
-	import EmptyState from '$lib/components/empty-state.svelte';
+	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
+	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
+	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRightIcon';
 
-	let error = $state<string | null>(null);
+	const session = authClient.useSession();
 
-	async function bootWorkspace(): Promise<void> {
-		error = null;
-		try {
-			const created = await workspaceClient.createWorkspace({ name: 'Vault demo' });
-			await goto(resolve('/workspaces/[id]', { id: created.id }), { replaceState: true });
-		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+	// Authenticated visitors skip the landing — they're here to work, not to
+	// re-read the marketing copy.
+	$effect(() => {
+		if ($session.data?.user) {
+			void goto(resolve('/workspaces'), { replaceState: true });
 		}
-	}
+	});
 
 	onMount(() => {
-		void bootWorkspace();
+		void authClient.getSession();
 	});
 </script>
 
-<main class="min-h-0 flex-1">
-	{#if error}
-		<EmptyState variant="degraded" title="Failed to start workspace" description={error}>
-			{#snippet actions()}
-				<Button variant="outline" size="sm" onclick={bootWorkspace}>Retry</Button>
-			{/snippet}
-		</EmptyState>
-	{:else}
-		<EmptyState
-			title="Starting workspace…"
-			description="Provisioning a fresh sandbox and runtime container."
-		/>
+<main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 p-6">
+	<header class="flex flex-col items-center gap-3 text-center">
+		<div
+			class="flex size-14 items-center justify-center rounded-md bg-primary text-primary-foreground"
+		>
+			<CubeIcon weight="bold" />
+		</div>
+		<h1 class="text-2xl font-semibold tracking-tight text-foreground">landing page goes here</h1>
+		<p class="max-w-md text-sm text-muted-foreground">
+			Crucible is a chat-driven Web3 IDE — agent writes Solidity + frontend, runs a local chain,
+			previews live, ships through KeeperHub.
+		</p>
+	</header>
+
+	{#if !$session.isPending && !$session.data?.user}
+		<Button size="lg" href={resolve('/login')}>
+			Login
+			<ArrowRightIcon data-icon="inline-end" weight="bold" />
+		</Button>
 	{/if}
 </main>

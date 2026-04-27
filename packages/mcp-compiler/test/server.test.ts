@@ -4,13 +4,15 @@
 
 import { describe, it, expect } from 'bun:test';
 import { createCompilerServer } from '../src/server.ts';
+import { createArtifactStore } from '../src/artifact-store.ts';
 import { CompileInputSchema } from '@crucible/types/mcp/compiler';
 
 // ── Server factory ─────────────────────────────────────────────────────────
 
 describe('createCompilerServer', () => {
   it('constructs a server without throwing', () => {
-    expect(() => createCompilerServer({ workspaceRoot: '/tmp' })).not.toThrow();
+    const store = createArtifactStore();
+    expect(() => createCompilerServer({ workspaceRoot: '/tmp', store })).not.toThrow();
   });
 });
 

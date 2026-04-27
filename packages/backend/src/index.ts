@@ -1,8 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
-import { createMiddleware } from 'hono/factory';
 import { upgradeWebSocket, websocket } from 'hono/bun';
-import { auth } from './lib/auth';
+import { auth, requireSession } from './lib/auth';
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { workspaceApi } from './api/workspace';
@@ -44,17 +43,7 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => {
   return auth.handler(c.req.raw);
 });
 
-/** Require a valid better-auth session; return 401 otherwise. */
-const requireSession = createMiddleware(async (c, next) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!session) {
-    return c.json({ code: 'unauthorized', message: 'Authentication required' }, 401);
-  }
-  await next();
-});
-
-app.use('/api/workspace/*', requireSession);
-app.use('/api/runtime', requireSession);
+// Routes that live outside sub-apps still need explicit auth guards.
 app.use('/api/agent/*', requireSession);
 app.use('/api/prompt', requireSession);
 

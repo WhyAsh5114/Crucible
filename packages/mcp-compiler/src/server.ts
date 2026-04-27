@@ -18,7 +18,7 @@ import {
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
 import { compileSolidity, type SolcSettings } from './compiler.ts';
-import { createArtifactStore } from './artifact-store.ts';
+import type { ArtifactStore } from './artifact-store.ts';
 
 const TAG = '[mcp-compiler]';
 const log = (msg: string) => console.log(`${TAG} ${msg}`);
@@ -73,8 +73,9 @@ function errorResult(message: string): CallToolResult {
 export function createCompilerServer(opts: {
   workspaceRoot: string;
   solcVersion?: string | undefined;
+  store: ArtifactStore;
 }): McpServer {
-  const store = createArtifactStore();
+  const store = opts.store;
   const server = new McpServer({
     name: 'crucible-compiler',
     version: '0.0.0',

@@ -23,9 +23,9 @@ import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
 import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
-import { auth } from '../lib/auth';
 import { cleanupWorkspacePty } from '../lib/pty-manager';
 import { startPreview, stopPreview } from '../lib/preview-manager';
+import { requireSession } from '../lib/auth';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ const runtimeRoute = createRoute({
 
 // ── Router ───────────────────────────────────────────────────────────────────
 
-const baseRuntimeApi = new OpenAPIHono({
+const baseRuntimeApi = new OpenAPIHono<{ Variables: { userId: string } }>({
   // Convert OpenAPIHono's default validator errors into our ApiError shape so
   // clients always see `{ code, message }` regardless of which layer rejected.
   defaultHook: (result, c) => {
@@ -81,6 +81,9 @@ const baseRuntimeApi = new OpenAPIHono({
     return undefined;
   },
 });
+
+// Auth guard: every route in this sub-app requires a valid session.
+baseRuntimeApi.use('*', requireSession);
 
 function toDescriptor(runtime: {
   runtimeId: string;
@@ -119,12 +122,7 @@ function toDescriptor(runtime: {
 
 export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const parsed = { success: true as const, data: c.req.valid('json') };
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  const userId = session?.user.id ?? null;
-
-  if (!userId) {
-    return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
-  }
+  const userId = c.get('userId');
 
   if (parsed.data.type === 'open_workspace') {
     const workspace = await prisma.workspace.findUnique({
@@ -132,11 +130,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       include: { runtime: true },
     });
 
-    if (!workspace) {
-      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
-    }
-
-    if (workspace.userId !== userId) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -228,9 +222,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
 
   if (parsed.data.type === 'runtime_status') {
     const runtimes = await prisma.workspaceRuntime.findMany({
-      where: {
-        workspace: { userId },
-      },
+      where: { workspace: { userId } },
     });
     const reconciled = await Promise.all(
       runtimes.map(async (runtime) => {
@@ -293,7 +285,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       include: { runtime: true },
     });
 
-    if (!workspace) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -348,7 +340,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       select: { id: true, userId: true },
     });
 
-    if (!workspace) {
+    if (!workspace || workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 

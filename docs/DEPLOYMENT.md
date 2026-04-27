@@ -4,6 +4,28 @@
 
 ---
 
+## Implementation Status (April 27, 2026)
+
+What this doc described as "the live architecture" has partly landed already. Reading order: this section first, then the rest of the doc as the **target state**.
+
+| Component                                                | Status         | Where                                                                                                    |
+| :------------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------------------- |
+| Control plane                                            | ✅ implemented | `packages/backend` — Bun + Hono + Prisma. Spawns runners via the Docker socket directly.                 |
+| Workspace runner image                                   | ✅ implemented | `packages/backend/runtime/Dockerfile` → `crucible-runtime:latest`. Hosts `mcp-chain` + `mcp-compiler`.   |
+| Per-workspace runner lifecycle                           | ✅ implemented | `packages/backend/src/lib/runtime-docker.ts` — create / start / inspect / stop / reconcile.              |
+| Persistent volume                                        | ✅ implemented | Default bind mode at `${CRUCIBLE_WORKSPACES_ROOT}/<id>`; opt-in named volume `crucible-workspaces-data`. |
+| PostgreSQL metadata                                      | ✅ implemented | `workspace`, `workspace_runtime` + better-auth's user/session/account/verification.                      |
+| Better-auth (anonymous + Google)                         | ✅ implemented | All API routes session-gated.                                                                            |
+| Gateway (Caddy / Traefik)                                | 🔴 not yet     | Single-host dev today. Frontend talks to the backend on `localhost`.                                     |
+| AXL sidecar                                              | 🔴 not yet     | `mcp-mesh` not built; AXL binary not run.                                                                |
+| Cloudflare Tunnel                                        | 🔴 not yet     | No public ingress.                                                                                       |
+| `mcp-deployer` / `mcp-wallet` / `mcp-terminal` in runner | 🔴 not yet     | The Dockerfile only copies `mcp-chain` + `mcp-compiler` into the image today.                            |
+| Preview supervisor + per-workspace dev server            | 🔴 not yet     | `previewUrl` is recorded as nullable but never populated.                                                |
+
+The remainder of this document describes the **target** shape. New work should converge on it.
+
+---
+
 ## Recommended Live Architecture
 
 For **public live testing**, the simplest architecture that is still sane is:

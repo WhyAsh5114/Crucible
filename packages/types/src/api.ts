@@ -37,6 +37,22 @@ export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSche
 export const WorkspaceGetResponseSchema = WorkspaceStateSchema;
 export type WorkspaceGetResponse = z.infer<typeof WorkspaceGetResponseSchema>;
 
+// --- GET /api/workspaces -----------------------------------------------------
+
+export const WorkspaceSummarySchema = z.object({
+  id: WorkspaceIdSchema,
+  name: z.string().min(1),
+  createdAt: z.number().int().nonnegative(),
+  /** Most recent runtime status, or null if the workspace has never booted. */
+  runtimeStatus: z.enum(['starting', 'ready', 'degraded', 'crashed', 'stopped']).nullable(),
+});
+export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
+
+export const WorkspaceListResponseSchema = z.object({
+  workspaces: z.array(WorkspaceSummarySchema),
+});
+export type WorkspaceListResponse = z.infer<typeof WorkspaceListResponseSchema>;
+
 // --- PUT /api/workspace/:id/file ---------------------------------------------
 
 export const FileWriteRequestSchema = z.object({
