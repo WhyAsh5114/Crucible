@@ -46,6 +46,10 @@ const runtimeRoute = createRoute({
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Bad request',
     },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Not found',
@@ -117,6 +121,10 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   const userId = session?.user.id ?? null;
 
+  if (!userId) {
+    return c.json(createApiErrorBody('unauthorized', 'Authentication required'), 401);
+  }
+
   if (parsed.data.type === 'open_workspace') {
     const workspace = await prisma.workspace.findUnique({
       where: { id: parsed.data.workspaceId },
@@ -127,7 +135,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    if (workspace.userId !== null && workspace.userId !== userId) {
+    if (workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -215,9 +223,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   if (parsed.data.type === 'runtime_status') {
     const runtimes = await prisma.workspaceRuntime.findMany({
       where: {
-        workspace: {
-          OR: [{ userId }, { userId: null }],
-        },
+        workspace: { userId },
       },
     });
     const reconciled = await Promise.all(
@@ -285,7 +291,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    if (workspace.userId !== null && workspace.userId !== userId) {
+    if (workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
@@ -339,7 +345,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    if (workspace.userId !== null && workspace.userId !== userId) {
+    if (workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
