@@ -405,6 +405,9 @@ export async function ensureWorkspaceContainer(
             `WORKSPACE_ID=${workspaceId}`,
             `CHAIN_MCP_PORT=${CONTAINER_CHAIN_PORT}`,
             `COMPILER_MCP_PORT=${CONTAINER_COMPILER_PORT}`,
+            `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
+            `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
+            `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
             `WORKSPACE_ROOT=${workspaceDir}`,
           ],
           ExposedPorts: {
