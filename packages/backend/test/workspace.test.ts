@@ -5,34 +5,37 @@
  * workspace and cleans up after itself so tests are fully isolated.
  */
 
-import { describe, it, expect, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { workspaceApi } from '../src/api/workspace';
-import { withAuth } from './with-auth';
+import { createTestSession, deleteTestUser, type TestSession } from './helpers';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const api = withAuth(workspaceApi);
-const createdIds: string[] = [];
+let session: TestSession;
+
+beforeEach(async () => {
+  session = await createTestSession();
+});
+
+afterEach(async () => {
+  // Deleting the user cascades to sessions and workspaces.
+  await deleteTestUser(session.userId);
+});
 
 async function post(path: string, body: unknown) {
-  return api.request(path, {
+  return workspaceApi.request(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Cookie: session.cookie },
     body: JSON.stringify(body),
   });
 }
 
 async function get(path: string) {
-  return api.request(path, { method: 'GET' });
+  return workspaceApi.request(path, {
+    method: 'GET',
+    headers: { Cookie: session.cookie },
+  });
 }
-
-afterEach(async () => {
-  // Best-effort cleanup: delete any workspaces created during the test.
-  const { prisma } = await import('../src/lib/prisma');
-  for (const id of createdIds.splice(0)) {
-    await prisma.workspace.delete({ where: { id } }).catch(() => undefined);
-  }
-});
 
 // ── POST /workspace ──────────────────────────────────────────────────────────
 
@@ -44,8 +47,18 @@ describe('POST /workspace', () => {
     const body = (await res.json()) as { id: string };
     expect(typeof body.id).toBe('string');
     expect(body.id.length).toBeGreaterThan(0);
+  });
 
-    createdIds.push(body.id);
+  it('returns 401 when not authenticated', async () => {
+    const res = await workspaceApi.request('/workspace', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'unauth-test' }),
+    });
+    expect(res.status).toBe(401);
+
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('unauthorized');
   });
 
   it('returns 400 for an empty name', async () => {
@@ -75,7 +88,7 @@ describe('POST /workspace', () => {
   it('returns 400 for a non-JSON body', async () => {
     const res = await workspaceApi.request('/workspace', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: session.cookie },
       body: 'not json',
     });
     expect(res.status).toBe(400);
@@ -86,7 +99,6 @@ describe('POST /workspace', () => {
     expect(res.status).toBe(201);
 
     const { id } = (await res.json()) as { id: string };
-    createdIds.push(id);
 
     const { existsSync } = await import('node:fs');
     const workspacesRoot = process.env['CRUCIBLE_WORKSPACES_ROOT']!;
@@ -103,7 +115,6 @@ describe('GET /workspace/:id', () => {
     const createRes = await post('/workspace', { name: 'get-test' });
     expect(createRes.status).toBe(201);
     const { id } = (await createRes.json()) as { id: string };
-    createdIds.push(id);
 
     const res = await get(`/workspace/${id}`);
     expect(res.status).toBe(200);
@@ -120,6 +131,14 @@ describe('GET /workspace/:id', () => {
     expect(Array.isArray(body.files)).toBe(true);
     expect(Array.isArray(body.deployments)).toBe(true);
     expect(body.chainState).toBeNull();
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    const res = await workspaceApi.request('/workspace/some-workspace-id', { method: 'GET' });
+    expect(res.status).toBe(401);
+
+    const body = (await res.json()) as { code: string };
+    expect(body.code).toBe('unauthorized');
   });
 
   it('returns 404 for an unknown but validly-formatted id', async () => {
@@ -142,7 +161,6 @@ describe('GET /workspace/:id', () => {
     const createRes = await post('/workspace', { name: 'files-test' });
     expect(createRes.status).toBe(201);
     const { id } = (await createRes.json()) as { id: string };
-    createdIds.push(id);
 
     const res = await get(`/workspace/${id}`);
     expect(res.status).toBe(200);

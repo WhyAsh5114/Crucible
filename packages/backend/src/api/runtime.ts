@@ -22,7 +22,9 @@ import { randomUUID } from 'node:crypto';
 import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
-import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
+import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
+import { cleanupWorkspacePty } from '../lib/pty-manager';
+import { startPreview, stopPreview } from '../lib/preview-manager';
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────
 
@@ -43,6 +45,10 @@ const runtimeRoute = createRoute({
     400: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
     },
     404: {
       content: { 'application/json': { schema: ApiErrorSchema } },
@@ -112,7 +118,6 @@ function toDescriptor(runtime: {
 
 export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
   const parsed = { success: true as const, data: c.req.valid('json') };
-
   const userId = c.get('userId');
 
   if (parsed.data.type === 'open_workspace') {
@@ -171,10 +176,17 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
         data: {
           status: container.ready ? 'ready' : 'degraded',
           startedAt: new Date(container.startedAtMs),
-          terminalSessionId: `${workspace.id}-terminal`,
           chainPort: container.ports.chain,
           compilerPort: container.ports.compiler,
+          deployerPort: container.ports.deployer,
+          walletPort: container.ports.wallet,
+          terminalPort: container.ports.terminal,
         },
+      });
+
+      // Start the per-workspace Vite preview server in the background.
+      void startPreview(workspace.id, workspaceHostPath(workspace.id)).catch((err) => {
+        console.warn(`[runtime ${workspace.id}] preview start failed:`, err);
       });
 
       const response = RuntimeResponseSchema.parse({
@@ -241,9 +253,11 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
             data: {
               status: 'ready',
               startedAt: new Date(),
-              terminalSessionId: `${runtime.workspaceId}-terminal`,
               chainPort: ports?.chain ?? null,
               compilerPort: ports?.compiler ?? null,
+              deployerPort: ports?.deployer ?? null,
+              walletPort: ports?.wallet ?? null,
+              terminalPort: ports?.terminal ?? null,
             },
           });
         }
@@ -271,8 +285,15 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
+    if (workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
     try {
       await stopWorkspaceContainer(workspace.id);
+      stopPreview(workspace.id);
+      cleanupAgentBus(workspace.id);
+      cleanupWorkspacePty(workspace.id);
 
       if (workspace.runtime) {
         await prisma.workspaceRuntime.update({
@@ -316,6 +337,10 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
     });
 
     if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    if (workspace.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 

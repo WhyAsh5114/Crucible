@@ -10,8 +10,8 @@ model Workspace {
     id            String            @id @default(cuid())
     name          String
     directoryPath String            @unique
-    userId        String?
-    user          User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+    userId        String
+    user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
     createdAt     DateTime          @default(now())
     updatedAt     DateTime          @updatedAt
     deployments   Json              @default("[]")

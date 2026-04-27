@@ -284,16 +284,16 @@ Each workspace also gets its own isolated Hardhat process and snapshot stack. Th
 
 The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. All custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments.
 
-| MCP Server        | Port       | Tools                                                                               | Purpose                                                                               |
-| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------ |
-| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                            |
-| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files or inline source strings, extract artifacts             |
-| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy contracts, simulate & trace transactions locally                               |
-| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                            |
-| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                           |
-| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL                     |
-| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Own PTY-backed shell sessions and make terminal output visible to both user and agent |
-| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains                        |
+| MCP Server        | Port       | Tools                                                                               | Purpose                                                                                                       |
+| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ |
+| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                                                    |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files, extract artifacts                                                              |
+| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy compiled contracts by name, simulate & trace transactions locally                                      |
+| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                                                    |
+| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                                                   |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                                 |
+| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Own PTY-backed shell sessions and make terminal output visible to both user and agent _(planned)_ _(planned)_ |
+| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains                                                |
 
 ### chain-mcp — Implementation Notes
 
@@ -303,9 +303,9 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 
 ### compiler-mcp — Implementation Notes
 
-- **compile** accepts either a `sourcePath` (absolute path to a `.sol` file on disk) or an inline `source` string, with an optional `fileName` (defaults to `Inline.sol`). Exactly one of the two must be provided; passing both or neither is a validation error.
-- Inline source is written to a temporary directory, compiled, then cleaned up. Artifacts are only persisted to `.crucible/artifacts/` when a real workspace `sourcePath` is used.
+- **compile** accepts a `sourcePath` — a workspace-relative path to a `.sol` file on disk (e.g. `"contracts/Counter.sol"`). Artifacts are always persisted to `.crucible/artifacts/`.
 - **ALLOWED_HOSTS**: same as chain-mcp — required for remote access.
+- **COMPILER_URL**: `mcp-deployer` reads this env var (default `http://localhost:3101`) to fetch bytecode from compiler-mcp when `deploy_local` is called by contract namep://localhost:3101`) to fetch bytecode from compiler-mcp when `deploy_local` is called by contract name.
 
 ---
 
@@ -409,10 +409,12 @@ list_contracts(): { contracts: string[] }
 
 ```typescript
 // Tools (local Hardhat only — public-chain deploys go through KeeperHub MCP)
-deploy_local(bytecode, constructorArgs?, sender?): { address, txHash, gasUsed }
+// Requires the contract to have been compiled via compiler-mcp first.
+deploy_local(contractName: string, constructorData: Hex, sender?: Address, value?: bigint): { address, txHash, gasUsed }
 simulate_local(txObject): { result, gasEstimate, logs, revertReason? }
-trace(txHash): { structLogs, decodedCalls, storageReads, storageWrites, revertReason? }
-call(to, functionSig, args?): { result }
+trace(txHash): { decodedCalls, storageReads, storageWrites, events, revertReason?, gasUsed }
+call(to: Address, data: Hex, from?: Addressls, storageReads, storageWrites, events, revertReason?, gasUsed }
+call(to: Address, data: Hex, from?: Address): { result }
 ```
 
 ### wallet-mcp
@@ -871,7 +873,7 @@ If the fallback path was used, the UI also shows that the current inference prov
 
 **What actually happens underneath:**
 
-- `deployer-mcp` reads bytecode from artifacts and deploys to the workspace Hardhat process
+- `deployer-mcp` fetches bytecode by contract name from compiler-mcp's artifact store and deploys to the workspace Hardhat process
 - `wallet-mcp` supplies the active dev account
 - Deployment metadata is appended to `.crucible/state.json`
 - Preview uses its EIP-1193 bridge to send approved JSON-RPC requests through the parent shell to that specific workspace chain

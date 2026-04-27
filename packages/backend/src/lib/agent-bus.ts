@@ -120,3 +120,13 @@ export function subscribeAgentEvents(workspaceId: string): {
 
   return { events, unsubscribe };
 }
+
+/**
+ * Remove all in-memory bus state for the given workspace. Call this when a
+ * workspace is closed or deleted so subscribers and sequence counters do not
+ * accumulate indefinitely.
+ */
+export function cleanupAgentBus(workspaceId: string): void {
+  subscribers.delete(workspaceId);
+  sequence.delete(workspaceId);
+}

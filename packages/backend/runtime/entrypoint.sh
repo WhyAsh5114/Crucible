@@ -25,27 +25,38 @@ log "starting mcp-compiler on port ${COMPILER_MCP_PORT}"
 bun run --cwd /app/packages/mcp-compiler start &
 compiler_pid=$!
 
+log "starting mcp-deployer on port ${DEPLOYER_MCP_PORT}"
+bun run --cwd /app/packages/mcp-deployer start &
+deployer_pid=$!
+
+log "starting mcp-wallet on port ${WALLET_MCP_PORT}"
+bun run --cwd /app/packages/mcp-wallet start &
+wallet_pid=$!
+
+log "starting mcp-memory on port ${MEMORY_MCP_PORT}"
+bun run --cwd /app/packages/mcp-memory start &
+memory_pid=$!
+
 shutdown() {
     log "received shutdown — terminating services"
-    kill -TERM "${chain_pid}" "${compiler_pid}" 2>/dev/null || true
-    wait "${chain_pid}" "${compiler_pid}" 2>/dev/null || true
+    kill -TERM "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+    wait "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
     exit 0
 }
 trap shutdown TERM INT
 
-# If either service exits, propagate the failure to the container.
+# If any service exits, propagate the failure to the container.
 while true; do
-    if ! kill -0 "${chain_pid}" 2>/dev/null; then
-        log "mcp-chain exited unexpectedly" >&2
-        kill -TERM "${compiler_pid}" 2>/dev/null || true
-        wait "${compiler_pid}" 2>/dev/null || true
-        exit 1
-    fi
-    if ! kill -0 "${compiler_pid}" 2>/dev/null; then
-        log "mcp-compiler exited unexpectedly" >&2
-        kill -TERM "${chain_pid}" 2>/dev/null || true
-        wait "${chain_pid}" 2>/dev/null || true
-        exit 1
-    fi
+    for pair in "chain_pid:mcp-chain" "compiler_pid:mcp-compiler" "deployer_pid:mcp-deployer" "wallet_pid:mcp-wallet" "memory_pid:mcp-memory"; do
+        varname="${pair%%:*}"
+        label="${pair##*:}"
+        eval pid=\$$varname
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            log "${label} exited unexpectedly" >&2
+            kill -TERM "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+            wait "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+            exit 1
+        fi
+    done
     sleep 2
 done

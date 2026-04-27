@@ -17,8 +17,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeFile, mkdir, rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
 import { mcp } from '@crucible/types';
@@ -163,40 +162,23 @@ app.use('*', async (c, next) => {
 
 // REST route handlers
 app.openapi(compileRoute, async (c) => {
-  let tempDir: string | undefined;
   try {
-    const { sourcePath, source, fileName, settings } = c.req.valid('json');
-    let absolutePath: string;
+    const { sourcePath, settings } = c.req.valid('json');
+    console.log(`[mcp-compiler] compile path=${sourcePath}`);
+    const absolutePath = join(WORKSPACE_ROOT, sourcePath);
     let rel: string;
-
-    if (source !== undefined) {
-      const solFileName = fileName ?? 'Inline.sol';
-      console.log(
-        `[mcp-compiler] compile inline=${solFileName} (${source.split('\n').length} lines)`,
-      );
-      tempDir = join(WORKSPACE_ROOT, '.crucible', 'tmp', `inline-${randomUUID()}`);
-      await mkdir(tempDir, { recursive: true });
-      absolutePath = join(tempDir, solFileName);
-      await writeFile(absolutePath, source, 'utf8');
-      rel = `<inline>/${solFileName}`;
-    } else {
-      console.log(`[mcp-compiler] compile path=${sourcePath}`);
-      absolutePath = join(WORKSPACE_ROOT, sourcePath!);
-      try {
-        rel = await assertContainedInWorkspace(WORKSPACE_ROOT, absolutePath);
-      } catch (e) {
-        console.error(`[mcp-compiler] compile error: ${String(e)}`);
-        return c.json({ error: String(e) }, 400);
-      }
+    try {
+      rel = await assertContainedInWorkspace(WORKSPACE_ROOT, absolutePath);
+    } catch (e) {
+      console.error(`[mcp-compiler] compile error: ${String(e)}`);
+      return c.json({ error: String(e) }, 400);
     }
     const result = await compileSolidity(absolutePath, {
       version: SOLC_VERSION,
       ...(settings ?? {}),
     } as SolcSettings);
     store.storeContracts(result.contracts, rel);
-    if (!tempDir) {
-      await store.persistArtifacts(WORKSPACE_ROOT, result.contracts);
-    }
+    await store.persistArtifacts(WORKSPACE_ROOT, result.contracts);
     const seen = new Set<string>();
     const topWarnings = (result.warnings ?? []).filter((w) => {
       if (seen.has(w.message)) return false;
@@ -217,10 +199,6 @@ app.openapi(compileRoute, async (c) => {
   } catch (err) {
     console.error(`[mcp-compiler] compile error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
-  } finally {
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true });
-    }
   }
 });
 

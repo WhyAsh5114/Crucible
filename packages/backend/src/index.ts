@@ -1,11 +1,15 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
 import { createMiddleware } from 'hono/factory';
+import { upgradeWebSocket, websocket } from 'hono/bun';
 import { auth } from './lib/auth';
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { workspaceApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
+import { terminalApi } from './api/terminal';
+
+export { upgradeWebSocket };
 
 const app = new OpenAPIHono();
 
@@ -31,7 +35,7 @@ app.use(
       return null;
     },
     exposeHeaders: ['Content-Length'],
-    allowMethods: ['POST', 'GET', 'OPTIONS'],
+    allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
   }),
 );
@@ -67,7 +71,8 @@ const apiRoutes = app
   .route('/api', workspaceApi)
   .route('/api', runtimeApi)
   .route('/api', agentApi)
-  .route('/api', inferenceApi);
+  .route('/api', inferenceApi)
+  .route('/', terminalApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
 
@@ -84,4 +89,5 @@ export default {
   port,
   idleTimeout: 0,
   fetch: apiRoutes.fetch,
+  websocket,
 };

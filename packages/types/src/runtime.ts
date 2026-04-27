@@ -76,8 +76,8 @@ export const ToolExecRequestSchema = z.object({
   ...corr,
   type: z.literal('tool_exec'),
   workspaceId: WorkspaceIdSchema,
-  /** Logical MCP server name: `chain` | `compiler` | `deployer` | `wallet` | `terminal`. */
-  server: z.enum(['chain', 'compiler', 'deployer', 'wallet', 'terminal']),
+  /** Logical MCP server name: `chain` | `compiler` | `deployer` | `wallet` | `terminal` | `memory` | `mesh`. */
+  server: z.enum(['chain', 'compiler', 'deployer', 'wallet', 'terminal', 'memory', 'mesh']),
   tool: z.string().min(1),
   args: z.unknown(),
 });

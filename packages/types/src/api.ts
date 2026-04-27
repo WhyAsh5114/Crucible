@@ -15,7 +15,7 @@ import {
   StreamIdSchema,
   WorkspaceIdSchema,
 } from './primitives.ts';
-import { WorkspaceStateSchema } from './workspace.ts';
+import { WorkspaceStateSchema, WorkspaceFileSchema } from './workspace.ts';
 import { KeeperHubExecutionSchema } from './ship.ts';
 
 // --- POST /api/workspace -----------------------------------------------------
@@ -52,6 +52,24 @@ export const WorkspaceListResponseSchema = z.object({
   workspaces: z.array(WorkspaceSummarySchema),
 });
 export type WorkspaceListResponse = z.infer<typeof WorkspaceListResponseSchema>;
+
+// --- PUT /api/workspace/:id/file ---------------------------------------------
+
+export const FileWriteRequestSchema = z.object({
+  /** Workspace-relative POSIX path (e.g. `contracts/Vault.sol`). Must not contain `..`. */
+  path: z
+    .string()
+    .min(1)
+    .max(512)
+    .refine((p) => !p.includes('..') && !p.startsWith('/'), {
+      message: 'path must be relative and must not contain ..',
+    }),
+  content: z.string().max(512 * 1024),
+});
+export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
+
+export const FileWriteResponseSchema = WorkspaceFileSchema;
+export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
 
 // --- POST /api/prompt --------------------------------------------------------
 
