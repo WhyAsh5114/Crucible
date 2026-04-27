@@ -7,13 +7,15 @@
 
 import { describe, it, expect, afterEach } from 'bun:test';
 import { workspaceApi } from '../src/api/workspace';
+import { withAuth } from './with-auth';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const api = withAuth(workspaceApi);
 const createdIds: string[] = [];
 
 async function post(path: string, body: unknown) {
-  return workspaceApi.request(path, {
+  return api.request(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -21,7 +23,7 @@ async function post(path: string, body: unknown) {
 }
 
 async function get(path: string) {
-  return workspaceApi.request(path, { method: 'GET' });
+  return api.request(path, { method: 'GET' });
 }
 
 afterEach(async () => {

@@ -37,3 +37,23 @@ process.env['CRUCIBLE_RUNTIME_MOUNT_MODE'] ??= 'bind';
 // will always time out. Keep that timeout short to avoid blocking the suite.
 process.env['CRUCIBLE_RUNTIME_READY_TIMEOUT_MS'] ??= '500';
 process.env['CRUCIBLE_RUNTIME_READY_INTERVAL_MS'] ??= '100';
+
+// ── Test user for ownership-gated route tests ───────────────────────────────
+// API handlers read `userId` from `c.get('userId')`, set by the requireSession
+// middleware in production. Sub-app tests bypass that middleware, so we upsert
+// a stable test user and inject its id via the `withAuth()` helper in
+// test/with-auth.ts.
+export const TEST_USER_ID = 'test-user-id';
+{
+  const { prisma } = await import('../src/lib/prisma');
+  await prisma.user.upsert({
+    where: { id: TEST_USER_ID },
+    create: {
+      id: TEST_USER_ID,
+      name: 'Test User',
+      email: 'test@crucible.local',
+      emailVerified: false,
+    },
+    update: {},
+  });
+}

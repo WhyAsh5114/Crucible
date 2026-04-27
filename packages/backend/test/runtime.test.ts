@@ -8,13 +8,16 @@
 
 import { describe, it, expect, afterEach } from 'bun:test';
 import { runtimeApi } from '../src/api/runtime';
+import { withAuth } from './with-auth';
+import { TEST_USER_ID } from './setup';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+const api = withAuth(runtimeApi);
 const createdWorkspaceIds: string[] = [];
 
 async function postRuntime(body: unknown) {
-  return runtimeApi.request('/runtime', {
+  return api.request('/runtime', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -30,6 +33,7 @@ async function createTestWorkspace(name: string): Promise<string> {
       name,
       directoryPath: `pending://${randomUUID()}`,
       deployments: [],
+      userId: TEST_USER_ID,
     },
     select: { id: true },
   });
