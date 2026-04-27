@@ -35,3 +35,4 @@ artifacts/
 cache/
 
 # Backend generated files (Prisma client) — see packages/backend/.gitignore
+.workspaces
