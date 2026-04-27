@@ -42,10 +42,14 @@ WORKDIR /workspace
 # both servers is widened via ALLOWED_HOSTS.
 ENV CHAIN_MCP_PORT=3100 \
     COMPILER_MCP_PORT=3101 \
+    DEPLOYER_MCP_PORT=3102 \
+    WALLET_MCP_PORT=3103 \
+    MEMORY_MCP_PORT=3104 \
+    TERMINAL_MCP_PORT=3105 \
     WORKSPACE_ROOT=/workspace \
     ALLOWED_HOSTS=host.docker.internal
 
-EXPOSE 3100 3101
+EXPOSE 3100 3101 3102 3103 3104 3105
 
 COPY packages/backend/runtime/entrypoint.sh /usr/local/bin/crucible-runtime-entrypoint
 RUN chmod +x /usr/local/bin/crucible-runtime-entrypoint
