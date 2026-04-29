@@ -36,6 +36,24 @@ export const DEFAULT_MCP_PORTS = {
 
 PortSchema.parse(DEFAULT_MCP_PORTS.chain);
 
+/** MCP HTTP envelope for tool/call requests (sent to /mcp endpoint). */
+export type McpToolsCallBody = {
+  method?: string;
+  params?: {
+    name?: string;
+    arguments?: unknown;
+  };
+};
+
+/** MCP HTTP envelope for responses from /mcp endpoint. */
+export type McpResponseBody = {
+  result?: {
+    structuredContent?: unknown;
+    content?: Array<{ text?: string }>;
+  };
+  error?: unknown;
+};
+
 export * as chain from './chain.ts';
 export * as compiler from './compiler.ts';
 export * as deployer from './deployer.ts';

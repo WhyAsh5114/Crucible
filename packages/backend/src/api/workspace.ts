@@ -23,8 +23,12 @@ import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
-import { ensureWorkspaceContainer } from '../lib/runtime-docker';
 import { startPreview, getPreviewUrl } from '../lib/preview-manager';
+import {
+  ensureWorkspaceContainer,
+  getWorkspaceContainerPorts,
+  runtimeServiceBaseUrl,
+} from '../lib/runtime-docker';
 import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
 import { requireSession } from '../lib/auth';
 
@@ -374,4 +378,46 @@ export const workspaceApi = workspaceApiBase
         500,
       );
     }
+  })
+  .get('/workspace/:id/devtools/events', async (c) => {
+    const id = c.req.param('id');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const ports = await getWorkspaceContainerPorts(workspace.id).catch(() => null);
+    if (!ports?.devtools) {
+      return c.json({ error: 'devtools not ready' }, 503);
+    }
+
+    const upstreamUrl = `${runtimeServiceBaseUrl(ports.devtools)}/events`;
+    let upstream: Response;
+    try {
+      upstream = await fetch(upstreamUrl, {
+        headers: { accept: 'text/event-stream' },
+        signal: c.req.raw.signal,
+      });
+    } catch {
+      return c.json({ error: 'devtools not ready' }, 503);
+    }
+
+    if (!upstream.ok || !upstream.body) {
+      return c.json({ error: 'devtools not ready' }, 503);
+    }
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    });
   });

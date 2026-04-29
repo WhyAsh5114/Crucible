@@ -16,7 +16,14 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp, encodeBigInt, AllowedRpcMethodSchema } from '@crucible/types';
+import {
+  mcp,
+  encodeBigInt,
+  createDevtoolsReporter,
+  type McpToolsCallBody,
+  type McpResponseBody,
+  AllowedRpcMethodSchema,
+} from '@crucible/types';
 import {
   StartNodeInputSchema,
   StartNodeOutputSchema,
@@ -36,6 +43,7 @@ const PORT = process.env['CHAIN_MCP_PORT']
 
 const WORKSPACE_ID = process.env['WORKSPACE_ID'] ?? 'default';
 const DEFAULT_FORK_RPC_URL = process.env['DEFAULT_FORK_RPC_URL'];
+const devtools = createDevtoolsReporter('chain');
 
 console.log(`[mcp-chain] starting on port ${PORT} (workspaceId: ${WORKSPACE_ID})`);
 if (DEFAULT_FORK_RPC_URL) {
@@ -191,6 +199,73 @@ app.use('*', async (c, next) => {
   const status = c.res?.status ?? 0;
   const logFn = status >= 500 ? console.error : status >= 400 ? console.warn : console.log;
   logFn(`[mcp-chain] \u2190 ${status} (${ms}ms)`);
+});
+
+function chainToolForPath(path: string): string | null {
+  if (path === '/start_node') return 'start_node';
+  if (path === '/state') return 'get_state';
+  if (path === '/snapshot') return 'snapshot';
+  if (path === '/revert') return 'revert';
+  if (path === '/mine') return 'mine';
+  if (path === '/fork') return 'fork';
+  return null;
+}
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  let tool = chainToolForPath(path);
+  let args: unknown = {};
+
+  if (path === '/mcp') {
+    const body = c.get('parsedBody') as McpToolsCallBody | undefined;
+    if (body?.method === 'tools/call' && body?.params?.name) {
+      tool = body.params.name;
+      args = body.params.arguments ?? {};
+    }
+  } else if (tool) {
+    args = c.req.method === 'GET' ? {} : c.get('parsedBody');
+  }
+
+  if (!tool) {
+    await next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  void devtools.emitToolCall(tool, args ?? {});
+  await next();
+
+  const durationMs = Date.now() - startedAt;
+  const ok = (c.res?.status ?? 500) < 400;
+  let result: unknown = { status: c.res?.status ?? 0 };
+
+  try {
+    const json = (await c.res.clone().json()) as McpResponseBody;
+    if (path === '/mcp') {
+      if (json?.result) {
+        if (json.result.structuredContent) {
+          result = json.result.structuredContent;
+        } else if (json.result.content?.[0]?.text) {
+          try {
+            result = JSON.parse(json.result.content[0].text);
+          } catch {
+            result = json.result;
+          }
+        } else {
+          result = json.result;
+        }
+      } else if (json?.error) {
+        result = json.error;
+      } else {
+        result = json;
+      }
+    } else {
+      result = json;
+    }
+  } catch {
+    // Non-JSON responses still get traced with status.
+  }
+  void devtools.emitToolResult(tool, ok, result, durationMs);
 });
 
 // REST route handlers

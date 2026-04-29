@@ -33,6 +33,7 @@ const CONTAINER_DEPLOYER_PORT = 3102;
 const CONTAINER_WALLET_PORT = 3103;
 const CONTAINER_MEMORY_PORT = 3104;
 const CONTAINER_TERMINAL_PORT = 3105;
+const CONTAINER_DEVTOOLS_PORT = 3107;
 
 const READINESS_TIMEOUT_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_TIMEOUT_MS'] ?? '60000');
 const READINESS_INTERVAL_MS = Number(process.env['CRUCIBLE_RUNTIME_READY_INTERVAL_MS'] ?? '500');
@@ -320,6 +321,7 @@ export type WorkspaceRuntimePorts = {
   wallet: number | null;
   memory: number | null;
   terminal: number | null;
+  devtools: number | null;
 };
 
 export type EnsureWorkspaceContainerResult = {
@@ -412,6 +414,7 @@ export async function ensureWorkspaceContainer(
             `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
             `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
             `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
+            `DEVTOOLS_MCP_PORT=${CONTAINER_DEVTOOLS_PORT}`,
             `WORKSPACE_ROOT=${workspaceDir}`,
           ],
           ExposedPorts: {
@@ -421,6 +424,7 @@ export async function ensureWorkspaceContainer(
             [`${CONTAINER_WALLET_PORT}/tcp`]: {},
             [`${CONTAINER_MEMORY_PORT}/tcp`]: {},
             [`${CONTAINER_TERMINAL_PORT}/tcp`]: {},
+            [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: {},
           },
           HostConfig: {
             RestartPolicy: { Name: 'unless-stopped' },
@@ -433,6 +437,7 @@ export async function ensureWorkspaceContainer(
               [`${CONTAINER_WALLET_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_MEMORY_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_TERMINAL_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: [{ HostPort: '' }],
             },
           },
         }),
@@ -467,6 +472,7 @@ export async function ensureWorkspaceContainer(
     wallet: freshInspect ? extractHostPort(freshInspect, CONTAINER_WALLET_PORT) : null,
     memory: freshInspect ? extractHostPort(freshInspect, CONTAINER_MEMORY_PORT) : null,
     terminal: freshInspect ? extractHostPort(freshInspect, CONTAINER_TERMINAL_PORT) : null,
+    devtools: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEVTOOLS_PORT) : null,
   };
 
   const ready = await waitForRuntimeReady(ports);
@@ -493,6 +499,7 @@ export async function getWorkspaceContainerPorts(
     wallet: extractHostPort(inspect, CONTAINER_WALLET_PORT),
     memory: extractHostPort(inspect, CONTAINER_MEMORY_PORT),
     terminal: extractHostPort(inspect, CONTAINER_TERMINAL_PORT),
+    devtools: extractHostPort(inspect, CONTAINER_DEVTOOLS_PORT),
   };
 }
 
