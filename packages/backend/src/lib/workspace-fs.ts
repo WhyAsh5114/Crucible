@@ -121,13 +121,24 @@ export default defineConfig({
 
   await writeIfAbsent(
     path.join(frontendDir, 'src', 'config.ts'),
-    `import { http, createConfig } from 'wagmi';
+    `import { custom, createConfig } from 'wagmi';
+import type { EIP1193Provider } from 'viem';
 import { foundry } from 'wagmi/chains';
+
+// Route all wagmi calls (reads AND writes) through the injected EIP-1193
+// bridge so they pass through the Crucible shell's RPC proxy instead of
+// hitting the Hardhat node directly (which isn't reachable from the browser).
+// The bridge script is injected before this module by the Crucible launcher.
+declare global {
+  interface Window {
+    ethereum: EIP1193Provider;
+  }
+}
 
 export const config = createConfig({
   chains: [foundry],
   transports: {
-    [foundry.id]: http('http://localhost:8545'),
+    [foundry.id]: custom(window.ethereum),
   },
 });
 `,
