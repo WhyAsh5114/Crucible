@@ -11,7 +11,7 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:17.9-alpine
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: crucible
@@ -24,6 +24,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    ports:
+      - '5432:5432'
 
 volumes:
   postgres-data:
