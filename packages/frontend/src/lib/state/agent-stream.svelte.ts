@@ -1,11 +1,20 @@
 /**
  * Reactive store for the AgentEvent stream — real client over SSE.
  *
- * Backend exposes `GET /api/agent/stream?workspaceId=<id>` as a
- * `text/event-stream`. Each frame is a Zod-validated `AgentEvent` from
- * `@crucible/types`. There is no fixture or fallback path: the stream is
- * either connected and silent, connected and producing real events, or
- * errored. The chat rail surfaces whichever state is current.
+ * Status states track two independent things:
+ *   - `connecting` / `idle` / `error` / `closed`: transport state of the SSE
+ *     channel itself. `idle` means the connection is open and healthy.
+ *   - `streaming`: the agent is actively producing events (mid-turn). Flips
+ *     on for any agent-activity event and back to `idle` on
+ *     `inference_receipt`, which the agent emits exactly once per turn at
+ *     the end of inference.
+ *
+ * Implementation note: we deliberately do NOT use the browser's
+ * `EventSource` API. Firefox aborts EventSource connections that exist
+ * during navigation/HMR and logs a noisy "connection interrupted while the
+ * page was loading" warning every time. `fetch` + `ReadableStream` gives us
+ * the same SSE wire format with cleaner abort semantics and no console
+ * spam.
  *
  * Pattern: factory class + Svelte context. Each layout instance creates its
  * own `AgentStream`, so SSR requests don't leak state into each other.
@@ -19,10 +28,9 @@ export type AgentStreamStatus = 'idle' | 'connecting' | 'streaming' | 'error' | 
 
 export interface AgentStreamOptions {
 	/**
-	 * Factory for the underlying `EventSource`. Defaults to the global
-	 * constructor. Tests can inject a fake to drive deterministic frames.
+	 * Override `fetch` for testing. Defaults to `globalThis.fetch`.
 	 */
-	eventSourceFactory?: (url: string) => EventSource;
+	fetchImpl?: typeof fetch;
 }
 
 export class AgentStream {
@@ -30,52 +38,91 @@ export class AgentStream {
 	status = $state<AgentStreamStatus>('idle');
 	error = $state<string | null>(null);
 
-	private readonly factory: (url: string) => EventSource;
-	private source: EventSource | null = null;
+	private readonly fetchImpl: typeof fetch;
+	private controller: AbortController | null = null;
+	// Increments on every start/stop. The async pump uses this to bail out if
+	// the caller cancelled while we were mid-await.
+	private startToken = 0;
 
 	constructor(opts: AgentStreamOptions = {}) {
-		this.factory =
-			opts.eventSourceFactory ?? ((url) => new EventSource(url, { withCredentials: true }));
+		this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	}
 
 	/** Open the SSE connection for a given workspace. Idempotent. */
 	start(workspaceId: string): void {
-		if (this.source) return;
+		if (this.controller) return;
+		const token = ++this.startToken;
+		this.status = 'connecting';
 		this.events = [];
 		this.error = null;
-		this.status = 'connecting';
 
-		// Hono RPC builds the URL from the typed route definition.
-		const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
-		const source = this.factory(url.toString());
+		const controller = new AbortController();
+		this.controller = controller;
 
-		source.onopen = () => {
-			this.status = 'streaming';
-		};
-		source.onmessage = (msg) => this.handleFrame(msg.data);
-		source.onerror = () => {
-			// EventSource auto-retries on transient failures; only surface an
-			// error when the connection is irrecoverable.
-			if (source.readyState === source.CLOSED) {
-				this.status = 'error';
-				this.error = 'Agent stream connection closed';
-			}
-		};
-
-		this.source = source;
+		void this.pump(workspaceId, token, controller.signal);
 	}
 
 	/** Close the SSE connection. */
 	stop(): void {
-		if (this.source) {
-			this.source.close();
-			this.source = null;
+		this.startToken += 1;
+		if (this.controller) {
+			this.controller.abort();
+			this.controller = null;
 		}
 		this.status = 'closed';
 	}
 
-	private handleFrame(data: unknown): void {
-		if (typeof data !== 'string') return;
+	private async pump(workspaceId: string, token: number, signal: AbortSignal): Promise<void> {
+		try {
+			const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
+			const response = await this.fetchImpl(url.toString(), {
+				signal,
+				credentials: 'include',
+				headers: { Accept: 'text/event-stream' }
+			});
+
+			if (token !== this.startToken) return;
+			if (!response.ok || !response.body) {
+				this.status = 'error';
+				this.error = `Agent stream HTTP ${response.status}`;
+				return;
+			}
+
+			this.status = 'idle';
+
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = '';
+
+			while (true) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				if (token !== this.startToken) return;
+				buffer += decoder.decode(value, { stream: true });
+
+				// SSE frames are separated by a blank line. Each frame is one or
+				// more `field: value` lines. We only care about `data:` payloads.
+				let sep: number;
+				while ((sep = buffer.indexOf('\n\n')) >= 0) {
+					const frame = buffer.slice(0, sep);
+					buffer = buffer.slice(sep + 2);
+					this.handleFrame(parseSseData(frame));
+				}
+			}
+
+			// Server closed the stream cleanly.
+			if (token === this.startToken) this.status = 'closed';
+		} catch (err) {
+			// AbortError is the normal stop() path — not an error.
+			if (signal.aborted) return;
+			if (token !== this.startToken) return;
+			this.status = 'error';
+			this.error = err instanceof Error ? err.message : 'Failed to read agent stream';
+		}
+	}
+
+	private handleFrame(data: string | null): void {
+		if (data === null) return;
 		let parsed: unknown;
 		try {
 			parsed = JSON.parse(data);
@@ -91,6 +138,14 @@ export class AgentStream {
 			return;
 		}
 		const incoming = result.data;
+
+		// Drive the streaming/idle flag from event types. `inference_receipt`
+		// marks the end of a turn; anything else mid-turn means the agent is
+		// still producing.
+		if (this.status !== 'error' && this.status !== 'closed') {
+			this.status = incoming.type === 'inference_receipt' ? 'idle' : 'streaming';
+		}
+
 		// Accumulate consecutive thinking deltas into a single event so the chat
 		// rail renders one collapsible block instead of one row per token.
 		if (incoming.type === 'thinking' && this.events.length > 0) {
@@ -105,13 +160,11 @@ export class AgentStream {
 		if (incoming.type === 'message_delta') {
 			const last = this.events.length > 0 ? this.events[this.events.length - 1] : undefined;
 			if (last?.type === 'message' && last.streamId === incoming.streamId) {
-				// Append to the existing message row.
 				this.events[this.events.length - 1] = {
 					...last,
 					content: last.content + incoming.text
 				};
 			} else {
-				// First delta for this stream — seed a new message row.
 				this.events.push({
 					type: 'message',
 					streamId: incoming.streamId,
@@ -124,6 +177,21 @@ export class AgentStream {
 		}
 		this.events.push(incoming);
 	}
+}
+
+/**
+ * Pull the joined `data:` payload out of one SSE frame. Returns `null` for
+ * comment-only frames (which start with `:`).
+ */
+function parseSseData(frame: string): string | null {
+	const lines = frame.split('\n');
+	const dataParts: string[] = [];
+	for (const line of lines) {
+		if (line.startsWith('data:')) {
+			dataParts.push(line.slice(line[5] === ' ' ? 6 : 5));
+		}
+	}
+	return dataParts.length > 0 ? dataParts.join('\n') : null;
 }
 
 const KEY = Symbol('crucible.agent-stream');
