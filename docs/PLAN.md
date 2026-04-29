@@ -17,29 +17,29 @@ The rule for the whole build: no milestone is considered done because a package 
 
 What is actually wired on the working branch, not what is documented as the eventual shape.
 
-| Layer                           | Status     | Notes                                                                                                                                                                                                                                                                              |
-| :------------------------------ | :--------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@crucible/types` contracts     | ✅ shipped | All boundary types (workspace / runtime / agent events / MCP I/O / preview bridge) are merged.                                                                                                                                                                                     |
-| Postgres metadata via Prisma    | ✅ shipped | `workspace`, `workspace_runtime`, plus better-auth tables. Three migrations applied.                                                                                                                                                                                               |
-| Auth (better-auth)              | ✅ shipped | Anonymous + Google + SIWE. All API routes session-gated.                                                                                                                                                                                                                           |
-| Per-workspace Docker runner     | ✅ shipped | `crucible-runtime:latest` image, dockerode supervisor, dynamic host ports, bind/volume mounts, readiness probe, status reconciliation.                                                                                                                                             |
-| `mcp-chain` + `mcp-compiler`    | ✅ shipped | Run **inside** the runner container. Control plane HTTP-proxies `tool_exec` to them.                                                                                                                                                                                               |
-| `mcp-deployer`                  | ✅ shipped | Package implemented (`deploy_local`, `simulate_local`, `trace`, `call`); Dockerfile + entrypoint wired on in-container port 3102; `tool_exec` proxy wired.                                                                                                                         |
-| `mcp-wallet`                    | ✅ shipped | Package implemented (`list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`); Dockerfile + entrypoint wired on in-container port 3103; `tool_exec` proxy wired.                                                                                              |
-| `mcp-memory`                    | ✅ shipped | Package implemented (`recall`, `remember`, `list_patterns`, `provenance`); Dockerfile + entrypoint wired on in-container port 3104; `tool_exec` proxy wired. 0G Storage backend not yet connected (local FS now).                                                                  |
-| `mcp-terminal` + `/ws/terminal` | 🟡 partial | PTY manager (`node-pty`, `getOrCreatePtySession`) and `/ws/terminal` WebSocket endpoint wired in backend. Frontend `terminal-pane.svelte` still shows a static placeholder — WebSocket bridge not wired in UI.                                                                     |
-| Preview supervisor              | ✅ shipped | `preview-manager.ts` starts a per-workspace Vite dev server, assigns a free port, persists `previewUrl` to DB. Called on workspace create and runtime start.                                                                                                                       |
-| EIP-1193 bridge                 | ✅ shipped | `buildBridgeScript()` generates + injects `/__crucible/preview-bridge.js` into the preview origin before each Vite start. Three-layer protocol: bridge IIFE → shell `eip1193-bridge.ts` → `POST /workspace/:id/rpc` → mcp-chain `/json-rpc` → Hardhat. EIP-6963 announce included. |
-| Frontend shell                  | ✅ shipped | SvelteKit 2 + Svelte 5; chat rail / editor / preview / terminal panes; SSE agent stream; workspace boot polling; preview pane iframes `previewUrl` when set.                                                                                                                       |
-| `@crucible/agent`               | ✅ shipped | Real agent loop using AI SDK v6 `streamText`, MCP client per server, system prompt with full tool docs. `POST /api/prompt` endpoint calls `runAgentTurn`, publishes events to SSE bus.                                                                                             |
-| Inference router (0G primary)   | ✅ shipped | 0G Compute primary via `@0glabs/0g-serving-broker`; OpenAI-compatible fallback; `inference_receipt` event emitted; degraded-mode flag in event payload.                                                                                                                            |
-| `mcp-mesh` (AXL)                | 🔴 missing | —                                                                                                                                                                                                                                                                                  |
-| KeeperHub `ship` adapter        | 🔴 missing | —                                                                                                                                                                                                                                                                                  |
-| 0G Storage backend for memory   | 🔴 missing | `mcp-memory` tools exist but write to local filesystem. 0G KV/Log backend not connected.                                                                                                                                                                                           |
-| Portless preview origin         | 🔴 missing | Preview URL is `http://localhost:<port>` today. Caddy + subdomain routing (`preview.<id>.crucible.localhost`) still planned for Phase 5.                                                                                                                                           |
-| Gateway / TLS                   | 🔴 missing | Single host. Caddy + cloudflared still planned.                                                                                                                                                                                                                                    |
+| Layer                                     | Status     | Notes                                                                                                                                                                                                                               |
+| :---------------------------------------- | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@crucible/types` contracts               | ✅ shipped | All boundary types (workspace / runtime / agent events / MCP I/O / preview bridge) are merged. `AgentEvent` now includes `message_delta` for token-by-token streaming.                                                              |
+| Postgres metadata via Prisma              | ✅ shipped | `workspace`, `workspace_runtime`, `walletAddress`, plus better-auth tables. Six migrations applied.                                                                                                                                 |
+| Auth (better-auth + SIWE)                 | ✅ shipped | **SIWE** (`better-auth/plugins/siwe`) is the primary path; Google OAuth optional. Anonymous plugin removed. EOA-only verification via viem's `verifyMessage`. All routes 401-gated.                                                 |
+| Per-workspace Docker runner               | ✅ shipped | `crucible-runtime:latest` image, dockerode supervisor, dynamic host ports, bind/volume mounts, readiness probe, status reconciliation.                                                                                              |
+| Runtime MCP servers (in container)        | ✅ shipped | `mcp-chain` (3100), `mcp-compiler` (3101), `mcp-deployer` (3102), `mcp-wallet` (3103), `mcp-memory` (3104) baked into the runner image and supervised by `entrypoint.sh`.                                                           |
+| Control-plane `tool_exec` proxy           | ✅ shipped | HTTP proxy routes `chain` / `compiler` / `deployer` / `wallet` / `memory` to in-container ports. `terminal` / `mesh` still return "not implemented".                                                                                |
+| `@crucible/agent`                         | ✅ shipped | AI SDK v6 agentic loop, MCP client per server, system prompt with full tool docs. `POST /api/prompt` calls `runAgentTurn`, publishes events to SSE bus.                                                                             |
+| Frontend shell                            | ✅ shipped | SvelteKit 2 + Svelte 5; chat rail / editor / preview / terminal panes; SSE agent stream; workspace boot polling; SIWE login; preview pane iframes `previewUrl` when set.                                                            |
+| Workspace list UI + `GET /api/workspaces` | ✅ shipped | Sidebar lists authenticated user's workspaces with last runtime status; rows are `WorkspaceSummary`.                                                                                                                                |
+| `/ws/terminal` (browser PTY)              | ✅ shipped | Backend: `docker exec -it` hijack, `getOrCreatePtySession`, `terminalSessionId` persisted. Frontend: `terminal-pane.svelte` with xterm.js v6.0.0, FitAddon, full WebSocket bridge.                                                  |
+| `mcp-terminal` (agent-callable)           | 🔴 missing | `tool_exec` for `terminal` returns "not implemented"; planned as in-container MCP server (port 3106) wrapping the same exec/PTY surface.                                                                                            |
+| Preview supervisor                        | ✅ shipped | `preview-manager.ts` starts a per-workspace Vite dev server, assigns a free port, persists `previewUrl` to DB. Called on workspace create and runtime start.                                                                        |
+| EIP-1193 bridge                           | ✅ shipped | `buildBridgeScript()` generates + injects `/__crucible/preview-bridge.js`. Three-layer protocol: bridge IIFE → shell `eip1193-bridge.ts` → `POST /workspace/:id/rpc` → mcp-chain `/json-rpc` → Hardhat. EIP-6963 announce included. |
+| Inference router (0G primary)             | ✅ shipped | 0G Compute primary via `@0glabs/0g-serving-broker`; OpenAI-compatible fallback; `inference_receipt` event emitted; degraded-mode flag in event payload.                                                                             |
+| `mcp-memory` durability (0G Storage)      | 🔴 missing | `mcp-memory` tools exist but write to local filesystem. 0G KV/Log backend not connected.                                                                                                                                            |
+| `mcp-mesh` (AXL)                          | 🔴 missing | —                                                                                                                                                                                                                                   |
+| KeeperHub `ship` adapter                  | 🔴 missing | —                                                                                                                                                                                                                                   |
+| Portless preview origin                   | 🔴 missing | Preview URL is `http://localhost:<port>` today. Caddy + subdomain routing (`preview.<id>.crucible.localhost`) still planned for Phase 5.                                                                                            |
+| Gateway / TLS                             | 🔴 missing | Single host. Caddy + cloudflared still planned.                                                                                                                                                                                     |
 
-**Critical path to closing Phase 1 (POV-1):** wire the terminal pane WebSocket in the frontend → then the full prompt → build → deploy → preview click loop is unblocked. All backend infrastructure for POV-1 is now shipped.
+**Critical path to Phase 1 completion (POV-1):** All Phase 1 infrastructure is now shipped — terminal pane WebSocket, preview supervisor, EIP-1193 bridge, and 0G inference router. The remaining gate is the end-to-end demo: prompt → agent writes files → compile → deploy → preview loads → user clicks.
 
 ---
 
@@ -206,29 +206,28 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 1 — Prove POV-1: Inspectable Local Loop
 
-**Days 2-4 (April 26-28) — 🟡 In progress**
+**Days 2-4 (April 26-28) — 🟡 Mostly landed**
 
 **Goal:** Make one thin vertical slice work locally without any sponsor dependency beyond what is required for the agent to answer.
 
-**Status (April 27):**
+**Status (April 28):**
 
 - ✅ Real workspace directory creation and persistence (`provisionWorkspaceDirectory`, host bind-mount).
-- ✅ Postgres metadata + better-auth session gating on every API route.
-- ✅ Per-workspace Docker runner container (`crucible-runtime:latest`) with `mcp-chain` + `mcp-compiler` supervised inside.
-- ✅ Control-plane HTTP proxy from `tool_exec` to in-container chain / compiler services with dynamic host port discovery.
-- ✅ Frontend shell with editor / preview / terminal / chat-rail / status-bar; agent SSE wired (`/api/agent/stream`); `/workspaces/[id]` polls boot status.
-- 🟡 Real local chain _lifecycle_ exists (`start_node`, snapshot, revert, mine, fork via the in-container chain MCP). Deploy path: `mcp-deployer` does **not** yet exist — `deployer.deploy_local` returns "not implemented" from `tool-exec.ts`.
-- 🔴 PTY session reachable from browser — `terminalSessionId` is recorded but `mcp-terminal` and the `/ws/terminal` channel are not wired.
+- ✅ Postgres metadata + better-auth session gating on every API route. Auth flipped from anonymous → **SIWE** (`better-auth/plugins/siwe`); login is wallet-driven via injected EIP-1193 provider, with Google OAuth still optional.
+- ✅ Per-workspace Docker runner container (`crucible-runtime:latest`) with `mcp-chain`, `mcp-compiler`, `mcp-deployer`, `mcp-wallet`, `mcp-memory` all supervised inside.
+- ✅ Control-plane HTTP proxy from `tool_exec` to in-container chain / compiler / deployer / wallet / memory services with dynamic host port discovery.
+- ✅ Frontend shell with editor / preview / terminal / chat-rail / status-bar; agent SSE wired (`/api/agent/stream`); `/workspaces/[id]` polls boot status; `/workspaces` list with sidebar; SIWE login page.
+- ✅ Real local chain lifecycle (`start_node`, snapshot, revert, mine, fork) and local deploy (`mcp-deployer.deploy_local` resolving bytecode from `mcp-compiler` via `COMPILER_URL`, signing with a wallet from `mcp-wallet`).
+- ✅ Agent loop — `@crucible/agent` ships using AI SDK v6 + `@ai-sdk/mcp createMCPClient`, dispatches tools across the in-runner MCP servers, and streams `message_delta` tokens onto the SSE bus.
+- ✅ PTY session reachable from browser — `/ws/terminal?workspaceId=<id>` get-or-creates an interactive bash inside `crucible-ws-<id>` via `docker exec` (Tty=true), persisted on `workspaceRuntime.terminalSessionId`.
+- 🔴 `mcp-terminal` (agent-callable PTY) — `tool_exec` for `terminal` still returns "not implemented"; will land as an in-container MCP server (port 3106) wrapping the existing exec surface.
 - 🔴 Preview dev server managed per workspace — `previewUrl` stays `null`; no preview gateway / bridge yet.
-- 🔴 Agent loop — `packages/agent` does not yet exist on `main`. The frontend prompts a stub and replays fixture events.
 
 **Closing Phase 1 means landing, in priority order:**
 
-1. `packages/mcp-deployer` inside the runner image, wired through `tool-exec.ts` (proxy to a fourth published port).
-2. `packages/mcp-wallet` inside the runner image (pre-funded dev accounts surfaced via the chain MCP).
-3. `packages/mcp-terminal` (node-pty) inside the runner image + `/ws/terminal` proxy on the control plane.
-4. Per-workspace preview dev-server supervisor + preview gateway origin (`https://preview.<workspaceId>.crucible.localhost`) + EIP-1193 bridge bootstrap.
-5. `packages/agent` (AI SDK v6 / OpenClaw) emitting real `AgentEvent` frames into the existing SSE bus instead of the fixture replayer.
+1. Per-workspace preview dev-server supervisor + preview gateway origin (`https://preview.<workspaceId>.crucible.localhost`) + EIP-1193 bridge bootstrap.
+2. `packages/mcp-terminal` inside the runner image so the agent can call `exec` / `write` / `resize` as MCP tools (the user-facing PTY is already live via `/ws/terminal`).
+3. End-to-end smoke: a real prompt → agent writes contract → compile → deploy → preview click on a generated frontend.
 
 **Success demo:** User prompts a very small app such as a token minter or counter contract, the agent builds it, and the user clicks the preview successfully.
 

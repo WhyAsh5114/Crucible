@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { authClient } from '$lib/auth-client';
@@ -17,13 +16,11 @@
 			void goto(resolve('/login'), { replaceState: true });
 		}
 	});
-
-	onMount(() => {
-		void authClient.getSession();
-	});
 </script>
 
-{#if $session.isPending}
+{#if $session.data?.user}
+	{@render children()}
+{:else if $session.isPending}
 	<main class="flex min-h-0 flex-1 items-center justify-center p-6">
 		<Empty.Root>
 			<Empty.Header>
@@ -31,6 +28,4 @@
 			</Empty.Header>
 		</Empty.Root>
 	</main>
-{:else if $session.data?.user}
-	{@render children()}
 {/if}

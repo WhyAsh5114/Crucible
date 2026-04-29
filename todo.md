@@ -49,9 +49,9 @@
 
 ### Terminal
 
-- [x] PTY manager on control plane (`node-pty`, `getOrCreatePtySession`)
-- [x] `/ws/terminal` WebSocket endpoint implemented in backend (session attach, input, resize, exit)
-- [ ] Terminal WebSocket bridge wired in frontend (`terminal-pane.svelte` still shows static placeholder text)
+- [x] PTY manager on control plane (`docker exec` hijack, `getOrCreatePtySession`, bash in workspace runtime)
+- [x] `/ws/terminal` WebSocket endpoint implemented in backend (session attach, input, resize, exit, docker exec hijack)
+- [x] Terminal WebSocket bridge wired in frontend (`terminal-pane.svelte` with xterm.js v6.0.0, FitAddon, dynamic imports)
 
 ### Preview
 
@@ -63,7 +63,7 @@
 
 ### POV-1 Success Gate
 
-- [ ] End-to-end: user prompts → agent writes files → compile → deploy → preview loads → user clicks button in preview
+- [x] End-to-end: user prompts → agent writes files → compile → deploy → preview loads → user clicks button in preview
 
 ---
 

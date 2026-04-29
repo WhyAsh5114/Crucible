@@ -223,6 +223,10 @@ async function ensureWorkspaceVolumeExists(): Promise<void> {
 
 // --- Public API ---
 
+export function getRuntimeContainerName(workspaceId: string): string {
+  return runtimeContainerName(workspaceId);
+}
+
 export async function getWorkspaceContainerState(
   workspaceId: string,
 ): Promise<WorkspaceContainerState> {

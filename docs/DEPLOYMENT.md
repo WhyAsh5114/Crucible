@@ -4,23 +4,29 @@
 
 ---
 
-## Implementation Status (April 27, 2026)
+## Implementation Status (April 28, 2026)
 
-What this doc described as "the live architecture" has partly landed already. Reading order: this section first, then the rest of the doc as the **target state**.
+What this doc described as "the live architecture" has largely landed. Reading order: this section first, then the rest of the doc as the **target state**.
 
-| Component                                                | Status         | Where                                                                                                    |
-| :------------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------------------- |
-| Control plane                                            | ✅ implemented | `packages/backend` — Bun + Hono + Prisma. Spawns runners via the Docker socket directly.                 |
-| Workspace runner image                                   | ✅ implemented | `packages/backend/runtime/Dockerfile` → `crucible-runtime:latest`. Hosts `mcp-chain` + `mcp-compiler`.   |
-| Per-workspace runner lifecycle                           | ✅ implemented | `packages/backend/src/lib/runtime-docker.ts` — create / start / inspect / stop / reconcile.              |
-| Persistent volume                                        | ✅ implemented | Default bind mode at `${CRUCIBLE_WORKSPACES_ROOT}/<id>`; opt-in named volume `crucible-workspaces-data`. |
-| PostgreSQL metadata                                      | ✅ implemented | `workspace`, `workspace_runtime` + better-auth's user/session/account/verification.                      |
-| Better-auth (anonymous + Google)                         | ✅ implemented | All API routes session-gated.                                                                            |
-| Gateway (Caddy / Traefik)                                | 🔴 not yet     | Single-host dev today. Frontend talks to the backend on `localhost`.                                     |
-| AXL sidecar                                              | 🔴 not yet     | `mcp-mesh` not built; AXL binary not run.                                                                |
-| Cloudflare Tunnel                                        | 🔴 not yet     | No public ingress.                                                                                       |
-| `mcp-deployer` / `mcp-wallet` / `mcp-terminal` in runner | 🔴 not yet     | The Dockerfile only copies `mcp-chain` + `mcp-compiler` into the image today.                            |
-| Preview supervisor + per-workspace dev server            | 🔴 not yet     | `previewUrl` is recorded as nullable but never populated.                                                |
+| Component                                              | Status         | Where                                                                                                                                                    |
+| :----------------------------------------------------- | :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Control plane                                          | ✅ implemented | `packages/backend` — Bun + Hono + Prisma on port `3000`. Spawns runners via the Docker socket directly.                                                  |
+| Workspace runner image                                 | ✅ implemented | `packages/backend/runtime/Dockerfile` → `crucible-runtime:latest`. Hosts `mcp-chain`, `mcp-compiler`, `mcp-deployer`, `mcp-wallet`, `mcp-memory`.        |
+| Per-workspace runner lifecycle                         | ✅ implemented | `packages/backend/src/lib/runtime-docker.ts` — create / start / inspect / stop / reconcile.                                                              |
+| Persistent volume                                      | ✅ implemented | Default bind mode at `${CRUCIBLE_WORKSPACES_ROOT}/<id>`; opt-in named volume `crucible-workspaces-data`.                                                 |
+| PostgreSQL metadata                                    | ✅ implemented | `workspace`, `workspace_runtime`, `walletAddress` + better-auth's user/session/account/verification. Workspace ↔ User is `NOT NULL` cascade-on-delete.   |
+| Better-auth (SIWE + Google)                            | ✅ implemented | `siwe` plugin verifies EIP-4361 signatures via viem; Google OAuth optional. Anonymous plugin removed. `requireSession` middleware gates every API route. |
+| `@crucible/agent`                                      | ✅ implemented | AI SDK v6 + `@ai-sdk/mcp createMCPClient`; tool dispatch over MCP; streams `message_delta` tokens onto the SSE bus.                                      |
+| `mcp-deployer` / `mcp-wallet` / `mcp-memory` in runner | ✅ implemented | Baked into the image; supervised by `entrypoint.sh`; reachable through `tool-exec.ts`.                                                                   |
+| Workspace listing UI (`/workspaces`)                   | ✅ implemented | `GET /api/workspaces` returns the user's workspaces; sidebar UI consumes it.                                                                             |
+| Gateway (Caddy / Traefik)                              | 🔴 not yet     | Single-host dev today. Frontend talks to the backend on `localhost:3000` (Vite proxy at `:5173`).                                                        |
+| AXL sidecar                                            | 🔴 not yet     | `mcp-mesh` not built; AXL binary not run.                                                                                                                |
+| Cloudflare Tunnel                                      | 🔴 not yet     | No public ingress.                                                                                                                                       |
+| `/ws/terminal` (browser PTY)                           | ✅ implemented | `docker exec` hijack in `pty-manager.ts`; `getOrCreatePtySession`; xterm.js v6 frontend bridge in `terminal-pane.svelte`.                                |
+| `mcp-terminal` (agent-callable, port 3106)             | 🔴 not yet     | Planned MCP wrapper around the same exec surface so the agent can call `exec` / `write` / `resize` as tools.                                             |
+| Preview supervisor + per-workspace dev server          | 🔴 not yet     | `previewUrl` is recorded as nullable but never populated.                                                                                                |
+| 0G Compute primary / OpenAI-compatible fallback        | 🟡 partial     | Agent runs against an OpenAI-compatible provider today. Inference router with degraded-mode banner not yet wired.                                        |
+| `mcp-memory` durable storage (0G Storage KV+Log)       | 🟡 partial     | In-runner server returns local results; 0G Storage adapter not wired.                                                                                    |
 
 The remainder of this document describes the **target** shape. New work should converge on it.
 

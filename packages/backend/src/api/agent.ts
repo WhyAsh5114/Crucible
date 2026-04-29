@@ -50,6 +50,12 @@ export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get
 
     const body = new ReadableStream({
       start(controller) {
+        // Push an immediate comment frame so proxies (Vite http-proxy, nginx)
+        // flush the response straight away. Without a first body chunk some
+        // proxies hold the response until 4 KiB accumulates, leaving the
+        // EventSource stuck before `onopen` fires.
+        controller.enqueue(encoder.encode(': connected\n\n'));
+
         // Keepalive: SSE comment frames every 15s so intermediaries don't close
         // idle connections.
         const keepalive = setInterval(() => {

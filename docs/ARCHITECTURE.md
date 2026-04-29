@@ -13,7 +13,7 @@ graph TD
         A -->|writes code| E[Code Editor - CodeMirror]
     S[Workspace Shell] -->|renders| P[Live dApp Preview]
         P --> T[Transaction Inspector]
-    A -->|logs + commands| TT[Terminal - wterm]
+    A -->|logs + commands| TT[Terminal - xterm.js]
     W[Embedded Dev Wallet] -->|approval state| S
     end
 
@@ -90,9 +90,21 @@ Internal MCP services still run on loopback ports. Portless is for the human-fac
 
 Yes. It gives Crucible readable local URLs, reduces port-collision noise during development, and makes it easier for both humans and agents to reason about service locations.
 
-### Use wterm
+### Terminal Rendering and PTY Backend
 
-Yes. `@wterm/react` gives us a proper terminal UI in the browser while keeping the actual shell session on the backend via `node-pty`.
+The frontend uses **xterm.js v6.0.0** with FitAddon for terminal UI and resize handling. The backend runs bash **inside the per-workspace Docker runtime container** via a raw HTTP/1.1 socket hijack to the Docker engine:
+
+1. Backend connects to `/var/run/docker.sock` via `net.Socket`
+2. Issues `POST /containers/{id}/exec` + `POST /exec/{id}/start` with `Upgrade: tcp`
+3. Docker responds with `101 Switching Protocols`, converting the socket to a raw TTY stream
+4. Terminal I/O flows directly through the upgraded socket — no `node-pty`, no daemon
+5. `exec.inspect()` on socket close yields the exit code
+
+This approach was chosen because:
+
+- Bun's process model cannot sustain interactive bash (SIGHUP on spawn)
+- dockerode's `hijack` mode hangs under Bun's Node compat layer
+- Raw socket with HTTP/1.1 handshake is a few dozen lines and avoids both bugs
 
 ### Use an OpenAI-Compatible Fallback
 
@@ -125,9 +137,11 @@ This section describes the real runtime on `main` today. The rest of this docume
 ```
                 ┌────────────────────────────────── Host (laptop / EC2) ──────────────────────────────────┐
                 │                                                                                          │
-  Browser ─────►│  Control plane (packages/backend, Bun + Hono)                                            │
-                │  • better-auth (anonymous + Google) ── Postgres (Prisma)                                 │
-                │  • REST: /api/workspace, /api/runtime, /api/agent/stream (SSE), /api/inference           │
+  Browser ─────►│  Control plane (packages/backend, Bun + Hono, port 3000)                                 │
+                │  • better-auth: SIWE (primary) + Google (optional) ── Postgres (Prisma)                  │
+                │  • @crucible/agent (AI SDK v6 + @ai-sdk/mcp) drives tool calls over MCP                  │
+                │  • REST: /api/workspace, /api/workspaces, /api/runtime,                                  │
+                │          /api/agent/stream (SSE, message_delta tokens), /api/inference                  │
                 │  • runtime-docker.ts ─── /var/run/docker.sock                                            │
                 │                            │                                                             │
                 │                            ▼   one per workspace, dynamic host port mapping              │
@@ -138,7 +152,8 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  │   • mcp-deployer (in-container 3102, host port published dynamically)    │            │
                 │  │   • mcp-wallet   (in-container 3103, host port published dynamically)    │            │
                 │  │   • mcp-memory   (in-container 3104, host port published dynamically)    │            │
-                │  │   • [planned] mcp-terminal 3106                                          │            │
+                │  │   • bash shell   (via docker exec hijack, TTY mode, shared user+agent)   │            │
+                │  │   • [planned] mcp-terminal 3106 (MCP wrapper for agent tool access)    │            │
                 │  └──────────────────────────────────────────────────────────────────────────┘            │
                 │                                                                                          │
                 │  Preview (per workspace, on host — NOT inside runner)                                    │
@@ -146,7 +161,8 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  • injects /__crucible/preview-bridge.js into preview origin before start               │
                 │  • persists previewUrl to workspace_runtime; frontend iframes it                         │
                 │                                                                                          │
-                │  Postgres ── workspace, workspace_runtime, user, session, account, verification          │
+                │  Postgres ── workspace, workspace_runtime, user, session, account, verification,         │
+                │              walletAddress (SIWE-bound EOAs)                                             │
                 │  Disk     ── ${CRUCIBLE_WORKSPACES_ROOT}/<id>/{contracts,frontend,.crucible/...}         │
                 └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -154,15 +170,17 @@ This section describes the real runtime on `main` today. The rest of this docume
 Boundaries that hold today:
 
 - **Browser ↔ control plane only.** No browser code knows about the runner container's host port.
-- **Control plane ↔ runner = HTTP over `127.0.0.1:<published>`.** Discovered from `docker inspect`, persisted in `workspace_runtime.{chainPort,compilerPort,...}`, recovered automatically after a runner restart.
+- **Control plane ↔ runner = HTTP over `127.0.0.1:<published>`.** Discovered from `docker inspect`, persisted in `workspace_runtime.{chainPort,compilerPort,deployerPort,walletPort,memoryPort,...}`, recovered automatically after a runner restart.
 - **One runner per workspace.** Hard isolation between workspaces; `tool_exec` on workspace A cannot reach workspace B.
 - **Workspace files on host disk.** Mounted into the runner. The runner is disposable; the volume is not.
 - **Auth in the control plane only.** The runner has no auth concept — it trusts loopback callers from the control plane. This is why the runner's host ports must stay bound to `127.0.0.1` (or a private overlay network) and never be exposed publicly.
+- **Workspaces are user-owned.** `Workspace.userId` is `NOT NULL` with `onDelete: Cascade`. `GET /api/workspace/:id` returns `404` (not `403`) for foreign IDs to avoid leaking existence. Centralized `requireSession` middleware in `lib/auth.ts` sets `c.get('userId')`.
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-terminal` — goes inside the runner image (workspace-scoped); PTY WebSocket endpoint is wired in the backend but the runner process and frontend UI bridge are still pending.
+- `mcp-terminal` (agent-callable MCP wrapper) — the WebSocket `/ws/terminal` PTY backend is shipped and working via `docker exec` hijack, and the xterm.js frontend bridge is wired in `terminal-pane.svelte`. The MCP server wrapper (port 3106) that allows the agent to call terminal tools (`exec`, `write`, `resize`) is still planned. Once added, it wraps the same in-container bash surface.
 - `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
+- `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` — control-plane HTTP client, never inside a runner.
 - Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
 
@@ -378,11 +396,11 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 
 ## WebSocket Channels
 
-| Channel                                               | Purpose                                                                                                                                             |
-| :---------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wss://crucible.localhost/ws/agent?streamId=<id>`     | Agent event stream — `AgentEvent` frames from backend to frontend                                                                                   |
-| `wss://crucible.localhost/ws/rpc`                     | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
-| `wss://crucible.localhost/ws/terminal?sessionId=<id>` | PTY stream — browser terminal input/output for the active workspace shell                                                                           |
+| Channel                                                 | Purpose                                                                                                                                             |
+| :------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wss://crucible.localhost/ws/agent?streamId=<id>`       | Agent event stream — `AgentEvent` frames from backend to frontend                                                                                   |
+| `wss://crucible.localhost/ws/rpc`                       | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
+| `wss://crucible.localhost/ws/terminal?workspaceId=<id>` | PTY stream — bash running inside the workspace's Docker runtime via `docker exec` hijack; bidirectional I/O for terminal input/output               |
 
 ---
 
