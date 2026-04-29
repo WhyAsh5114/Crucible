@@ -15,12 +15,7 @@
 
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import {
-  WorkspaceIdSchema,
-  AllowedRpcMethodSchema,
-  ApiErrorSchema,
-  ChainStateSchema,
-} from '@crucible/types';
+import { WorkspaceIdSchema, AllowedRpcMethodSchema, ApiErrorSchema } from '@crucible/types';
 import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
 import { requireSession } from '../lib/auth';
@@ -103,56 +98,14 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
   // Ownership check — treat foreign workspaces as 404 to avoid leaking IDs.
   const row = await prisma.workspace.findUnique({
     where: { id },
-    include: { runtime: true },
+    select: { userId: true, runtime: { select: { chainPort: true } } },
   });
   if (!row || row.userId !== userId) {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 
-  // Fast-path: eth_chainId is always available in the DB chainState (set when
-  // the chain container reports ready) and never changes for a local node.
-  if (method === 'eth_chainId') {
-    const chainState = ChainStateSchema.safeParse(row.runtime?.chainState);
-    const chainId = chainState.success ? `0x${chainState.data.chainId.toString(16)}` : '0x7a69'; // 31337 — Hardhat default; returned as best-effort before first state sync
-    return c.json({ result: chainId }, 200);
-  }
-
-  // Fast-path: eth_accounts / eth_requestAccounts — the funded accounts are
-  // stored in chainState once the Hardhat node has been started. If the node
-  // hasn't been started yet (chainState is null), auto-start it now so the
-  // preview dApp can connect without requiring an agent run first.
-  if (method === 'eth_accounts' || method === 'eth_requestAccounts') {
-    const chainState = ChainStateSchema.safeParse(row.runtime?.chainState);
-    if (chainState.success) {
-      return c.json({ result: chainState.data.accounts }, 200);
-    }
-    // chainState is null — node not started. Try to start it.
-    const chainPort = row.runtime?.chainPort;
-    if (!chainPort) {
-      return c.json({ result: [] }, 200);
-    }
-    const chainBase = `http://127.0.0.1:${chainPort}`;
-    const hostHdr = { Host: 'localhost' };
-    try {
-      await fetch(`${chainBase}/start_node`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...hostHdr },
-        body: '{}',
-      });
-      const stateRes = await fetch(`${chainBase}/state`, { headers: hostHdr });
-      if (stateRes.ok) {
-        const state = (await stateRes.json()) as { accounts?: string[] };
-        const accounts = Array.isArray(state.accounts) ? state.accounts : [];
-        return c.json({ result: accounts }, 200);
-      }
-    } catch {
-      // Container unreachable — return empty accounts
-    }
-    return c.json({ result: [] }, 200);
-  }
-
-  // All other methods: forward to the mcp-chain /json-rpc endpoint running
-  // inside the workspace's Docker container.
+  // Forward every method to the mcp-chain /json-rpc endpoint. mcp-chain owns
+  // the Hardhat node lifecycle (including auto-start) — rpc.ts is a pure proxy.
   const chainPort = row.runtime?.chainPort;
   if (!chainPort) {
     return c.json(createApiErrorBody('runtime_unavailable', 'Chain container is not running'), 503);
@@ -171,9 +124,19 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
     return c.json(createApiErrorBody('runtime_unavailable', 'Chain container is unreachable'), 503);
   }
 
-  const data = (await upstreamRes.json()) as
-    | { result: unknown }
-    | { error: { code: number; message: string } };
+  let data: { result: unknown } | { error: { code: number; message: string } };
+  try {
+    data = (await upstreamRes.json()) as typeof data;
+  } catch {
+    // mcp-chain returned a non-JSON body (e.g. unhandled panic).
+    return c.json(
+      createApiErrorBody(
+        'runtime_unavailable',
+        `Chain returned non-JSON response (HTTP ${upstreamRes.status})`,
+      ),
+      503,
+    );
+  }
 
   return c.json(data, 200);
 });
