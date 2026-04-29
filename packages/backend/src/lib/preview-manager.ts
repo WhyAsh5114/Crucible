@@ -12,7 +12,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import type { EventEmitter } from 'node:events';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   PREVIEW_BRIDGE_PROTOCOL,
@@ -57,7 +57,7 @@ function getFreePort(): Promise<number> {
 // Bridge injection
 // ---------------------------------------------------------------------------
 
-const BRIDGE_SCRIPT_TAG = `<script src="/__crucible/preview-bridge.js"></script>`;
+const LAUNCHER_PATH = fileURLToPath(new URL('./vite-preview-launcher.mjs', import.meta.url));
 
 /**
  * Generates the preview-bridge.js content as a plain IIFE (no bundler,
@@ -68,7 +68,7 @@ const BRIDGE_SCRIPT_TAG = `<script src="/__crucible/preview-bridge.js"></script>
  * ALLOWED_RPC_METHODS list from the types package without requiring a
  * separate build step.
  */
-function buildBridgeScript(): string {
+export function buildBridgeScript(): string {
   const allowedJson = JSON.stringify(ALLOWED_RPC_METHODS);
   return `\
 // preview-bridge.js — injected by Crucible into the workspace preview iframe.
@@ -87,6 +87,9 @@ function buildBridgeScript(): string {
   }
 
   function sendToShell(msg) {
+    // Phase 5 TODO: replace '*' with the exact shell origin once the
+    // subdomain preview model (preview.{workspaceId}.crucible.localhost)
+    // is implemented. See docs/ARCHITECTURE.md — "Dev Topology (Portless)".
     window.parent.postMessage(msg, '*');
   }
 
@@ -192,30 +195,6 @@ function buildBridgeScript(): string {
 `;
 }
 
-/**
- * Write `public/__crucible/preview-bridge.js` and ensure `index.html`
- * loads it as the first script in <head>. Called every time `startPreview`
- * runs so the bridge is always up to date — even on existing workspaces.
- */
-async function injectBridgeScript(frontendDir: string): Promise<void> {
-  const publicDir = path.join(frontendDir, 'public', '__crucible');
-  await mkdir(publicDir, { recursive: true });
-  await writeFile(path.join(publicDir, 'preview-bridge.js'), buildBridgeScript(), 'utf8');
-
-  const htmlPath = path.join(frontendDir, 'index.html');
-  let html: string;
-  try {
-    html = await readFile(htmlPath, 'utf8');
-  } catch {
-    // index.html doesn't exist yet — scaffold will create it; skip injection.
-    return;
-  }
-  if (!html.includes(BRIDGE_SCRIPT_TAG)) {
-    html = html.replace('<head>', `<head>\n    ${BRIDGE_SCRIPT_TAG}`);
-    await writeFile(htmlPath, html, 'utf8');
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -229,23 +208,38 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
   if (existing) return existing.previewUrl;
 
   const frontendDir = path.join(workspaceDir, 'frontend');
-
-  // Write/refresh the bridge script and patch index.html before spawning Vite
-  // so the dev server immediately serves the latest bridge on every start.
-  await injectBridgeScript(frontendDir);
-
   const port = await getFreePort();
   const previewUrl = `http://localhost:${port}`;
 
-  const vite = spawn(
-    'bun',
-    ['run', '--cwd', frontendDir, 'vite', '--port', String(port), '--host', '127.0.0.1'],
-    {
+  // Ensure the workspace frontend's dependencies are installed before starting
+  // Vite. `writeIfAbsent` only writes package.json — bun install is not run
+  // during scaffold, so node_modules may be absent on first launch.
+  await new Promise<void>((resolve, reject) => {
+    const install = spawn('bun', ['install'], {
       cwd: frontendDir,
-      env: { ...process.env, FORCE_COLOR: '0' },
       stdio: 'pipe',
+    });
+    (install as unknown as EventEmitter).on('exit', (code: number | null) => {
+      if (code === 0) resolve();
+      else reject(new Error(`bun install exited with code ${code}`));
+    });
+    (install as unknown as EventEmitter).on('error', reject);
+  });
+
+  // Spawn the launcher script which uses Vite's programmatic createServer() API.
+  // The bridge plugin is injected in-memory — no files are written into the
+  // workspace. Vite reads vite.config.ts from frontendDir (process.cwd) and
+  // merges the bridge plugin on top of whatever the workspace config defines.
+  const vite = spawn('bun', ['run', LAUNCHER_PATH], {
+    cwd: frontendDir,
+    env: {
+      ...process.env,
+      FORCE_COLOR: '0',
+      CRUCIBLE_BRIDGE_SCRIPT: buildBridgeScript(),
+      CRUCIBLE_VITE_PORT: String(port),
     },
-  );
+    stdio: 'pipe',
+  });
 
   (vite as unknown as EventEmitter).on('exit', () => {
     previews.delete(workspaceId);
