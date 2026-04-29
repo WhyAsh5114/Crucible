@@ -24,3 +24,4 @@ export * from './preview.ts';
 export * from './devtools.ts';
 
 export * as mcp from './mcp/index.ts';
+export type { McpToolsCallBody, McpResponseBody } from './mcp/index.ts';
