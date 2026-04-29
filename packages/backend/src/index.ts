@@ -4,6 +4,7 @@ import { upgradeWebSocket, websocket } from 'hono/bun';
 import { auth, requireSession } from './lib/auth';
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
+import { rpcApi } from './api/rpc';
 import { workspaceApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
@@ -50,6 +51,7 @@ app.use('/api/prompt', requireSession);
 const apiRoutes = app
   .route('/api', workspaceApi)
   .route('/api', runtimeApi)
+  .route('/api', rpcApi)
   .route('/api', agentApi)
   .route('/api', inferenceApi)
   .route('/', terminalApi);
