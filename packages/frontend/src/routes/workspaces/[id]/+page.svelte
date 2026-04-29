@@ -34,8 +34,11 @@
 	let pollWorkspaceId: string | null = null;
 
 	function workspaceIsBooted(ws: WorkspaceState | null): boolean {
-		// `previewUrl` is intentionally excluded — it depends on a not-yet-wired
-		// preview supervisor and would otherwise force polling forever.
+		// `previewUrl` is intentionally excluded: the preview supervisor is wired
+		// (startPreview is called from api/workspace.ts and api/runtime.ts), but
+		// `terminalSessionId` is not yet wired — so the poll never terminates on
+		// that criterion alone. `previewUrl` is therefore picked up passively
+		// during the 120s polling window rather than being a hard boot gate.
 		return Boolean(ws && ws.chainState && ws.terminalSessionId);
 	}
 
