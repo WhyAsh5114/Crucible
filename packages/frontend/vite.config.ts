@@ -4,6 +4,13 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
+	// xterm.js ships with `module` pointing at an .mjs but no `exports` field, so
+	// Vite's default resolver falls back to the CJS `main` and chokes on named
+	// imports. Pre-bundling them with esbuild produces an ESM façade that
+	// re-exports `Terminal` and `FitAddon` as named exports.
+	optimizeDeps: {
+		include: ['@xterm/xterm', '@xterm/addon-fit']
+	},
 	server: {
 		proxy: {
 			'/api': {
@@ -30,6 +37,11 @@ export default defineConfig({
 						}
 					});
 				}
+			},
+			'/ws': {
+				target: 'ws://localhost:3000',
+				ws: true,
+				changeOrigin: true
 			}
 		}
 	}
