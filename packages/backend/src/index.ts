@@ -1,5 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
+import { prisma } from './lib/prisma';
 import { upgradeWebSocket, websocket } from 'hono/bun';
 import { auth, requireSession } from './lib/auth';
 import { agentApi } from './api/agent';
@@ -66,6 +67,10 @@ export type AppType = typeof apiRoutes;
 // Bun's auto-serve uses a 10s idle timeout, which kills SSE streams before
 // the next keepalive ping. Use explicit Bun.serve and disable idle timeout
 // so long-lived `/api/agent/stream` connections stay open.
+// On startup, clear any stale previewUrls left over from a previous process.
+// They point to Vite servers that no longer exist after a restart.
+prisma.workspaceRuntime.updateMany({ data: { previewUrl: null } }).catch(() => undefined);
+
 const port = Number(process.env['PORT'] ?? 3000);
 export default {
   port,
