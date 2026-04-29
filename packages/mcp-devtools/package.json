@@ -1,0 +1,29 @@
+{
+  "name": "@crucible/mcp-devtools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "In-container devtools event stream server.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "portless --name devtools.crucible --app-port 3107 bun run --hot src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "echo 'Bun runtime - no compile step'",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "echo 'no tests in @crucible/mcp-devtools'"
+  },
+  "dependencies": {
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.6",
+    "typescript": "^5.7.3"
+  }
+}
