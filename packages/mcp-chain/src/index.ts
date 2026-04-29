@@ -27,7 +27,7 @@ import {
   ForkInputSchema,
   ForkOutputSchema,
 } from '@crucible/types/mcp/chain';
-import { startNode, requireNode, rpc } from './node-manager.ts';
+import { startNode, getNode, requireNode, rpc } from './node-manager.ts';
 import { createChainServer } from './server.ts';
 
 const PORT = process.env['CHAIN_MCP_PORT']
@@ -374,14 +374,19 @@ app.post('/json-rpc', async (c) => {
       400,
     );
   }
-  let node;
-  try {
-    node = requireNode(WORKSPACE_ID);
-  } catch {
-    return c.json(
-      { error: { code: -32000, message: 'No active node — call start_node first' } },
-      503,
-    );
+  // Auto-start the node on first request so the preview dApp works without
+  // requiring an explicit agent start_node call.
+  let node = getNode(WORKSPACE_ID);
+  if (!node) {
+    try {
+      node = await startNode(WORKSPACE_ID, {});
+    } catch (err) {
+      console.error(`[mcp-chain] /json-rpc auto-start failed: ${String(err)}`);
+      return c.json(
+        { error: { code: -32000, message: `Failed to start node: ${String(err)}` } },
+        503,
+      );
+    }
   }
   try {
     const result = await rpc(node.rpcUrl, parsed.data.method, parsed.data.params);
