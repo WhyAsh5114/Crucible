@@ -82,7 +82,7 @@ In production, the main app must **not** reach across the iframe boundary and mu
 
 ### The Terminal Is a First-Class Part of the Product
 
-Crucible includes a real PTY-backed terminal, rendered in the browser with **wterm** and powered by a backend shell session.
+Crucible includes a real PTY-backed terminal, rendered in the browser with **xterm.js** and powered by a bash shell running inside the workspace's Docker runtime container via a raw socket hijack to the Docker engine.
 
 - The agent writes visible output to the terminal when it compiles, deploys, traces, or patches code.
 - The user can intervene with manual commands in the same terminal session.
@@ -183,7 +183,7 @@ When the user is satisfied with the local build, they click **Ship**. This is th
 | **MCP SDK**              | `@modelcontextprotocol/sdk`                     | HTTP transport, Zod-validated tools                                                               |
 | **Frontend**             | SvelteKit 2.x                                   | Reactive stores for agent event streaming                                                         |
 | **Editor**               | CodeMirror 6.x                                  | `@codemirror/lang-solidity`                                                                       |
-| **Terminal UI**          | `@wterm/react` + `node-pty`                     | Browser-rendered terminal backed by a real PTY session                                            |
+| **Terminal UI**          | xterm.js v6.0.0 (browser) + docker exec (backend) | Real PTY via Docker hijack; bash runs inside workspace runtime container, I/O over WebSocket       |
 | **Chain libraries**      | viem 2.x                                        | Full TS types for ABIs, actions, accounts                                                         |
 | **Local chain**          | Hardhat 2.22+                                   | Fork, snapshots, `hardhat_getTransactionTrace`                                                    |
 | **Solidity compiler**    | solc-js 0.8.x                                   | Backend-only, never in browser                                                                    |
