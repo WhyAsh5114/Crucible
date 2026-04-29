@@ -223,6 +223,20 @@ async function ensureWorkspaceVolumeExists(): Promise<void> {
 
 // --- Public API ---
 
+/**
+ * Resolve the dockerode `Container` handle for a workspace, reusing the
+ * file-local `docker` singleton. Used by `pty-manager.ts` to attach a TTY-mode
+ * `exec` for the terminal session — the container itself is not started or
+ * inspected by this call.
+ */
+export function getRuntimeContainer(workspaceId: string): Docker.Container {
+  return docker.getContainer(runtimeContainerName(workspaceId));
+}
+
+export function getRuntimeContainerName(workspaceId: string): string {
+  return runtimeContainerName(workspaceId);
+}
+
 export async function getWorkspaceContainerState(
   workspaceId: string,
 ): Promise<WorkspaceContainerState> {
