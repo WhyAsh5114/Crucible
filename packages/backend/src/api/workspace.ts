@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
 import { ensureWorkspaceContainer } from '../lib/runtime-docker';
-import { startPreview } from '../lib/preview-manager';
+import { startPreview, getPreviewUrl } from '../lib/preview-manager';
 import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
 import { requireSession } from '../lib/auth';
 
@@ -286,12 +286,21 @@ export const workspaceApi = workspaceApiBase
     const deployments = DeploymentRecordSchema.array().safeParse(row.deployments);
     const files = await collectWorkspaceFiles(row.directoryPath || workspaceHostPath(row.id));
 
+    // If the runtime is ready but no preview is running (e.g. backend restarted
+    // and lost the in-memory Map, or the process crashed), re-launch it now.
+    const directoryPath = row.directoryPath || workspaceHostPath(row.id);
+    if (row.runtime?.status === 'ready' && !getPreviewUrl(id)) {
+      void startPreview(id, directoryPath).catch((err) => {
+        console.warn(`[workspace ${id}] preview auto-restart failed:`, err);
+      });
+    }
+
     const response = WorkspaceGetResponseSchema.parse({
       files,
       id: row.id,
       name: row.name,
       createdAt: row.createdAt.getTime(),
-      previewUrl: row.runtime?.previewUrl ?? null,
+      previewUrl: getPreviewUrl(id) ?? row.runtime?.previewUrl ?? null,
       chainState: chainState.success ? chainState.data : null,
       deployments: deployments.success ? deployments.data : [],
       terminalSessionId: row.runtime?.terminalSessionId ?? null,
