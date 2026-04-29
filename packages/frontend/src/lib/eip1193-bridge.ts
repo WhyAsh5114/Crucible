@@ -129,12 +129,19 @@ async function handleRpcRequest(
 
 		const data = (await res.json()) as
 			| { result: unknown }
-			| { error: { code: number; message: string } };
+			| { error: { code: number; message: string } }
+			| { code: string; message: string };
 
-		if ('error' in data) {
+		if (!res.ok) {
+			// Non-2xx from the backend (e.g. 503 chain not running, 404 workspace
+			// not found). The body uses ApiError format { code, message }, not
+			// JSON-RPC error format { error: { code, message } }.
+			const apiErr = data as { message?: string };
+			reply({ ok: false, code: -32603, message: apiErr.message ?? `HTTP ${res.status}` });
+		} else if ('error' in data) {
 			reply({ ok: false, code: data.error.code, message: data.error.message });
 		} else {
-			reply({ ok: true, result: data.result });
+			reply({ ok: true, result: (data as { result: unknown }).result });
 		}
 	} catch (err) {
 		reply({ ok: false, code: -32603, message: String(err) });
