@@ -18,7 +18,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp } from '@crucible/types';
+import { mcp, createDevtoolsReporter } from '@crucible/types';
 import {
   RecallInputSchema,
   RememberInputSchema,
@@ -33,6 +33,7 @@ const PORT = process.env['MEMORY_MCP_PORT']
   : mcp.DEFAULT_MCP_PORTS.memory;
 
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+const devtools = createDevtoolsReporter('memory');
 
 console.log(`[mcp-memory] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT})`);
 
@@ -175,6 +176,71 @@ app.use('*', async (c, next) => {
   const status = c.res?.status ?? 0;
   const logFn = status >= 500 ? console.error : status >= 400 ? console.warn : console.log;
   logFn(`[mcp-memory] ← ${status} (${ms}ms)`);
+});
+
+function memoryToolForPath(path: string): string | null {
+  if (path === '/recall') return 'recall';
+  if (path === '/remember') return 'remember';
+  if (path === '/patterns') return 'list_patterns';
+  if (path.startsWith('/provenance/')) return 'provenance';
+  return null;
+}
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  let tool = memoryToolForPath(path);
+  let args: unknown = {};
+
+  if (path === '/mcp') {
+    const body: any = c.get('parsedBody');
+    if (body?.method === 'tools/call' && body?.params?.name) {
+      tool = body.params.name;
+      args = body.params.arguments ?? {};
+    }
+  } else if (tool) {
+    args = c.req.method === 'GET' ? {} : c.get('parsedBody');
+  }
+
+  if (!tool) {
+    await next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  void devtools.emitToolCall(tool, args ?? {});
+  await next();
+
+  const durationMs = Date.now() - startedAt;
+  const ok = (c.res?.status ?? 500) < 400;
+  let result: unknown = { status: c.res?.status ?? 0 };
+
+  try {
+    const json: any = await c.res.clone().json();
+    if (path === '/mcp') {
+      if (json?.result) {
+        if (json.result.structuredContent) {
+          result = json.result.structuredContent;
+        } else if (json.result.content?.[0]?.text) {
+          try {
+            result = JSON.parse(json.result.content[0].text);
+          } catch {
+            result = json.result;
+          }
+        } else {
+          result = json.result;
+        }
+      } else if (json?.error) {
+        result = json.error;
+      } else {
+        result = json;
+      }
+    } else {
+      result = json;
+    }
+  } catch {
+    // Non-JSON responses still get traced with status.
+  }
+  void devtools.emitToolResult(tool, ok, result, durationMs);
 });
 
 app.openapi(recallRoute, async (c) => {

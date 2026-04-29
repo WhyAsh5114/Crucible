@@ -19,7 +19,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp } from '@crucible/types';
+import { mcp, createDevtoolsReporter } from '@crucible/types';
 import {
   ListAccountsInputSchema,
   GetBalanceInputSchema,
@@ -36,6 +36,7 @@ const PORT = process.env['WALLET_MCP_PORT']
 
 const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+const devtools = createDevtoolsReporter('wallet');
 
 console.log(
   `[mcp-wallet] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL})`,
@@ -181,6 +182,72 @@ app.use('*', async (c, next) => {
   const status = c.res?.status ?? 0;
   const logFn = status >= 500 ? console.error : status >= 400 ? console.warn : console.log;
   logFn(`[mcp-wallet] ← ${status} (${ms}ms)`);
+});
+
+function walletToolForPath(path: string): string | null {
+  if (path === '/accounts') return 'list_accounts';
+  if (path.startsWith('/balance/')) return 'get_balance';
+  if (path === '/sign_tx') return 'sign_tx';
+  if (path === '/send_tx_local') return 'send_tx_local';
+  if (path === '/switch_account') return 'switch_account';
+  return null;
+}
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  let tool = walletToolForPath(path);
+  let args: unknown = {};
+
+  if (path === '/mcp') {
+    const body: any = c.get('parsedBody');
+    if (body?.method === 'tools/call' && body?.params?.name) {
+      tool = body.params.name;
+      args = body.params.arguments ?? {};
+    }
+  } else if (tool) {
+    args = c.req.method === 'GET' ? {} : c.get('parsedBody');
+  }
+
+  if (!tool) {
+    await next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  void devtools.emitToolCall(tool, args ?? {});
+  await next();
+
+  const durationMs = Date.now() - startedAt;
+  const ok = (c.res?.status ?? 500) < 400;
+  let result: unknown = { status: c.res?.status ?? 0 };
+
+  try {
+    const json: any = await c.res.clone().json();
+    if (path === '/mcp') {
+      if (json?.result) {
+        if (json.result.structuredContent) {
+          result = json.result.structuredContent;
+        } else if (json.result.content?.[0]?.text) {
+          try {
+            result = JSON.parse(json.result.content[0].text);
+          } catch {
+            result = json.result;
+          }
+        } else {
+          result = json.result;
+        }
+      } else if (json?.error) {
+        result = json.error;
+      } else {
+        result = json;
+      }
+    } else {
+      result = json;
+    }
+  } catch {
+    // Non-JSON responses still get traced with status.
+  }
+  void devtools.emitToolResult(tool, ok, result, durationMs);
 });
 
 app.openapi(listAccountsRoute, async (c) => {
