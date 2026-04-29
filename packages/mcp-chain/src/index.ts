@@ -151,6 +151,22 @@ const mcpServer = createChainServer(WORKSPACE_ID, {
 
 type Env = { Variables: { parsedBody: unknown } };
 
+type McpToolsCallBody = {
+  method?: string;
+  params?: {
+    name?: string;
+    arguments?: unknown;
+  };
+};
+
+type McpResponseBody = {
+  result?: {
+    structuredContent?: unknown;
+    content?: Array<{ text?: string }>;
+  };
+  error?: unknown;
+};
+
 const transport = new WebStandardStreamableHTTPServerTransport();
 await mcpServer.connect(transport);
 
@@ -210,7 +226,7 @@ app.use('*', async (c, next) => {
   let args: unknown = {};
 
   if (path === '/mcp') {
-    const body: any = c.get('parsedBody');
+    const body = c.get('parsedBody') as McpToolsCallBody | undefined;
     if (body?.method === 'tools/call' && body?.params?.name) {
       tool = body.params.name;
       args = body.params.arguments ?? {};
@@ -233,7 +249,7 @@ app.use('*', async (c, next) => {
   let result: unknown = { status: c.res?.status ?? 0 };
 
   try {
-    const json: any = await c.res.clone().json();
+    const json = (await c.res.clone().json()) as McpResponseBody;
     if (path === '/mcp') {
       if (json?.result) {
         if (json.result.structuredContent) {
