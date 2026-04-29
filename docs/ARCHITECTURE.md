@@ -59,8 +59,8 @@ graph TD
     FS --- M3
     FS --- V
     FS --- PTY
-    P -->|EIP-1193 bridge| S
-    S -->|RPC via WebSocket proxy| N
+    P -->|EIP-1193 bridge postMessage| S
+    S -->|POST /workspace/:id/rpc via control plane| N
     V -->|workspace preview URL| P
     PTY -->|terminal WebSocket| TT
     N --- M1
@@ -155,6 +155,11 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  │   • [planned] mcp-terminal 3106 (MCP wrapper for agent tool access)    │            │
                 │  └──────────────────────────────────────────────────────────────────────────┘            │
                 │                                                                                          │
+                │  Preview (per workspace, on host — NOT inside runner)                                    │
+                │  • preview-manager.ts: spawns `vite dev` for <workspaceDir>/frontend/                   │
+                │  • injects /__crucible/preview-bridge.js into preview origin before start               │
+                │  • persists previewUrl to workspace_runtime; frontend iframes it                         │
+                │                                                                                          │
                 │  Postgres ── workspace, workspace_runtime, user, session, account, verification,         │
                 │              walletAddress (SIWE-bound EOAs)                                             │
                 │  Disk     ── ${CRUCIBLE_WORKSPACES_ROOT}/<id>/{contracts,frontend,.crucible/...}         │
@@ -172,12 +177,72 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-terminal` (agent-callable MCP wrapper) — the WebSocket `/ws/terminal` PTY backend is shipped and working via `docker exec` hijack, but the MCP server wrapper (port 3106) that allows the agent to call terminal tools (`exec`, `write`, `resize`) is still planned. Once added, it wraps the same in-container bash surface.
+- `mcp-terminal` (agent-callable MCP wrapper) — the WebSocket `/ws/terminal` PTY backend is shipped and working via `docker exec` hijack, and the xterm.js frontend bridge is wired in `terminal-pane.svelte`. The MCP server wrapper (port 3106) that allows the agent to call terminal tools (`exec`, `write`, `resize`) is still planned. Once added, it wraps the same in-container bash surface.
 - `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
 - `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` — control-plane HTTP client, never inside a runner.
-- Preview gateway + per-workspace dev server — preview origin lives behind a separate gateway hostname; the dev server runs inside the runner image as another supervised process.
-- 0G Compute as the primary inference path with visible degraded-mode banner (today the agent uses an OpenAI-compatible provider).
+- Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
+
+---
+
+## Preview Isolation and Wallet Bridge
+
+The preview pane renders the workspace's Vite dev server in an `<iframe>`. For the dApp preview to be interactive (send transactions, call contracts), `window.ethereum` inside the iframe must point at the local Hardhat node. Because the iframe may run on a different origin from the shell (and will on a subdomain once the portless gateway lands), the connection goes through a three-layer postMessage bridge.
+
+### Layer 1 — Bridge Script (preview origin)
+
+`preview-manager.ts → buildBridgeScript()` generates a plain JavaScript IIFE (no bundler, no imports) that is written to `<workspaceDir>/frontend/public/__crucible/preview-bridge.js` and injected as the first `<script>` in `index.html` before each Vite dev server starts. The script:
+
+- Replaces `window.ethereum` with an EIP-1193 provider that forwards `request()` calls over `postMessage` to the parent shell.
+- Validates every incoming message against `protocol: 'crucible-preview-bridge'` + `version: 1` before acting.
+- Announces itself via **EIP-6963** (`eip6963:announceProvider`) so wagmi/viem discover "Crucible" instead of falling back to MetaMask.
+- Sends a `hello` frame on `DOMContentLoaded` to kick off the handshake.
+- Enforces `ALLOWED_RPC_METHODS` client-side — disallowed methods are rejected immediately without a round-trip.
+
+### Layer 2 — Shell Handler (parent window)
+
+`packages/frontend/src/lib/eip1193-bridge.ts → createEip1193Bridge()`:
+
+- Listens for `message` events; drops any that did not originate from `iframeEl.contentWindow`.
+- Parses every frame with `PreviewBridgeMessageSchema` (Zod discriminated union) — malformed frames are silently dropped.
+- Responds to `hello` with `hello_ack` carrying the current `chainId` (default `0x7a69` before first chain sync) so the preview can emit `chainChanged` immediately without a round-trip.
+- Forwards `rpc_request` frames to `POST /api/workspace/:id/rpc` with `credentials: 'include'`.
+- Posts `rpc_response` back to the iframe using **the exact `e.origin`** from the original message — never `'*'`.
+
+### Layer 3 — Backend RPC Endpoint
+
+`packages/backend/src/api/rpc.ts → POST /workspace/:id/rpc`:
+
+- Requires a valid session (enforced by `requireSession` middleware).
+- Verifies workspace ownership (foreign workspaces return 404 to avoid ID leakage).
+- Validates `method` against `AllowedRpcMethodSchema` — disallowed methods return 400 before hitting the chain.
+- **Fast-paths** `eth_chainId`, `eth_accounts`, and `eth_requestAccounts` from DB `chainState` without a container round-trip; auto-starts the node on first `eth_requestAccounts` if `chainState` is null.
+- Proxies all other methods to `http://127.0.0.1:{chainPort}/json-rpc` inside the workspace runner (mcp-chain), which validates and forwards to Hardhat.
+
+### Protocol Reference
+
+All frames use the `crucible-preview-bridge` v1 envelope defined in `packages/types/src/preview.ts`. Message types:
+
+| Direction       | Type           | Purpose                                      |
+| :-------------- | :------------- | :------------------------------------------- |
+| preview → shell | `hello`        | Announce; kicks off handshake                |
+| shell → preview | `hello_ack`    | Reply with negotiated `chainId`              |
+| preview → shell | `rpc_request`  | EIP-1193 `request()` call                    |
+| shell → preview | `rpc_response` | Result or error from the chain               |
+| preview → shell | `subscribe`    | Request EIP-1193 event forwarding (Phase 1+) |
+| shell → preview | `event`        | Push `accountsChanged`, `chainChanged`, etc. |
+
+### Security Properties
+
+- Origin check: reply `targetOrigin` is always the exact `e.origin` from the incoming frame.
+- Source check: `e.source !== iframeEl.contentWindow` drops messages from any other window.
+- Allowlist enforced independently at three points: bridge IIFE, shell handler (schema), and backend route.
+- No `hardhat_*` or `debug_*` methods are in `ALLOWED_RPC_METHODS`.
+- Auth gate on the backend ensures another browser tab cannot call `/workspace/:id/rpc` without a valid session and ownership.
+
+### Phase 5 Note
+
+Once the portless Caddy gateway is live (`preview.<id>.crucible.localhost`), the IIFE's `sendToShell` call must be updated from `postMessage(msg, '*')` to `postMessage(msg, SHELL_ORIGIN)` where `SHELL_ORIGIN` is the known shell origin. The exact line is marked with a `// Phase 5 TODO` comment in `preview-manager.ts`.
 
 ---
 
