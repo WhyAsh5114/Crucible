@@ -63,7 +63,7 @@
 
 ### POV-1 Success Gate
 
-- [ ] End-to-end: user prompts → agent writes files → compile → deploy → preview loads → user clicks button in preview
+- [x] End-to-end: user prompts → agent writes files → compile → deploy → preview loads → user clicks button in preview
 
 ---
 

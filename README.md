@@ -173,26 +173,26 @@ When the user is satisfied with the local build, they click **Ship**. This is th
 
 ## Tech Stack
 
-| Layer                    | Choice                                          | Notes                                                                                             |
-| :----------------------- | :---------------------------------------------- | :------------------------------------------------------------------------------------------------ |
-| **Runtime**              | Bun 1.3.x                                       | Native TS execution, no build step; Hardhat is the only exception (spawned via `node`)            |
-| **Language**             | TypeScript 6.x                                  | Bun runs `.ts` directly                                                                           |
-| **Build orchestration**  | Turborepo 2.x                                   | Task graph, remote cache                                                                          |
-| **Local DX routing**     | Portless                                        | Stable `.localhost` URLs instead of hardcoded ports                                               |
-| **Backend HTTP/WS**      | Hono 4.x (Bun adapter)                          | Built-in WS upgrade via `hono/ws`                                                                 |
-| **MCP SDK**              | `@modelcontextprotocol/sdk`                     | HTTP transport, Zod-validated tools                                                               |
-| **Frontend**             | SvelteKit 2.x                                   | Reactive stores for agent event streaming                                                         |
-| **Editor**               | CodeMirror 6.x                                  | `@codemirror/lang-solidity`                                                                       |
-| **Terminal UI**          | xterm.js v6.0.0 (browser) + docker exec (backend) | Real PTY via Docker hijack; bash runs inside workspace runtime container, I/O over WebSocket       |
-| **Chain libraries**      | viem 2.x                                        | Full TS types for ABIs, actions, accounts                                                         |
-| **Local chain**          | Hardhat 2.22+                                   | Fork, snapshots, `hardhat_getTransactionTrace`                                                    |
-| **Solidity compiler**    | solc-js 0.8.x                                   | Backend-only, never in browser                                                                    |
-| **Inference**            | 0G Compute primary + OpenAI-compatible fallback | 0G is the default/judged path with verifiable receipts; fallback is for degraded public beta only |
-| **Persistent memory**    | 0G Storage (KV + Log)                           | KV = recall index; Log = full history                                                             |
-| **Peer mesh**            | Gensyn AXL node binary                          | Separate process per backend instance                                                             |
-| **Production execution** | KeeperHub MCP                                   | Only public-chain path, no exceptions                                                             |
-| **Validation**           | Zod 3.x                                         | All MCP tool args + HTTP request bodies                                                           |
-| **Testing**              | Vitest 4.x                                      | ESM, viem, SvelteKit compatible                                                                   |
+| Layer                    | Choice                                            | Notes                                                                                             |
+| :----------------------- | :------------------------------------------------ | :------------------------------------------------------------------------------------------------ |
+| **Runtime**              | Bun 1.3.x                                         | Native TS execution, no build step; Hardhat is the only exception (spawned via `node`)            |
+| **Language**             | TypeScript 6.x                                    | Bun runs `.ts` directly                                                                           |
+| **Build orchestration**  | Turborepo 2.x                                     | Task graph, remote cache                                                                          |
+| **Local DX routing**     | Portless                                          | Stable `.localhost` URLs instead of hardcoded ports                                               |
+| **Backend HTTP/WS**      | Hono 4.x (Bun adapter)                            | Built-in WS upgrade via `hono/ws`                                                                 |
+| **MCP SDK**              | `@modelcontextprotocol/sdk`                       | HTTP transport, Zod-validated tools                                                               |
+| **Frontend**             | SvelteKit 2.x                                     | Reactive stores for agent event streaming                                                         |
+| **Editor**               | CodeMirror 6.x                                    | `@codemirror/lang-solidity`                                                                       |
+| **Terminal UI**          | xterm.js v6.0.0 (browser) + docker exec (backend) | Real PTY via Docker hijack; bash runs inside workspace runtime container, I/O over WebSocket      |
+| **Chain libraries**      | viem 2.x                                          | Full TS types for ABIs, actions, accounts                                                         |
+| **Local chain**          | Hardhat 2.22+                                     | Fork, snapshots, `hardhat_getTransactionTrace`                                                    |
+| **Solidity compiler**    | solc-js 0.8.x                                     | Backend-only, never in browser                                                                    |
+| **Inference**            | 0G Compute primary + OpenAI-compatible fallback   | 0G is the default/judged path with verifiable receipts; fallback is for degraded public beta only |
+| **Persistent memory**    | 0G Storage (KV + Log)                             | KV = recall index; Log = full history                                                             |
+| **Peer mesh**            | Gensyn AXL node binary                            | Separate process per backend instance                                                             |
+| **Production execution** | KeeperHub MCP                                     | Only public-chain path, no exceptions                                                             |
+| **Validation**           | Zod 3.x                                           | All MCP tool args + HTTP request bodies                                                           |
+| **Testing**              | Vitest 4.x                                        | ESM, viem, SvelteKit compatible                                                                   |
 
 We intentionally do **not** run the programming runtime inside WebContainers. Hardhat tracing, long-lived chain state, and the AXL node all require real backend-managed processes. The browser renders the development surface; the backend owns the runtime.
 

@@ -101,6 +101,7 @@ The frontend uses **xterm.js v6.0.0** with FitAddon for terminal UI and resize h
 5. `exec.inspect()` on socket close yields the exit code
 
 This approach was chosen because:
+
 - Bun's process model cannot sustain interactive bash (SIGHUP on spawn)
 - dockerode's `hijack` mode hangs under Bun's Node compat layer
 - Raw socket with HTTP/1.1 handshake is a few dozen lines and avoids both bugs
@@ -395,11 +396,11 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 
 ## WebSocket Channels
 
-| Channel                                               | Purpose                                                                                                                                             |
-| :---------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wss://crucible.localhost/ws/agent?streamId=<id>`     | Agent event stream — `AgentEvent` frames from backend to frontend                                                                                   |
-| `wss://crucible.localhost/ws/rpc`                     | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
-| `wss://crucible.localhost/ws/terminal?workspaceId=<id>` | PTY stream — bash running inside the workspace's Docker runtime via `docker exec` hijack; bidirectional I/O for terminal input/output             |
+| Channel                                                 | Purpose                                                                                                                                             |
+| :------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wss://crucible.localhost/ws/agent?streamId=<id>`       | Agent event stream — `AgentEvent` frames from backend to frontend                                                                                   |
+| `wss://crucible.localhost/ws/rpc`                       | Shell-owned Ethereum JSON-RPC proxy (EIP-1193) — the parent app connects here and forwards validated preview requests to the workspace Hardhat node |
+| `wss://crucible.localhost/ws/terminal?workspaceId=<id>` | PTY stream — bash running inside the workspace's Docker runtime via `docker exec` hijack; bidirectional I/O for terminal input/output               |
 
 ---
 
