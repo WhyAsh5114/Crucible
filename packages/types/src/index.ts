@@ -21,5 +21,6 @@ export * from './api.ts';
 export * from './agent-events.ts';
 export * from './runtime.ts';
 export * from './preview.ts';
+export * from './devtools.ts';
 
 export * as mcp from './mcp/index.ts';
