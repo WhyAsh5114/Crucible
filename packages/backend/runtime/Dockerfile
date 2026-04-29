@@ -14,7 +14,7 @@ FROM oven/bun:1.3.6 AS base
 
 # git is required by hardhat's solc compiler downloads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates \
+        git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,6 +29,7 @@ COPY packages/mcp-compiler/package.json packages/mcp-compiler/
 COPY packages/mcp-deployer/package.json packages/mcp-deployer/
 COPY packages/mcp-wallet/package.json packages/mcp-wallet/
 COPY packages/mcp-memory/package.json packages/mcp-memory/
+COPY packages/mcp-devtools/package.json packages/mcp-devtools/
 
 RUN bun install --frozen-lockfile || bun install
 
@@ -39,6 +40,7 @@ COPY packages/mcp-compiler ./packages/mcp-compiler
 COPY packages/mcp-deployer ./packages/mcp-deployer
 COPY packages/mcp-wallet ./packages/mcp-wallet
 COPY packages/mcp-memory ./packages/mcp-memory
+COPY packages/mcp-devtools ./packages/mcp-devtools
 
 # /workspace is the per-workspace bind mount target.
 WORKDIR /workspace
@@ -52,10 +54,11 @@ ENV CHAIN_MCP_PORT=3100 \
     WALLET_MCP_PORT=3103 \
     MEMORY_MCP_PORT=3104 \
     TERMINAL_MCP_PORT=3105 \
+    DEVTOOLS_MCP_PORT=3107 \
     WORKSPACE_ROOT=/workspace \
     ALLOWED_HOSTS=host.docker.internal
 
-EXPOSE 3100 3101 3102 3103 3104 3105
+EXPOSE 3100 3101 3102 3103 3104 3105 3107
 
 COPY packages/backend/runtime/entrypoint.sh /usr/local/bin/crucible-runtime-entrypoint
 RUN chmod +x /usr/local/bin/crucible-runtime-entrypoint

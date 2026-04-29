@@ -15,6 +15,22 @@ mkdir -p contracts frontend .crucible/artifacts .crucible/logs
 
 log() { echo "[runtime] $*"; }
 
+emit_container_event() {
+    local subtype="$1"
+    local message="$2"
+    local ts
+    ts=$(date +%s%3N)
+    local payload
+    payload=$(printf '{"type":"container","ts":%s,"subtype":"%s","message":"%s"}' "$ts" "$subtype" "$message")
+    curl -sS -X POST "http://127.0.0.1:${DEVTOOLS_MCP_PORT}/event" \
+        -H 'content-type: application/json' \
+        -d "$payload" >/dev/null 2>&1 || true
+}
+
+log "starting mcp-devtools on port ${DEVTOOLS_MCP_PORT}"
+bun run --cwd /app/packages/mcp-devtools start &
+devtools_pid=$!
+
 # Run both servers as background jobs so we can supervise them. We rely on
 # Bun's hot-restart-free `start` script in each package.
 log "starting mcp-chain on port ${CHAIN_MCP_PORT}"
@@ -36,25 +52,28 @@ wallet_pid=$!
 log "starting mcp-memory on port ${MEMORY_MCP_PORT}"
 bun run --cwd /app/packages/mcp-memory start &
 memory_pid=$!
+emit_container_event "runtime_start" "services booted"
 
 shutdown() {
     log "received shutdown — terminating services"
-    kill -TERM "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
-    wait "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+    emit_container_event "runtime_shutdown" "received shutdown signal"
+    kill -TERM "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+    wait "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
     exit 0
 }
 trap shutdown TERM INT
 
 # If any service exits, propagate the failure to the container.
 while true; do
-    for pair in "chain_pid:mcp-chain" "compiler_pid:mcp-compiler" "deployer_pid:mcp-deployer" "wallet_pid:mcp-wallet" "memory_pid:mcp-memory"; do
+    for pair in "devtools_pid:mcp-devtools" "chain_pid:mcp-chain" "compiler_pid:mcp-compiler" "deployer_pid:mcp-deployer" "wallet_pid:mcp-wallet" "memory_pid:mcp-memory"; do
         varname="${pair%%:*}"
         label="${pair##*:}"
         eval pid=\$$varname
         if ! kill -0 "${pid}" 2>/dev/null; then
             log "${label} exited unexpectedly" >&2
-            kill -TERM "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
-            wait "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+            emit_container_event "service_crash" "${label} exited unexpectedly"
+            kill -TERM "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
+            wait "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" 2>/dev/null || true
             exit 1
         fi
     done
