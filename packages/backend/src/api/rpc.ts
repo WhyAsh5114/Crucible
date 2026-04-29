@@ -138,7 +138,7 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
   try {
     upstreamRes = await fetch(chainUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', Host: 'localhost' },
       body: JSON.stringify({ method, params }),
     });
   } catch (err) {
