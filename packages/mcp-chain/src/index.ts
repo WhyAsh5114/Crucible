@@ -16,7 +16,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp, encodeBigInt } from '@crucible/types';
+import { mcp, encodeBigInt, AllowedRpcMethodSchema } from '@crucible/types';
 import {
   StartNodeInputSchema,
   StartNodeOutputSchema,
@@ -27,7 +27,7 @@ import {
   ForkInputSchema,
   ForkOutputSchema,
 } from '@crucible/types/mcp/chain';
-import { startNode, requireNode, rpc } from './node-manager.ts';
+import { startNode, getNode, requireNode, rpc } from './node-manager.ts';
 import { createChainServer } from './server.ts';
 
 const PORT = process.env['CHAIN_MCP_PORT']
@@ -316,7 +316,7 @@ app.openapi(forkRoute, async (c) => {
 });
 
 // JSON-RPC proxy — forwards raw JSON-RPC requests to the active Hardhat node.
-// mcp-wallet and mcp-deployer use this as their CHAIN_RPC_URL (port 3100/rpc).
+// Used internally by mcp-wallet and mcp-deployer (CHAIN_RPC_URL → port 3100/rpc).
 app.post('/rpc', async (c) => {
   let node;
   try {
@@ -347,6 +347,56 @@ app.post('/rpc', async (c) => {
   return c.json(data, upstream.status as 200);
 });
 
+// EIP-1193 bridge proxy — accepts typed { method, params } objects,
+// validates the method against the ALLOWED_RPC_METHODS allowlist, and
+// forwards to the active Hardhat node.  Used by the backend /workspace/:id/rpc
+// route which the frontend EIP-1193 bridge calls.
+const JsonRpcRequestSchema = z.object({
+  method: AllowedRpcMethodSchema,
+  params: z.array(z.unknown()).default([]),
+});
+
+app.post('/json-rpc', async (c) => {
+  const body = c.get('parsedBody');
+  if (!body) {
+    return c.json({ error: { code: -32700, message: 'Parse error' } }, 400);
+  }
+  const parsed = JsonRpcRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    const detail = parsed.error.issues[0]?.message ?? 'Validation failed';
+    return c.json(
+      {
+        error: {
+          code: 4200,
+          message: `Method not allowed or invalid request: ${detail}`,
+        },
+      },
+      400,
+    );
+  }
+  // Auto-start the node on first request so the preview dApp works without
+  // requiring an explicit agent start_node call.
+  let node = getNode(WORKSPACE_ID);
+  if (!node) {
+    try {
+      node = await startNode(WORKSPACE_ID, {});
+    } catch (err) {
+      console.error(`[mcp-chain] /json-rpc auto-start failed: ${String(err)}`);
+      return c.json(
+        { error: { code: -32000, message: `Failed to start node: ${String(err)}` } },
+        503,
+      );
+    }
+  }
+  try {
+    const result = await rpc(node.rpcUrl, parsed.data.method, parsed.data.params);
+    return c.json({ result }, 200);
+  } catch (err) {
+    console.error(`[mcp-chain] /json-rpc error (${parsed.data.method}): ${String(err)}`);
+    return c.json({ error: { code: -32603, message: String(err) } }, 200);
+  }
+});
+
 // MCP protocol endpoint (hidden from OpenAPI spec).
 app.all('/mcp', (c) => transport.handleRequest(c.req.raw, { parsedBody: c.get('parsedBody') }));
 
@@ -355,6 +405,9 @@ app.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-c
 
 // Export typed app for frontend use: import type { AppType } from '@crucible/mcp-chain'
 export type AppType = typeof app;
+
+// Named export so tests can call app.request() without triggering Bun.serve.
+export { app };
 
 export default {
   port: PORT,
