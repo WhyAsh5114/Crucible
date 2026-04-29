@@ -20,7 +20,12 @@ import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { existsSync } from 'node:fs';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp, createDevtoolsReporter } from '@crucible/types';
+import {
+  mcp,
+  createDevtoolsReporter,
+  type McpToolsCallBody,
+  type McpResponseBody,
+} from '@crucible/types';
 import {
   DeployLocalInputSchema,
   SimulateLocalInputSchema,
@@ -185,22 +190,6 @@ const mcpServer = createDeployerServer({
 });
 
 type Env = { Variables: { parsedBody: unknown } };
-
-type McpToolsCallBody = {
-  method?: string;
-  params?: {
-    name?: string;
-    arguments?: unknown;
-  };
-};
-
-type McpResponseBody = {
-  result?: {
-    structuredContent?: unknown;
-    content?: Array<{ text?: string }>;
-  };
-  error?: unknown;
-};
 
 const transport = new WebStandardStreamableHTTPServerTransport();
 await mcpServer.connect(transport);

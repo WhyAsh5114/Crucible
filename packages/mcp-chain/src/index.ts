@@ -16,7 +16,14 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { hostHeaderValidation } from '@modelcontextprotocol/hono';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
-import { mcp, encodeBigInt, createDevtoolsReporter, AllowedRpcMethodSchema } from '@crucible/types';
+import {
+  mcp,
+  encodeBigInt,
+  createDevtoolsReporter,
+  type McpToolsCallBody,
+  type McpResponseBody,
+  AllowedRpcMethodSchema,
+} from '@crucible/types';
 import {
   StartNodeInputSchema,
   StartNodeOutputSchema,
@@ -150,22 +157,6 @@ const mcpServer = createChainServer(WORKSPACE_ID, {
 });
 
 type Env = { Variables: { parsedBody: unknown } };
-
-type McpToolsCallBody = {
-  method?: string;
-  params?: {
-    name?: string;
-    arguments?: unknown;
-  };
-};
-
-type McpResponseBody = {
-  result?: {
-    structuredContent?: unknown;
-    content?: Array<{ text?: string }>;
-  };
-  error?: unknown;
-};
 
 const transport = new WebStandardStreamableHTTPServerTransport();
 await mcpServer.connect(transport);
