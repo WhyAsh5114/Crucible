@@ -98,14 +98,23 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
   // Ownership check — treat foreign workspaces as 404 to avoid leaking IDs.
   const row = await prisma.workspace.findUnique({
     where: { id },
-    select: { userId: true, runtime: { select: { chainPort: true } } },
+    select: { userId: true, runtime: { select: { chainPort: true, chainState: true } } },
   });
   if (!row || row.userId !== userId) {
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 
-  // Forward every method to the mcp-chain /json-rpc endpoint. mcp-chain owns
-  // the Hardhat node lifecycle (including auto-start) — rpc.ts is a pure proxy.
+  // Fast-path: eth_chainId is served directly from DB chainState — no container
+  // round-trip needed. Falls back to Hardhat's well-known chain ID (31337) when
+  // chainState is null (node not yet started).
+  if (method === 'eth_chainId') {
+    const chainState = row.runtime?.chainState as { chainId?: number } | null;
+    const chainId = chainState?.chainId ?? 31337;
+    return c.json({ result: `0x${chainId.toString(16)}` }, 200);
+  }
+
+  // All other methods are proxied to the mcp-chain /json-rpc endpoint.
+  // mcp-chain owns the Hardhat node lifecycle (including auto-start).
   const chainPort = row.runtime?.chainPort;
   if (!chainPort) {
     return c.json(createApiErrorBody('runtime_unavailable', 'Chain container is not running'), 503);

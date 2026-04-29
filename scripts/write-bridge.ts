@@ -11,8 +11,7 @@ if (!WS_ID) {
   console.error('Usage: bun scripts/write-bridge.ts <workspaceId>');
   process.exit(1);
 }
-const WORKSPACES_ROOT =
-  process.env['CRUCIBLE_WORKSPACES_ROOT'] ?? '/Users/anonjr/Documents/Web/Crucible/.workspaces';
+const WORKSPACES_ROOT = process.env['CRUCIBLE_WORKSPACES_ROOT'] ?? '.workspaces';
 const dir = `${WORKSPACES_ROOT}/${WS_ID}/frontend/public/__crucible`;
 mkdirSync(dir, { recursive: true });
 writeFileSync(`${dir}/preview-bridge.js`, script);

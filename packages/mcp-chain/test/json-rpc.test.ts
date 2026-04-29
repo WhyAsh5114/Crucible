@@ -1,16 +1,13 @@
 /**
  * Integration tests for the mcp-chain /json-rpc endpoint.
  *
- * Requires a running Hardhat node (started via startNode in beforeAll).
- * Tests exercise the allowlist validation, successful read/write calls,
- * and the 503 case when no node is running.
+ * Tests exercise the allowlist validation, auto-start behavior, and
+ * successful read/write calls against a live Hardhat node.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { app } from '../src/index.ts';
 import { startNode, stopNode, requireNode } from '../src/node-manager.ts';
-
-const WS_ID = 'json-rpc-test-ws';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,17 +51,17 @@ describe('/json-rpc — allowlist validation', () => {
   });
 });
 
-// ── 503 when no node is running ───────────────────────────────────────────────
+// ── Auto-start when no node is running ───────────────────────────────────────
 
-describe('/json-rpc — 503 when no node', () => {
-  it('returns 503 for an allowed method when no node is running', async () => {
-    // Ensure no node is running for this workspace id before testing
-    await stopNode(WS_ID);
-
+describe('/json-rpc — auto-starts when no node is running', () => {
+  it('auto-starts the node and returns a valid result for eth_chainId', async () => {
+    // The /json-rpc endpoint starts the node automatically on first request if
+    // none is running — 503 is only returned if startNode itself throws.
+    // This test relies on no node being started yet (runs before "Live Hardhat calls").
     const res = await post({ method: 'eth_chainId', params: [] });
-    expect(res.status).toBe(503);
-    const body = (await res.json()) as { error: { code: number } };
-    expect(body.error.code).toBe(-32000);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { result: string };
+    expect(body.result).toBe('0x7a69');
   });
 });
 
