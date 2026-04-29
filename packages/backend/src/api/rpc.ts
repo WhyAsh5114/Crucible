@@ -118,12 +118,37 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
   }
 
   // Fast-path: eth_accounts / eth_requestAccounts — the funded accounts are
-  // stored in chainState when the container first reports ready. Return them
-  // directly so wallet connect works even when the container is not running.
+  // stored in chainState once the Hardhat node has been started. If the node
+  // hasn't been started yet (chainState is null), auto-start it now so the
+  // preview dApp can connect without requiring an agent run first.
   if (method === 'eth_accounts' || method === 'eth_requestAccounts') {
     const chainState = ChainStateSchema.safeParse(row.runtime?.chainState);
-    const accounts = chainState.success ? chainState.data.accounts : [];
-    return c.json({ result: accounts }, 200);
+    if (chainState.success) {
+      return c.json({ result: chainState.data.accounts }, 200);
+    }
+    // chainState is null — node not started. Try to start it.
+    const chainPort = row.runtime?.chainPort;
+    if (!chainPort) {
+      return c.json({ result: [] }, 200);
+    }
+    const chainBase = `http://127.0.0.1:${chainPort}`;
+    const hostHdr = { Host: 'localhost' };
+    try {
+      await fetch(`${chainBase}/start_node`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...hostHdr },
+        body: '{}',
+      });
+      const stateRes = await fetch(`${chainBase}/state`, { headers: hostHdr });
+      if (stateRes.ok) {
+        const state = (await stateRes.json()) as { accounts?: string[] };
+        const accounts = Array.isArray(state.accounts) ? state.accounts : [];
+        return c.json({ result: accounts }, 200);
+      }
+    } catch {
+      // Container unreachable — return empty accounts
+    }
+    return c.json({ result: [] }, 200);
   }
 
   // All other methods: forward to the mcp-chain /json-rpc endpoint running

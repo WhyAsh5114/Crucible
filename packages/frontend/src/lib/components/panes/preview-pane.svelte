@@ -18,7 +18,14 @@
 	// and recreated on every poll tick (every 2s), orphaning any in-flight
 	// rpc_request promises.
 	let workspaceId = $derived(workspace?.id ?? null);
-	let chainId = $derived(workspace?.chainState?.chainId ?? null);
+	// Default to Hardhat's well-known chain ID (31337) when chainState hasn't
+	// synced yet — the node auto-starts on first eth_requestAccounts so the
+	// bridge must be live before chainState is populated.
+	let hexChainId = $derived(
+		workspace?.chainState?.chainId != null
+			? `0x${workspace.chainState.chainId.toString(16)}`
+			: '0x7a69'
+	);
 
 	let destroyBridge: (() => void) | null = null;
 
@@ -26,9 +33,8 @@
 		destroyBridge?.();
 		destroyBridge = null;
 
-		if (!iframeEl || !workspaceId || !chainId) return;
+		if (!iframeEl || !workspaceId) return;
 
-		const hexChainId = `0x${chainId.toString(16)}`;
 		destroyBridge = createEip1193Bridge(workspaceId, iframeEl, hexChainId);
 	});
 
