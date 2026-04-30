@@ -24,7 +24,11 @@
 	/** Narrowed output for the terminal renderer. Safe because exec always returns this shape. */
 	let execOutput = $derived(
 		isTerminalExec && output
-			? (output as { stdout?: string; stderr?: string; exitCode?: number })
+			? ((
+					output as {
+						structuredContent?: { stdout?: string; stderr?: string; exitCode?: number };
+					}
+				).structuredContent ?? (output as { stdout?: string; stderr?: string; exitCode?: number }))
 			: undefined
 	);
 </script>
