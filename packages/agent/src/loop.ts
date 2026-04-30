@@ -62,13 +62,6 @@ export interface AgentConfig {
   >;
 }
 
-/** Shell execution result returned by adapter.runShell. */
-export interface ShellResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
 /**
  * All backend service calls the agent loop requires, injected by the caller.
  *
@@ -84,9 +77,6 @@ export interface AgentAdapter {
    * resulting `WorkspaceFile` metadata (path, lang, hash, modifiedAt, …).
    */
   writeFile(workspaceId: string, filePath: string, content: string): Promise<WorkspaceFile>;
-
-  /** Run `cmd` in a shell scoped to the workspace directory. */
-  runShell(workspaceId: string, cmd: string): Promise<ShellResult>;
 
   /** Publish an event to the agent bus for this workspace. */
   publishEvent(workspaceId: string, event: AgentEvent): void;
@@ -290,28 +280,6 @@ export async function runAgentTurn(
               return {
                 ok: false as const,
                 error: err instanceof Error ? err.message : String(err),
-              };
-            }
-          },
-        }),
-
-        // ── run_shell ──────────────────────────────────────────────────────
-        run_shell: tool({
-          description:
-            'Run a shell command in the workspace directory. ' +
-            'Returns stdout, stderr, and exitCode. ' +
-            'Use bun for package management; npx hardhat or forge for contracts.',
-          inputSchema: z.object({
-            cmd: z.string().min(1).describe('Shell command to execute'),
-          }),
-          execute: async ({ cmd }) => {
-            try {
-              return await adapter.runShell(workspaceId, cmd);
-            } catch (err) {
-              return {
-                stdout: '',
-                stderr: err instanceof Error ? err.message : String(err),
-                exitCode: 1,
               };
             }
           },
