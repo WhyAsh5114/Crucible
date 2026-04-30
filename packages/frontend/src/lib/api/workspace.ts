@@ -12,7 +12,8 @@ import type {
 	WorkspaceListResponse,
 	WorkspaceState,
 	PromptRequest,
-	PromptResponse
+	PromptResponse,
+	AgentEvent
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -61,6 +62,22 @@ export class WorkspaceClient {
 			throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as PromptResponse;
+	}
+
+	/**
+	 * Fetch the persisted chat history for a workspace. Returns the raw
+	 * `AgentEvent` log so the caller can replay it through the same coalescing
+	 * pipeline that handles live SSE frames.
+	 */
+	async getChatHistory(id: string): Promise<AgentEvent[]> {
+		const res = await apiClient.api.workspace[':id'].chat.history.$get({
+			param: { id }
+		});
+		if (!res.ok) {
+			throw new Error(`getChatHistory failed: ${res.status} ${await res.text()}`);
+		}
+		const body = (await res.json()) as { events: AgentEvent[] };
+		return body.events;
 	}
 }
 
