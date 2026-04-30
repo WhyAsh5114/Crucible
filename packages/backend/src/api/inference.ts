@@ -133,12 +133,19 @@ async function runInference(workspaceId: string, prompt: string): Promise<void> 
 
   // Build MCP server URLs from the live container port map.
   const mcpServerUrls: Partial<
-    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
   > = {};
   try {
     const ports = await getWorkspaceContainerPorts(workspaceId);
     if (ports) {
-      for (const key of ['chain', 'compiler', 'deployer', 'wallet', 'memory'] as const) {
+      for (const key of [
+        'chain',
+        'compiler',
+        'deployer',
+        'wallet',
+        'memory',
+        'terminal',
+      ] as const) {
         const port = ports[key];
         if (port !== null) mcpServerUrls[key] = `${runtimeServiceBaseUrl(port)}/mcp`;
       }
