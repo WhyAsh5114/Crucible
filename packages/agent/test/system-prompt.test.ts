@@ -37,7 +37,8 @@ describe('buildSystemPrompt', () => {
     const prompt = buildSystemPrompt([]);
     expect(prompt).toContain('read_file');
     expect(prompt).toContain('write_file');
-    expect(prompt).toContain('run_shell');
+    expect(prompt).toContain('create_session');
+    expect(prompt).toContain('exec');
     expect(prompt).toContain('compile');
     expect(prompt).toContain('deploy_local');
   });

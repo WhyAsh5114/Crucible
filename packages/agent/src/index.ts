@@ -8,4 +8,4 @@
  */
 
 export { runAgentTurn } from './loop.ts';
-export type { AgentAdapter, AgentConfig, ShellResult } from './loop.ts';
+export type { AgentAdapter, AgentConfig } from './loop.ts';

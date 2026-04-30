@@ -106,6 +106,16 @@ This approach was chosen because:
 - dockerode's `hijack` mode hangs under Bun's Node compat layer
 - Raw socket with HTTP/1.1 handshake is a few dozen lines and avoids both bugs
 
+### Agent Terminal Access — mcp-terminal
+
+The agent accesses the shell via `packages/mcp-terminal` (port 3106, in-container), which is distinct from the user's browser PTY:
+
+- **Browser PTY** — managed by `pty-manager.ts` on the control plane, upgraded through Docker exec hijack, streamed to the xterm.js pane.
+- **Agent shell** — managed by `mcp-terminal` inside the container. The `exec` tool spawns a fresh non-interactive `bash -c` subprocess, captures stdout/stderr/exitCode, and returns them. It never touches the browser PTY session.
+- **`write` tool** — lazily spawns a piped bash process per session, writes raw text to its stdin. No PTY — use `exec` when output capture is needed.
+
+The two paths are fully independent. The user can type in the terminal pane while the agent runs `exec` in a separate subprocess without either seeing the other's output.
+
 ### Use an OpenAI-Compatible Fallback
 
 Yes, but only as a **degraded-mode reliability path**.
@@ -153,7 +163,7 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  │   • mcp-wallet   (in-container 3103, host port published dynamically)    │            │
                 │  │   • mcp-memory   (in-container 3104, host port published dynamically)    │            │
                 │  │   • bash shell   (via docker exec hijack, TTY mode, shared user+agent)   │            │
-                │  │   • [planned] mcp-terminal 3106 (MCP wrapper for agent tool access)    │            │
+                │  │   • mcp-terminal (in-container 3106, host port published dynamically)    │            │
                 │  └──────────────────────────────────────────────────────────────────────────┘            │
                 │                                                                                          │
                 │  Preview (per workspace, on host — NOT inside runner)                                    │
@@ -178,7 +188,6 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-terminal` (agent-callable MCP wrapper) — the WebSocket `/ws/terminal` PTY backend is shipped and working via `docker exec` hijack, and the xterm.js frontend bridge is wired in `terminal-pane.svelte`. The MCP server wrapper (port 3106) that allows the agent to call terminal tools (`exec`, `write`, `resize`) is still planned. Once added, it wraps the same in-container bash surface.
 - `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
 - `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` — control-plane HTTP client, never inside a runner.

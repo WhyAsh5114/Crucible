@@ -16,7 +16,6 @@ import {
   type FallbackReason,
 } from '@crucible/types';
 import { runAgentTurn, type AgentAdapter, type AgentConfig } from '@crucible/agent';
-import { exec } from 'node:child_process';
 import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
 import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
@@ -88,19 +87,6 @@ function buildAdapter(): AgentAdapter {
     writeFile: async (workspaceId, filePath, content) =>
       writeWorkspaceFile(workspaceId, filePath, content),
 
-    runShell: async (workspaceId, cmd) => {
-      const workspaceDir = workspaceHostPath(workspaceId);
-      return new Promise((resolve) => {
-        exec(cmd, { cwd: workspaceDir, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-          resolve({
-            stdout: stdout ?? '',
-            stderr: stderr ?? err?.message ?? '',
-            exitCode: err?.code ?? 0,
-          });
-        });
-      });
-    },
-
     publishEvent: (workspaceId, event) => publishAgentEvent(workspaceId, event),
 
     nextSeq: (workspaceId) => nextAgentSeq(workspaceId),
@@ -133,12 +119,19 @@ async function runInference(workspaceId: string, prompt: string): Promise<void> 
 
   // Build MCP server URLs from the live container port map.
   const mcpServerUrls: Partial<
-    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
   > = {};
   try {
     const ports = await getWorkspaceContainerPorts(workspaceId);
     if (ports) {
-      for (const key of ['chain', 'compiler', 'deployer', 'wallet', 'memory'] as const) {
+      for (const key of [
+        'chain',
+        'compiler',
+        'deployer',
+        'wallet',
+        'memory',
+        'terminal',
+      ] as const) {
         const port = ports[key];
         if (port !== null) mcpServerUrls[key] = `${runtimeServiceBaseUrl(port)}/mcp`;
       }

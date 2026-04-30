@@ -57,14 +57,9 @@ export interface AgentConfig {
    * When present, the agent connects to that server directly via the AI SDK
    * MCP client rather than routing through the REST proxy in tool-exec.ts.
    */
-  mcpServerUrls?: Partial<Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>>;
-}
-
-/** Shell execution result returned by adapter.runShell. */
-export interface ShellResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
+  mcpServerUrls?: Partial<
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
+  >;
 }
 
 /**
@@ -83,9 +78,6 @@ export interface AgentAdapter {
    */
   writeFile(workspaceId: string, filePath: string, content: string): Promise<WorkspaceFile>;
 
-  /** Run `cmd` in a shell scoped to the workspace directory. */
-  runShell(workspaceId: string, cmd: string): Promise<ShellResult>;
-
   /** Publish an event to the agent bus for this workspace. */
   publishEvent(workspaceId: string, event: AgentEvent): void;
 
@@ -95,7 +87,7 @@ export interface AgentAdapter {
 
 // ── MCP schema registry ──────────────────────────────────────────────────────
 
-type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory';
+type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal';
 
 function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.ZodTypeAny }> {
   switch (server) {
@@ -136,6 +128,13 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         remember: { inputSchema: mcp.memory.RememberInputSchema },
         list_patterns: { inputSchema: mcp.memory.ListPatternsInputSchema },
         provenance: { inputSchema: mcp.memory.ProvenanceInputSchema },
+      };
+    case 'terminal':
+      return {
+        create_session: { inputSchema: mcp.terminal.CreateSessionInputSchema },
+        write: { inputSchema: mcp.terminal.WriteInputSchema },
+        exec: { inputSchema: mcp.terminal.ExecInputSchema },
+        resize: { inputSchema: mcp.terminal.ResizeInputSchema },
       };
   }
 }
@@ -281,28 +280,6 @@ export async function runAgentTurn(
               return {
                 ok: false as const,
                 error: err instanceof Error ? err.message : String(err),
-              };
-            }
-          },
-        }),
-
-        // ── run_shell ──────────────────────────────────────────────────────
-        run_shell: tool({
-          description:
-            'Run a shell command in the workspace directory. ' +
-            'Returns stdout, stderr, and exitCode. ' +
-            'Use bun for package management; npx hardhat or forge for contracts.',
-          inputSchema: z.object({
-            cmd: z.string().min(1).describe('Shell command to execute'),
-          }),
-          execute: async ({ cmd }) => {
-            try {
-              return await adapter.runShell(workspaceId, cmd);
-            } catch (err) {
-              return {
-                stdout: '',
-                stderr: err instanceof Error ? err.message : String(err),
-                exitCode: 1,
               };
             }
           },

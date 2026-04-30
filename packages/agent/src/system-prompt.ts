@@ -30,43 +30,31 @@ wagmi/viem React frontend.
 - read_file  — read any workspace file by its relative path
 - write_file — write or overwrite a workspace file
 
-### Shell
-- run_shell — execute a shell command in the workspace directory (cwd = workspace
-  root). Prefer \`bun\` for package management, \`npx hardhat\` or \`forge\` for
-  contract tooling. Stdout + stderr are returned; exitCode 0 means success.
+### Shell (terminal MCP — runs inside the workspace container)
+Use the terminal MCP tools for all shell commands. They run inside the container
+where the Hardhat node, compiler, and workspace files live.
+
+Workflow:
+1. \`create_session(workspaceId)\` — get or create the workspace bash session.
+   Returns \`sessionId\`. Call this once per agent turn before using exec.
+2. \`exec(sessionId, command, cwd?, env?, timeoutMs?)\` — run a command and capture
+   stdout, stderr, and exitCode. Use for \`bun install\`, build commands, file inspection, etc.
+3. \`write(sessionId, text)\` — fire-and-forget to bash stdin. **Output is not
+   returned.** Only use for interactive inputs (e.g. Ctrl+C \\x03, REPL prompts).
 
 ### MCP runtime tools — call these directly by name
 Each tool is a first-class function with a strict input schema; the SDK enforces
 required arguments at the protocol level. **Always prefer these tools over
-\`run_shell hardhat …\`** — the MCP services share the workspace's running
-Hardhat node, while shell-spawned hardhat would start its own ephemeral chain
-and you would lose all deployed state.
+running \`hardhat\` or \`forge\` via exec** — the MCP services share the
+workspace's running Hardhat node, while a shell-spawned hardhat would start its
+own ephemeral chain and you would lose all deployed state.
 
-**chain** — workspace Hardhat node
-- \`start_node()\` — start the node (required before any deploy or RPC call)
-- \`get_state()\` — chainId, blockNumber, gasPrice, accounts
-- \`snapshot()\` → returns \`{ snapshotId }\`
-- \`revert({ snapshotId })\`
-
-**compiler** — Hardhat-driven Solidity compilation
-- \`compile({ sourcePath: "contracts/Counter.sol" })\` — sourcePath is required
-- \`list_contracts()\`
-- \`get_abi({ contractName: "Counter" })\`
-- \`get_bytecode({ contractName: "Counter" })\`
-
-**deployer** — local-chain deploy and trace (no public chain)
-- \`deploy_local({ contractName: "Counter", constructorData: "0x" })\`
-- \`simulate_local({ tx: { to, data, from? } })\`
-- \`trace({ txHash })\`
-
-**wallet** — embedded dev wallet
-- \`list_accounts()\`
-- \`get_balance({ address })\`
-- \`send_tx_local({ tx: { from, to, data, chainId } })\`
-
-**memory** — pattern store
-- \`recall({ revertSignature?, freeform? })\` — at least one field required
-- \`list_patterns()\`
+Available MCP servers and their purpose:
+- **chain** — start/stop the local Hardhat node, get chain state, snapshots, fork
+- **compiler** — compile Solidity with Hardhat, list contracts, get ABI/bytecode
+- **deployer** — deploy to the local chain, simulate txs, trace, call
+- **wallet** — list accounts, get balances, sign and send local txs
+- **memory** — recall and store agent patterns across sessions
 
 ## Workspace layout
 

@@ -1,7 +1,9 @@
 # Crucible per-workspace runtime image.
 #
-# Hosts mcp-chain (3100) and mcp-compiler (3101) inside one container per
-# workspace. Build context MUST be the monorepo root so workspace packages
+# Hosts mcp-chain (3100), mcp-compiler (3101), mcp-deployer (3102),
+# mcp-wallet (3103), mcp-memory (3104), mcp-terminal (3106), and
+# mcp-devtools (3107) inside one container per workspace.
+# Build context MUST be the monorepo root so workspace packages
 # resolve correctly.
 #
 # Build:
@@ -29,17 +31,19 @@ COPY packages/mcp-compiler/package.json packages/mcp-compiler/
 COPY packages/mcp-deployer/package.json packages/mcp-deployer/
 COPY packages/mcp-wallet/package.json packages/mcp-wallet/
 COPY packages/mcp-memory/package.json packages/mcp-memory/
+COPY packages/mcp-terminal/package.json packages/mcp-terminal/
 COPY packages/mcp-devtools/package.json packages/mcp-devtools/
 
 RUN bun install --frozen-lockfile || bun install
 
-# Copy source for the three packages the runtime needs.
+# Copy source for the packages the runtime needs.
 COPY packages/types ./packages/types
 COPY packages/mcp-chain ./packages/mcp-chain
 COPY packages/mcp-compiler ./packages/mcp-compiler
 COPY packages/mcp-deployer ./packages/mcp-deployer
 COPY packages/mcp-wallet ./packages/mcp-wallet
 COPY packages/mcp-memory ./packages/mcp-memory
+COPY packages/mcp-terminal ./packages/mcp-terminal
 COPY packages/mcp-devtools ./packages/mcp-devtools
 
 # /workspace is the per-workspace bind mount target.
@@ -53,12 +57,12 @@ ENV CHAIN_MCP_PORT=3100 \
     DEPLOYER_MCP_PORT=3102 \
     WALLET_MCP_PORT=3103 \
     MEMORY_MCP_PORT=3104 \
-    TERMINAL_MCP_PORT=3105 \
+    TERMINAL_MCP_PORT=3106 \
     DEVTOOLS_MCP_PORT=3107 \
     WORKSPACE_ROOT=/workspace \
     ALLOWED_HOSTS=host.docker.internal
 
-EXPOSE 3100 3101 3102 3103 3104 3105 3107
+EXPOSE 3100 3101 3102 3103 3104 3106 3107
 
 COPY packages/backend/runtime/entrypoint.sh /usr/local/bin/crucible-runtime-entrypoint
 RUN chmod +x /usr/local/bin/crucible-runtime-entrypoint
