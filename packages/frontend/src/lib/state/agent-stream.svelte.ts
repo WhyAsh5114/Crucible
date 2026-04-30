@@ -199,8 +199,7 @@ export class AgentStream {
 		// first turn boundary clears them, and we must not append a new turn's
 		// deltas onto a historical row.
 		if (incoming.type === 'thinking') {
-			const open =
-				this.openThinkingIndex >= 0 ? this.events[this.openThinkingIndex] : undefined;
+			const open = this.openThinkingIndex >= 0 ? this.events[this.openThinkingIndex] : undefined;
 			if (open?.type === 'thinking' && open.streamId === incoming.streamId) {
 				this.events[this.openThinkingIndex] = {
 					...open,
@@ -215,8 +214,7 @@ export class AgentStream {
 		// Convert streaming message_delta tokens into a single accumulated
 		// `message` event so the chat rail renders one row that grows in place.
 		if (incoming.type === 'message_delta') {
-			const open =
-				this.openMessageIndex >= 0 ? this.events[this.openMessageIndex] : undefined;
+			const open = this.openMessageIndex >= 0 ? this.events[this.openMessageIndex] : undefined;
 			if (open?.type === 'message' && open.streamId === incoming.streamId) {
 				this.events[this.openMessageIndex] = {
 					...open,
