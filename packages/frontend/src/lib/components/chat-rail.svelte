@@ -10,6 +10,7 @@
 	import EmptyState from './empty-state.svelte';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import LoaderIcon from '@lucide/svelte/icons/loader';
+	import { setContext } from 'svelte';
 	import type { WorkspaceId } from '@crucible/types';
 
 	interface Props {
@@ -24,22 +25,39 @@
 	let prompt = $state('');
 	let sending = $state(false);
 	let sendError = $state<string | null>(null);
+	let lastPrompt = $state<string | null>(null);
 
-	async function handleSubmit(event: SubmitEvent): Promise<void> {
-		event.preventDefault();
-		const trimmed = prompt.trim();
-		if (!trimmed || sending) return;
+	async function sendPrompt(text: string, forceFallback: boolean): Promise<void> {
 		sending = true;
 		sendError = null;
 		try {
-			await workspaceClient.sendPrompt({ workspaceId, prompt: trimmed });
-			prompt = '';
+			await workspaceClient.sendPrompt({
+				workspaceId,
+				prompt: text,
+				...(forceFallback ? { force_openai_fallback: true } : {}),
+			});
+			lastPrompt = text;
 		} catch (err) {
 			sendError = err instanceof Error ? err.message : String(err);
 		} finally {
 			sending = false;
 		}
 	}
+
+	async function handleSubmit(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		const trimmed = prompt.trim();
+		if (!trimmed || sending) return;
+		await sendPrompt(trimmed, false);
+		if (!sendError) prompt = '';
+	}
+
+	// Provide a retry callback to descendant `error-row.svelte` components so
+	// the user can re-run the last prompt against the OpenAI-compatible
+	// fallback after a 0G Compute Router failure.
+	setContext('retryWithFallback', () => {
+		if (lastPrompt && !sending) void sendPrompt(lastPrompt, true);
+	});
 
 	function handleKeydown(event: KeyboardEvent): void {
 		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
