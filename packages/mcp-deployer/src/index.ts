@@ -31,6 +31,7 @@ import {
   SimulateLocalInputSchema,
   TraceInputSchema,
   CallInputSchema,
+  DeployOgChainInputSchema,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerServer } from './server.ts';
 import { createDeployerService } from './service.ts';
@@ -42,10 +43,11 @@ const PORT = process.env['DEPLOYER_MCP_PORT']
 const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc';
 const COMPILER_URL = process.env['COMPILER_URL'] ?? 'http://localhost:3101';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+const OG_DEPLOY_PRIVATE_KEY = process.env['OG_DEPLOY_PRIVATE_KEY'];
 const devtools = createDevtoolsReporter('deployer');
 
 console.log(
-  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL})`,
+  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL}, ogDeploy: ${OG_DEPLOY_PRIVATE_KEY ? 'enabled' : 'disabled'})`,
 );
 
 if (!existsSync(WORKSPACE_ROOT)) {
@@ -56,6 +58,7 @@ const service = createDeployerService({
   chainRpcUrl: CHAIN_RPC_URL,
   workspaceRoot: WORKSPACE_ROOT,
   compilerUrl: COMPILER_URL,
+  ...(OG_DEPLOY_PRIVATE_KEY ? { ogDeployPrivateKey: OG_DEPLOY_PRIVATE_KEY } : {}),
 });
 
 const ErrorSchema = z.object({ error: z.string() });
@@ -120,6 +123,13 @@ const TraceOutputWireSchema = z.object({
 
 const CallOutputWireSchema = z.object({ result: z.string() });
 
+const DeployOgChainOutputWireSchema = z.object({
+  address: z.string(),
+  txHash: z.string(),
+  gasUsed: z.string(),
+  explorerUrl: z.string(),
+});
+
 const deployLocalRoute = createRoute({
   method: 'post',
   path: '/deploy_local',
@@ -183,10 +193,29 @@ const callRoute = createRoute({
   },
 });
 
+const deployOgChainRoute = createRoute({
+  method: 'post',
+  path: '/deploy_0g_chain',
+  request: {
+    body: {
+      content: { 'application/json': { schema: DeployOgChainInputSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: DeployOgChainOutputWireSchema } },
+      description: 'Deployed to 0G Galileo testnet',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
 const mcpServer = createDeployerServer({
   chainRpcUrl: CHAIN_RPC_URL,
   workspaceRoot: WORKSPACE_ROOT,
   compilerUrl: COMPILER_URL,
+  ...(OG_DEPLOY_PRIVATE_KEY ? { ogDeployPrivateKey: OG_DEPLOY_PRIVATE_KEY } : {}),
 });
 
 type Env = { Variables: { parsedBody: unknown } };
@@ -235,6 +264,7 @@ function deployerToolForPath(path: string): string | null {
   if (path === '/simulate_local') return 'simulate_local';
   if (path === '/trace') return 'trace';
   if (path === '/call') return 'call';
+  if (path === '/deploy_0g_chain') return 'deploy_0g_chain';
   return null;
 }
 
@@ -331,6 +361,16 @@ app.openapi(callRoute, async (c) => {
     return c.json(output, 200);
   } catch (err) {
     console.error(`[mcp-deployer] call error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.openapi(deployOgChainRoute, async (c) => {
+  try {
+    const output = await service.deploy0gChain(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] deploy_0g_chain error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });

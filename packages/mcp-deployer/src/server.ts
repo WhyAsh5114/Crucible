@@ -4,10 +4,12 @@ import {
   SimulateLocalInputSchema,
   TraceInputSchema,
   CallInputSchema,
+  DeployOgChainInputSchema,
   type DeployLocalInput,
   type SimulateLocalInput,
   type TraceInput,
   type CallInput,
+  type DeployOgChainInput,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerService } from './service.ts';
 
@@ -33,6 +35,7 @@ export function createDeployerServer(opts: {
   chainRpcUrl: string;
   workspaceRoot: string;
   compilerUrl?: string;
+  ogDeployPrivateKey?: string;
 }): McpServer {
   const service = createDeployerService(opts);
   const server = new McpServer({
@@ -142,6 +145,37 @@ export function createDeployerServer(opts: {
       } catch (err) {
         logError(`tool:call error: ${String(err)}`);
         return errorResult(`call failed: ${String(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'deploy_0g_chain',
+    {
+      title: 'Deploy Contract to 0G Galileo Testnet',
+      description:
+        'Deploy a compiled contract to the 0G Galileo testnet (chainId 16602). ' +
+        'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
+        'Bytecode is fetched automatically from the artifact store. ' +
+        'The deployer node must be configured with OG_DEPLOY_PRIVATE_KEY and the wallet ' +
+        'must hold testnet OG (faucet: https://faucet.0g.ai). ' +
+        'Returns contract address, tx hash, gas used, and a 0G Chainscan explorer URL.',
+      inputSchema: DeployOgChainInputSchema,
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input: DeployOgChainInput) => {
+      try {
+        log('tool:deploy_0g_chain');
+        const output = await service.deploy0gChain(input);
+        log(`tool:deploy_0g_chain ok  address=${output.address} txHash=${output.txHash}`);
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:deploy_0g_chain error: ${String(err)}`);
+        return errorResult(`deploy_0g_chain failed: ${String(err)}`);
       }
     },
   );

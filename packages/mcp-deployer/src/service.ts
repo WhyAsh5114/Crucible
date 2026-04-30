@@ -1,6 +1,22 @@
 import { isAbsolute, relative } from 'node:path';
 import { realpath } from 'node:fs/promises';
+import { createPublicClient, createWalletClient, defineChain, http, type Hex } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
 import { encodeBigInt, type mcp } from '@crucible/types';
+
+/**
+ * 0G Galileo testnet — chainId 16602.
+ * RPC and explorer endpoints are taken from https://docs.0g.ai/concepts/networks.
+ */
+const OG_TESTNET_CHAIN = defineChain({
+  id: 16602,
+  name: '0G Galileo Testnet',
+  nativeCurrency: { name: '0G', symbol: 'OG', decimals: 18 },
+  rpcUrls: { default: { http: ['https://evmrpc-testnet.0g.ai'] } },
+  blockExplorers: {
+    default: { name: '0G Chainscan', url: 'https://chainscan-galileo.0g.ai' },
+  },
+});
 
 interface RpcErrorShape {
   message?: string;
@@ -71,6 +87,12 @@ export interface DeployerService {
     gasUsed: string;
   }>;
   call: (input: mcp.deployer.CallInput) => Promise<{ result: `0x${string}` }>;
+  deploy0gChain: (input: mcp.deployer.DeployOgChainInput) => Promise<{
+    address: `0x${string}`;
+    txHash: `0x${string}`;
+    gasUsed: string;
+    explorerUrl: string;
+  }>;
 }
 
 /**
@@ -266,8 +288,9 @@ export function createDeployerService(opts: {
   chainRpcUrl: string;
   workspaceRoot: string;
   compilerUrl?: string;
+  ogDeployPrivateKey?: string;
 }): DeployerService {
-  const { chainRpcUrl, compilerUrl = 'http://localhost:3101' } = opts;
+  const { chainRpcUrl, compilerUrl = 'http://localhost:3101', ogDeployPrivateKey } = opts;
 
   /**
    * Fetch contract bytecode from mcp-compiler.
@@ -396,6 +419,49 @@ export function createDeployerService(opts: {
         'latest',
       ]);
       return { result: result as `0x${string}` };
+    },
+
+    async deploy0gChain(input) {
+      if (!ogDeployPrivateKey) {
+        throw new Error(
+          'OG_DEPLOY_PRIVATE_KEY is not set — cannot deploy to 0G chain. Set this on the deployer node.',
+        );
+      }
+
+      const bytecode = await getCompiledBytecode(input.contractName);
+      const data = `${bytecode}${input.constructorData.slice(2)}` as Hex;
+
+      const account = privateKeyToAccount(
+        (ogDeployPrivateKey.startsWith('0x')
+          ? ogDeployPrivateKey
+          : `0x${ogDeployPrivateKey}`) as Hex,
+      );
+      const wallet = createWalletClient({
+        account,
+        chain: OG_TESTNET_CHAIN,
+        transport: http(),
+      });
+      const publicClient = createPublicClient({
+        chain: OG_TESTNET_CHAIN,
+        transport: http(),
+      });
+
+      const txHash = await wallet.sendTransaction({
+        data,
+        ...(input.value !== undefined ? { value: input.value } : {}),
+      });
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (!receipt.contractAddress) {
+        throw new Error(`0G deploy did not produce a contract address: ${txHash}`);
+      }
+
+      return {
+        address: receipt.contractAddress,
+        txHash,
+        gasUsed: encodeBigInt(receipt.gasUsed),
+        explorerUrl: `https://chainscan-galileo.0g.ai/tx/${txHash}`,
+      };
     },
   };
 }
