@@ -72,9 +72,36 @@ export const CallOutputSchema = z.object({ result: HexSchema });
 export type CallInput = z.infer<typeof CallInputSchema>;
 export type CallOutput = z.infer<typeof CallOutputSchema>;
 
+/**
+ * Deploy a compiled contract to the 0G Galileo testnet (chainId 16602).
+ *
+ * Uses the deployer node's `OG_DEPLOY_PRIVATE_KEY` to sign and broadcast
+ * a real on-chain creation transaction via the 0G EVM RPC endpoint.
+ * Bytecode is auto-fetched from mcp-compiler by `contractName`.
+ */
+export const DeployOgChainInputSchema = z.object({
+  /** Compiled contract name (e.g. "Counter"). Compile first via compiler-mcp. */
+  contractName: z.string().min(1),
+  /** Encoded constructor calldata appended to the bytecode. May be empty `0x`. */
+  constructorData: HexSchema,
+  /** Optional native-token (OG) value to send with the deployment, in wei. */
+  value: BigIntStringSchema.optional(),
+});
+
+export const DeployOgChainOutputSchema = z.object({
+  address: AddressSchema,
+  txHash: HashSchema,
+  gasUsed: BigIntStringSchema,
+  /** 0G Chainscan URL for the deployment transaction. */
+  explorerUrl: z.string().url(),
+});
+export type DeployOgChainInput = z.infer<typeof DeployOgChainInputSchema>;
+export type DeployOgChainOutput = z.infer<typeof DeployOgChainOutputSchema>;
+
 export const tools = {
   deploy_local: { input: DeployLocalInputSchema, output: DeployLocalOutputSchema },
   simulate_local: { input: SimulateLocalInputSchema, output: SimulateLocalOutputSchema },
   trace: { input: TraceInputSchema, output: TraceOutputSchema },
   call: { input: CallInputSchema, output: CallOutputSchema },
+  deploy_0g_chain: { input: DeployOgChainInputSchema, output: DeployOgChainOutputSchema },
 } as const;

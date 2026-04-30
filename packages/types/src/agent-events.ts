@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 import { TxTraceSchema } from './deployer.ts';
-import { InferenceReceiptSchema } from './inference.ts';
+import { FallbackReasonSchema, InferenceReceiptSchema } from './inference.ts';
 import { KeeperHubExecutionSchema } from './ship.ts';
 import { MemoryPatternSchema, MemoryRecallHitSchema } from './memory.ts';
 import { MeshHelpRequestSchema, MeshHelpResponseSchema } from './mesh.ts';
@@ -147,6 +147,12 @@ const Done = base.extend({
 const ErrorEvent = base.extend({
   type: z.literal('error'),
   message: z.string(),
+  /**
+   * Set when the error originated in the 0G Compute Router and the user can
+   * recover by retrying with the OpenAI-compatible fallback. The frontend
+   * surfaces a "Retry with OpenAI" button when this field is present.
+   */
+  ogFallbackReason: FallbackReasonSchema.optional(),
 });
 
 export const AgentEventSchema = z.discriminatedUnion('type', [

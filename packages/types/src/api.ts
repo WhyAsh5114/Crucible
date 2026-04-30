@@ -76,6 +76,12 @@ export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
 export const PromptRequestSchema = z.object({
   workspaceId: WorkspaceIdSchema,
   prompt: z.string().min(1).max(8192),
+  /**
+   * When true, skip the 0G Compute Router and use the OpenAI-compatible
+   * fallback endpoint. Set by the frontend's "Retry with OpenAI" button after
+   * a Router failure so the user can recover without changing server config.
+   */
+  force_openai_fallback: z.boolean().optional(),
 });
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 
