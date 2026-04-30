@@ -86,6 +86,7 @@
 		workspace = null;
 		try {
 			workspace = await workspaceClient.getWorkspace(id);
+			await stream.hydrate(workspace.id);
 			stream.start(workspace.id);
 			if (!workspaceIsBooted(workspace)) {
 				pollWorkspaceId = id;
