@@ -15,6 +15,7 @@
  */
 
 import { AgentEventSchema, type AgentEvent } from '@crucible/types';
+import { recordChatEvent } from './chat-log';
 
 type Subscriber = (event: AgentEvent) => void;
 
@@ -38,6 +39,12 @@ export function nextAgentSeq(workspaceId: string): number {
  */
 export function publishAgentEvent(workspaceId: string, event: AgentEvent): void {
   const validated = AgentEventSchema.parse(event);
+
+  // Persist before fan-out so the on-disk chat log captures every event
+  // regardless of whether anyone is currently subscribed (e.g. user reloaded
+  // mid-turn — we still want the rest of the turn in history).
+  recordChatEvent(workspaceId, validated);
+
   const set = subscribers.get(workspaceId);
   if (!set) return;
   for (const handler of set) {
