@@ -22,7 +22,7 @@
 
 import { getContext, setContext } from 'svelte';
 import { AgentEventSchema, type AgentEvent } from '@crucible/types';
-import { apiClient } from '$lib/api/workspace';
+import { apiClient, workspaceClient } from '$lib/api/workspace';
 
 export type AgentStreamStatus = 'idle' | 'connecting' | 'streaming' | 'error' | 'closed';
 
@@ -43,9 +43,52 @@ export class AgentStream {
 	// Increments on every start/stop. The async pump uses this to bail out if
 	// the caller cancelled while we were mid-await.
 	private startToken = 0;
+	// Tracks the open coalescing buffers for the current turn. Reset to -1 at
+	// turn boundaries (`inference_receipt` / `done`) and on `start()` /
+	// `hydrate()` so a new turn never appends to a historical event.
+	private openMessageIndex = -1;
+	private openThinkingIndex = -1;
+	// Guard against duplicate hydration: the second call replaces `events`
+	// with a fresh fetch but we don't want to issue redundant requests when
+	// callers re-mount.
+	private hydratePromise: Promise<void> | null = null;
 
 	constructor(opts: AgentStreamOptions = {}) {
 		this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+	}
+
+	/**
+	 * Fetch persisted chat history for a workspace and seed `events`. Safe to
+	 * call before `start()`. Idempotent — concurrent calls share one in-flight
+	 * request, and a completed hydrate replaces `events` with the latest
+	 * server snapshot rather than appending. Never throws: a transport failure
+	 * is logged and `events` is left untouched so the live SSE can still drive
+	 * the UI.
+	 */
+	hydrate(workspaceId: string): Promise<void> {
+		if (this.hydratePromise) return this.hydratePromise;
+		const promise = (async () => {
+			try {
+				const history = await workspaceClient.getChatHistory(workspaceId);
+				this.events = history;
+				this.openMessageIndex = -1;
+				this.openThinkingIndex = -1;
+			} catch (err) {
+				console.warn('[agent-stream] hydrate failed; continuing without history', err);
+			} finally {
+				this.hydratePromise = null;
+			}
+		})();
+		this.hydratePromise = promise;
+		return promise;
+	}
+
+	/** Reset the store back to its initial empty state. */
+	clear(): void {
+		this.events = [];
+		this.openMessageIndex = -1;
+		this.openThinkingIndex = -1;
+		this.error = null;
 	}
 
 	/** Open the SSE connection for a given workspace. Idempotent. */
@@ -53,8 +96,11 @@ export class AgentStream {
 		if (this.controller) return;
 		const token = ++this.startToken;
 		this.status = 'connecting';
-		this.events = [];
 		this.error = null;
+		// A new live stream starts fresh — any open buffers from a prior turn
+		// or from hydrated history must not be appended to.
+		this.openMessageIndex = -1;
+		this.openThinkingIndex = -1;
 
 		const controller = new AbortController();
 		this.controller = controller;
@@ -147,22 +193,34 @@ export class AgentStream {
 		}
 
 		// Accumulate consecutive thinking deltas into a single event so the chat
-		// rail renders one collapsible block instead of one row per token.
-		if (incoming.type === 'thinking' && this.events.length > 0) {
-			const last = this.events[this.events.length - 1];
-			if (last?.type === 'thinking' && last.streamId === incoming.streamId) {
-				this.events[this.events.length - 1] = { ...last, text: last.text + incoming.text };
-				return;
+		// rail renders one collapsible block instead of one row per token. We
+		// rely on an explicit open-buffer index — never "the last event" —
+		// because hydrated history events sit at the end of `events` until the
+		// first turn boundary clears them, and we must not append a new turn's
+		// deltas onto a historical row.
+		if (incoming.type === 'thinking') {
+			const open =
+				this.openThinkingIndex >= 0 ? this.events[this.openThinkingIndex] : undefined;
+			if (open?.type === 'thinking' && open.streamId === incoming.streamId) {
+				this.events[this.openThinkingIndex] = {
+					...open,
+					text: open.text + incoming.text
+				};
+			} else {
+				this.events.push(incoming);
+				this.openThinkingIndex = this.events.length - 1;
 			}
+			return;
 		}
 		// Convert streaming message_delta tokens into a single accumulated
 		// `message` event so the chat rail renders one row that grows in place.
 		if (incoming.type === 'message_delta') {
-			const last = this.events.length > 0 ? this.events[this.events.length - 1] : undefined;
-			if (last?.type === 'message' && last.streamId === incoming.streamId) {
-				this.events[this.events.length - 1] = {
-					...last,
-					content: last.content + incoming.text
+			const open =
+				this.openMessageIndex >= 0 ? this.events[this.openMessageIndex] : undefined;
+			if (open?.type === 'message' && open.streamId === incoming.streamId) {
+				this.events[this.openMessageIndex] = {
+					...open,
+					content: open.content + incoming.text
 				};
 			} else {
 				this.events.push({
@@ -172,8 +230,15 @@ export class AgentStream {
 					emittedAt: incoming.emittedAt,
 					content: incoming.text
 				});
+				this.openMessageIndex = this.events.length - 1;
 			}
 			return;
+		}
+		// Turn boundaries close any open buffers so the next turn's first
+		// delta starts a fresh row.
+		if (incoming.type === 'inference_receipt' || incoming.type === 'done') {
+			this.openMessageIndex = -1;
+			this.openThinkingIndex = -1;
 		}
 		this.events.push(incoming);
 	}
