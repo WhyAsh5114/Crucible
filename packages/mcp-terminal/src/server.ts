@@ -97,8 +97,10 @@ export function createTerminalServer(opts: CreateTerminalServerOptions): McpServ
       title: 'Write to Terminal Session',
       description:
         'Send raw text to the session bash stdin. ' +
-        'Suitable for keystrokes, control characters, or interactive commands where output capture is not required. ' +
-        'For capturing stdout/stderr use the exec tool instead.',
+        'WARNING: output is NOT captured and NOT returned — it goes to container logs only. ' +
+        'Only use this for interactive inputs where output capture is not needed ' +
+        '(e.g. sending a newline, Ctrl+C \\x03, or pasting multi-line input into a running REPL). ' +
+        'For running commands and reading their output, use the exec tool instead.',
       inputSchema: WriteInputSchema,
       annotations: {
         readOnlyHint: false,
