@@ -1,7 +1,9 @@
 # Crucible per-workspace runtime image.
 #
-# Hosts mcp-chain (3100) and mcp-compiler (3101) inside one container per
-# workspace. Build context MUST be the monorepo root so workspace packages
+# Hosts mcp-chain (3100), mcp-compiler (3101), mcp-deployer (3102),
+# mcp-wallet (3103), mcp-memory (3104), mcp-terminal (3106), and
+# mcp-devtools (3107) inside one container per workspace.
+# Build context MUST be the monorepo root so workspace packages
 # resolve correctly.
 #
 # Build:

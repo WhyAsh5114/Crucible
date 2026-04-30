@@ -188,7 +188,6 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-terminal` (agent-callable MCP wrapper) — the WebSocket `/ws/terminal` PTY backend is shipped and working via `docker exec` hijack, and the xterm.js frontend bridge is wired in `terminal-pane.svelte`. The MCP server wrapper (port 3106) that allows the agent to call terminal tools (`exec`, `write`, `resize`) is still planned. Once added, it wraps the same in-container bash surface.
 - `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
 - `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` — control-plane HTTP client, never inside a runner.
