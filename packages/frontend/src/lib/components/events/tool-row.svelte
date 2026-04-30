@@ -17,6 +17,16 @@
 
 	let output = $derived(result && result.outcome.ok ? result.outcome.result : undefined);
 	let errorText = $derived(result && !result.outcome.ok ? result.outcome.error : undefined);
+
+	/** Use the terminal-styled renderer for exec output; fall back to JSON for everything else. */
+	let isTerminalExec = $derived(call.tool === 'terminal.exec');
+
+	/** Narrowed output for the terminal renderer. Safe because exec always returns this shape. */
+	let execOutput = $derived(
+		isTerminalExec && output
+			? (output as { stdout?: string; stderr?: string; exitCode?: number })
+			: undefined
+	);
 </script>
 
 <div class="px-4 py-2">
@@ -24,7 +34,11 @@
 		<Tool.Header type={call.tool} {state} />
 		<Tool.Content>
 			<Tool.Input input={call.args} />
-			<Tool.Output {output} {errorText} />
+			{#if isTerminalExec}
+				<Tool.ExecOutput output={execOutput} {errorText} />
+			{:else}
+				<Tool.Output {output} {errorText} />
+			{/if}
 		</Tool.Content>
 	</Tool.Root>
 </div>
