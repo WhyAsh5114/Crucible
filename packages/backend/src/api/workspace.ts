@@ -16,6 +16,7 @@ import {
   FileWriteResponseSchema,
   ApiErrorSchema,
   StreamIdSchema,
+  AgentEventSchema,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
@@ -30,6 +31,7 @@ import {
   runtimeServiceBaseUrl,
 } from '../lib/runtime-docker';
 import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
+import { readChatHistory } from '../lib/chat-log';
 import { requireSession } from '../lib/auth';
 
 type ApiVariables = { userId: string };
@@ -140,6 +142,36 @@ const fileWriteRoute = createRoute({
     500: {
       content: { 'application/json': { schema: ApiErrorSchema } },
       description: 'Internal error',
+    },
+  },
+});
+
+const ChatHistoryResponseSchema = z.object({
+  events: z.array(AgentEventSchema),
+});
+
+const getChatHistoryRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/chat/history',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ChatHistoryResponseSchema } },
+      description: 'Persisted agent event history for the workspace',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
     },
   },
 });
@@ -377,6 +409,29 @@ export const workspaceApi = workspaceApiBase
         createApiErrorBody('internal', error instanceof Error ? error.message : 'Write failed'),
         500,
       );
+    }
+  })
+  .openapi(getChatHistoryRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    try {
+      const events = await readChatHistory(id);
+      return c.json(ChatHistoryResponseSchema.parse({ events }), 200);
+    } catch (err) {
+      console.warn(
+        `[workspace ${id}] chat history read failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      return c.json(ChatHistoryResponseSchema.parse({ events: [] }), 200);
     }
   })
   .get('/workspace/:id/devtools/events', async (c) => {
