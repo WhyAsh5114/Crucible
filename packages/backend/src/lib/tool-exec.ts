@@ -104,7 +104,14 @@ const MEMORY_ROUTES: Record<string, RouteSpec> = {
 
 const MESH_ROUTES: Record<string, RouteSpec> = {};
 
-type KnownServer = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'mesh';
+const TERMINAL_ROUTES: Record<string, RouteSpec> = {
+  create_session: { method: 'POST', path: () => '/create_session', withBody: true },
+  write: { method: 'POST', path: () => '/write', withBody: true },
+  exec: { method: 'POST', path: () => '/exec', withBody: true },
+  resize: { method: 'POST', path: () => '/resize', withBody: true },
+};
+
+type KnownServer = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'mesh' | 'terminal';
 
 function pickRoute(server: KnownServer, tool: string): RouteSpec | null {
   const tables: Record<KnownServer, Record<string, RouteSpec>> = {
@@ -114,6 +121,7 @@ function pickRoute(server: KnownServer, tool: string): RouteSpec | null {
     wallet: WALLET_ROUTES,
     memory: MEMORY_ROUTES,
     mesh: MESH_ROUTES,
+    terminal: TERMINAL_ROUTES,
   };
   return tables[server][tool] ?? null;
 }
@@ -173,13 +181,6 @@ async function proxyToService(
 }
 
 export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExecOutcome> {
-  if (input.server === 'terminal') {
-    return {
-      ok: false,
-      error: `terminal interaction is handled via the WebSocket PTY endpoint, not tool_exec`,
-    };
-  }
-
   const ports = await getWorkspaceContainerPorts(input.workspaceId).catch(() => null);
   if (!ports) {
     return {
@@ -194,6 +195,7 @@ export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExec
     deployer: ports.deployer,
     wallet: ports.wallet,
     memory: ports.memory,
+    terminal: ports.terminal,
     mesh: null,
   };
 
