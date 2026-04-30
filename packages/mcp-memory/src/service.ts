@@ -1,6 +1,15 @@
 import { join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import {
+  Batcher,
+  Indexer,
+  KvClient,
+  getFlowContract,
+  type StorageNode,
+} from '@0gfoundation/0g-storage-ts-sdk';
+import { JsonRpcProvider, Wallet, computeAddress, hexlify, zeroPadValue } from 'ethers';
 import { type mcp } from '@crucible/types';
 
 interface StoredPattern {
@@ -88,7 +97,23 @@ function scorePattern(pattern: StoredPattern, input: mcp.memory.RecallInput): nu
   return Number(score.toFixed(4));
 }
 
-async function readPatterns(filePath: string): Promise<StoredPattern[]> {
+function rankAndPaginate(
+  patterns: StoredPattern[],
+  input: mcp.memory.RecallInput,
+): Array<{ pattern: StoredPattern; score: number }> {
+  return patterns
+    .map((pattern) => ({ pattern, score: scorePattern(pattern, input) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || b.pattern.createdAt - a.pattern.createdAt);
+}
+
+function newPatternId(): string {
+  return `pattern-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
+
+// ---------- Local FS backend ----------
+
+async function readPatternsFs(filePath: string): Promise<StoredPattern[]> {
   try {
     const raw = await readFile(filePath, 'utf8');
     const parsed: unknown = JSON.parse(raw);
@@ -108,53 +133,41 @@ async function readPatterns(filePath: string): Promise<StoredPattern[]> {
   }
 }
 
-async function writePatterns(filePath: string, patterns: StoredPattern[]): Promise<void> {
+async function writePatternsFs(filePath: string, patterns: StoredPattern[]): Promise<void> {
   await mkdir(join(filePath, '..'), { recursive: true });
   await writeFile(filePath, JSON.stringify(patterns, null, 2) + '\n', 'utf8');
 }
 
-export function createMemoryService(opts: { workspaceRoot: string }): MemoryService {
-  const patternsPath = join(opts.workspaceRoot, '.crucible', 'memory', 'patterns.json');
-  const authorNode = process.env['NODE_ID'] ?? 'local-node';
-  const originalSession = process.env['SESSION_ID'] ?? 'local-session';
-
+function createFsService(opts: {
+  patternsPath: string;
+  authorNode: string;
+  originalSession: string;
+}): MemoryService {
+  const { patternsPath, authorNode, originalSession } = opts;
   return {
     async recall(input) {
-      const patterns = await readPatterns(patternsPath);
-      const ranked = patterns
-        .map((pattern) => ({ pattern, score: scorePattern(pattern, input) }))
-        .filter((entry) => entry.score > 0)
-        .sort((a, b) => b.score - a.score || b.pattern.createdAt - a.pattern.createdAt);
-
+      const patterns = await readPatternsFs(patternsPath);
       const limit = input.limit ?? 5;
-      return {
-        hits: ranked.slice(0, limit),
-      };
+      return { hits: rankAndPaginate(patterns, input).slice(0, limit) };
     },
-
     async remember(input) {
-      const patterns = await readPatterns(patternsPath);
-      const id = `pattern-${Date.now()}-${randomUUID().slice(0, 8)}`;
-      const entry: StoredPattern = {
+      const patterns = await readPatternsFs(patternsPath);
+      const id = newPatternId();
+      patterns.push({
         id,
         revertSignature: input.revertSignature,
         patch: input.patch,
         traceRef: input.traceRef,
         verificationReceipt: input.verificationReceipt,
-        provenance: {
-          authorNode,
-          originalSession,
-        },
+        provenance: { authorNode, originalSession },
         scope: input.scope,
         createdAt: Date.now(),
-      };
-      patterns.push(entry);
-      await writePatterns(patternsPath, patterns);
+      });
+      await writePatternsFs(patternsPath, patterns);
       return { id };
     },
-
     async listPatterns(input) {
-      const patterns = await readPatterns(patternsPath);
+      const patterns = await readPatternsFs(patternsPath);
       const filtered = input.scope
         ? patterns.filter((pattern) => pattern.scope === input.scope)
         : patterns;
@@ -162,20 +175,191 @@ export function createMemoryService(opts: { workspaceRoot: string }): MemoryServ
       const limit = input.limit ?? 50;
       const page = filtered.slice(offset, offset + limit);
       const next = offset + page.length;
-
       return {
         patterns: page,
         nextCursor: next < filtered.length ? String(next) : null,
       };
     },
-
     async provenance(input) {
-      const patterns = await readPatterns(patternsPath);
+      const patterns = await readPatternsFs(patternsPath);
       const found = patterns.find((pattern) => pattern.id === input.id);
-      if (!found) {
-        throw new Error(`Pattern not found: ${input.id}`);
-      }
+      if (!found) throw new Error(`Pattern not found: ${input.id}`);
       return found.provenance;
     },
   };
+}
+
+// ---------- 0G Storage KV backend ----------
+
+interface KvConfig {
+  privateKey: string;
+  rpcUrl: string;
+  indexerUrl: string;
+  kvUrl: string;
+  localStreamId: string;
+  meshStreamId: string;
+  authorNode: string;
+  originalSession: string;
+}
+
+function streamIdForScope(cfg: KvConfig, scope: 'local' | 'mesh'): string {
+  return scope === 'local' ? cfg.localStreamId : cfg.meshStreamId;
+}
+
+function encodeKey(id: string): Uint8Array {
+  return new Uint8Array(Buffer.from(id, 'utf-8'));
+}
+
+function decodeBase64ToString(data: string): string {
+  return Buffer.from(data, 'base64').toString('utf-8');
+}
+
+function createKvService(cfg: KvConfig): MemoryService {
+  const provider = new JsonRpcProvider(cfg.rpcUrl);
+  const signer = new Wallet(cfg.privateKey, provider);
+  const indexer = new Indexer(cfg.indexerUrl);
+  const kvClient = new KvClient(cfg.kvUrl);
+
+  let cachedNodes: StorageNode[] | null = null;
+  let cachedFlowAddress: string | null = null;
+
+  async function getNodes(): Promise<StorageNode[]> {
+    if (cachedNodes) return cachedNodes;
+    const [nodes, err] = await indexer.selectNodes(1);
+    if (err) throw new Error(`0G indexer selectNodes failed: ${err.message}`);
+    cachedNodes = nodes;
+    return nodes;
+  }
+
+  async function getFlowAddress(): Promise<string> {
+    if (cachedFlowAddress) return cachedFlowAddress;
+    const nodes = await getNodes();
+    const status = await nodes[0]!.getStatus();
+    cachedFlowAddress = status.networkIdentity.flowAddress;
+    return cachedFlowAddress;
+  }
+
+  async function writePattern(pattern: StoredPattern): Promise<void> {
+    const nodes = await getNodes();
+    const flowAddress = await getFlowAddress();
+    const flow = getFlowContract(flowAddress, signer);
+    const batcher = new Batcher(1, nodes, flow, cfg.rpcUrl);
+    const streamId = streamIdForScope(cfg, pattern.scope);
+    const key = encodeKey(pattern.id);
+    const value = new Uint8Array(Buffer.from(JSON.stringify(pattern), 'utf-8'));
+    batcher.streamDataBuilder.set(streamId, key, value);
+    const [, err] = await batcher.exec();
+    if (err) throw new Error(`0G KV write failed: ${err.message}`);
+  }
+
+  async function readAllPatterns(scope: 'local' | 'mesh'): Promise<StoredPattern[]> {
+    const streamId = streamIdForScope(cfg, scope);
+    const iterator = kvClient.newIterator(streamId);
+    const seekErr = await iterator.seekToFirst();
+    if (seekErr) throw new Error(`0G KV iterator seek failed: ${seekErr.message}`);
+    const out: StoredPattern[] = [];
+    while (iterator.valid()) {
+      const pair = iterator.getCurrentPair();
+      if (pair) {
+        const json = decodeBase64ToString(pair.data);
+        out.push(JSON.parse(json) as StoredPattern);
+      }
+      const nextErr = await iterator.next();
+      if (nextErr) throw new Error(`0G KV iterator next failed: ${nextErr.message}`);
+    }
+    return out;
+  }
+
+  async function readAll(): Promise<StoredPattern[]> {
+    const [local, mesh] = await Promise.all([readAllPatterns('local'), readAllPatterns('mesh')]);
+    return [...local, ...mesh];
+  }
+
+  async function findById(id: string): Promise<StoredPattern | null> {
+    for (const scope of ['local', 'mesh'] as const) {
+      const streamId = streamIdForScope(cfg, scope);
+      const value = await kvClient.getValue(streamId, hexlify(encodeKey(id)));
+      if (value) {
+        return JSON.parse(decodeBase64ToString(value.data)) as StoredPattern;
+      }
+    }
+    return null;
+  }
+
+  return {
+    async recall(input) {
+      const patterns = await readAll();
+      const limit = input.limit ?? 5;
+      return { hits: rankAndPaginate(patterns, input).slice(0, limit) };
+    },
+    async remember(input) {
+      const id = newPatternId();
+      const pattern: StoredPattern = {
+        id,
+        revertSignature: input.revertSignature,
+        patch: input.patch,
+        traceRef: input.traceRef,
+        verificationReceipt: input.verificationReceipt,
+        provenance: { authorNode: cfg.authorNode, originalSession: cfg.originalSession },
+        scope: input.scope,
+        createdAt: Date.now(),
+      };
+      await writePattern(pattern);
+      return { id };
+    },
+    async listPatterns(input) {
+      const patterns = input.scope ? await readAllPatterns(input.scope) : await readAll();
+      const offset = safeParseCursor(input.cursor);
+      const limit = input.limit ?? 50;
+      const page = patterns.slice(offset, offset + limit);
+      const next = offset + page.length;
+      return {
+        patterns: page,
+        nextCursor: next < patterns.length ? String(next) : null,
+      };
+    },
+    async provenance(input) {
+      const found = await findById(input.id);
+      if (!found) throw new Error(`Pattern not found: ${input.id}`);
+      return found.provenance;
+    },
+  };
+}
+
+// ---------- Factory ----------
+
+const DEFAULT_OG_RPC_URL = 'https://evmrpc-testnet.0g.ai';
+const DEFAULT_OG_INDEXER_URL = 'https://indexer-storage-testnet-turbo.0g.ai';
+const DEFAULT_MESH_STREAM_ID = '0x' + '00'.repeat(31) + '01';
+
+function defaultLocalStreamId(privateKey: string): string {
+  // 32-byte stream id derived from signer address (left-padded with zeros).
+  const address = computeAddress(privateKey);
+  return zeroPadValue(address, 32);
+}
+
+export function createMemoryService(opts: { workspaceRoot: string }): MemoryService {
+  const authorNode = process.env['NODE_ID'] ?? 'local-node';
+  const originalSession = process.env['SESSION_ID'] ?? 'local-session';
+  const privateKey = process.env['OG_STORAGE_PRIVATE_KEY'];
+
+  if (privateKey) {
+    const kvUrl = process.env['OG_STORAGE_KV_URL'];
+    if (!kvUrl) {
+      throw new Error('OG_STORAGE_KV_URL is required when OG_STORAGE_PRIVATE_KEY is set');
+    }
+    return createKvService({
+      privateKey,
+      rpcUrl: process.env['OG_STORAGE_RPC_URL'] ?? DEFAULT_OG_RPC_URL,
+      indexerUrl: process.env['OG_STORAGE_INDEXER_URL'] ?? DEFAULT_OG_INDEXER_URL,
+      kvUrl,
+      localStreamId: process.env['OG_STORAGE_LOCAL_STREAM_ID'] ?? defaultLocalStreamId(privateKey),
+      meshStreamId: process.env['OG_STORAGE_MESH_STREAM_ID'] ?? DEFAULT_MESH_STREAM_ID,
+      authorNode,
+      originalSession,
+    });
+  }
+
+  const patternsPath = join(opts.workspaceRoot, '.crucible', 'memory', 'patterns.json');
+  return createFsService({ patternsPath, authorNode, originalSession });
 }
