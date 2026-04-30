@@ -35,11 +35,6 @@ export interface AgentConfig {
   apiKey: string;
   model: string;
   /**
-   * Extra HTTP headers injected on every request.
-   * Used for 0G Compute per-request signed auth headers.
-   */
-  headers?: Record<string, string>;
-  /**
    * Which provider is serving this turn.
    * Defaults to 'openai-compatible' when not set.
    */
@@ -85,6 +80,100 @@ export interface AgentAdapter {
   nextSeq(workspaceId: string): number;
 }
 
+// ── 0G Compute Router fetch wrapper ──────────────────────────────────────────
+
+/**
+ * Error thrown by the custom Router fetch when the upstream returns a non-2xx
+ * status. Carries a classified `fallbackReason` so the agent loop can surface
+ * a meaningful retry hint to the user via the `error` event.
+ */
+class OgRouterError extends Error {
+  override readonly name = 'OgRouterError';
+  readonly fallbackReason: FallbackReason;
+  readonly status: number;
+
+  constructor(message: string, status: number, fallbackReason: FallbackReason) {
+    super(message);
+    this.status = status;
+    this.fallbackReason = fallbackReason;
+  }
+}
+
+/**
+ * Map a 0G Router HTTP error to a `FallbackReason`.
+ *
+ * See the Router error reference:
+ * https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/errors
+ */
+function classifyRouterError(status: number, body: string): FallbackReason {
+  if (status === 429) return 'rate_limited';
+  if (status === 402 || /insufficient\s+balance/iu.test(body)) return 'balance_exhausted';
+  return 'provider_unavailable';
+}
+
+/**
+ * Recursively unwrap an error to find an `OgRouterError`. AI SDK wraps fetch
+ * errors in `APICallError` / cause chains, so direct `instanceof` checks miss.
+ */
+function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current; depth++) {
+    if (current instanceof OgRouterError) return current.fallbackReason;
+    if (current instanceof Error && current.cause) {
+      current = current.cause;
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Build a `fetch` implementation for `createOpenAI` that:
+ *   1. Injects `verify_tee: true` into chat-completion request bodies when the
+ *      active provider is 0G Compute, asking the Router for a TEE attestation
+ *      receipt (surfaced in the `x_0g_trace` field of the response).
+ *   2. Throws a typed `OgRouterError` on non-2xx responses so the agent loop
+ *      can classify the fallback reason and tell the UI how to recover.
+ *
+ * Streaming response bodies are passed through untouched — capturing the
+ * trailing `x_0g_trace` from a streamed completion is left for a follow-up.
+ */
+function makeOgRouterFetch(provider: AgentConfig['provider']): typeof globalThis.fetch | undefined {
+  if (provider !== '0g-compute') return undefined;
+
+  const wrapped = async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ): Promise<Response> => {
+    let nextInit = init;
+    if (init?.body && typeof init.body === 'string') {
+      try {
+        const parsed = JSON.parse(init.body) as Record<string, unknown>;
+        parsed['verify_tee'] = true;
+        nextInit = { ...init, body: JSON.stringify(parsed) };
+      } catch {
+        // Non-JSON body — leave untouched.
+      }
+    }
+
+    const response = await globalThis.fetch(input, nextInit);
+    if (!response.ok) {
+      const text = await response
+        .clone()
+        .text()
+        .catch(() => '');
+      throw new OgRouterError(
+        `0G Compute Router error ${response.status}: ${text || response.statusText}`,
+        response.status,
+        classifyRouterError(response.status, text),
+      );
+    }
+    return response;
+  };
+  return wrapped as typeof globalThis.fetch;
+}
+
 // ── MCP schema registry ──────────────────────────────────────────────────────
 
 type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal';
@@ -113,6 +202,7 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         simulate_local: { inputSchema: mcp.deployer.SimulateLocalInputSchema },
         trace: { inputSchema: mcp.deployer.TraceInputSchema },
         call: { inputSchema: mcp.deployer.CallInputSchema },
+        deploy_0g_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
       };
     case 'wallet':
       return {
@@ -179,10 +269,11 @@ export async function runAgentTurn(
     // Proceed without file context.
   }
 
+  const ogFetch = makeOgRouterFetch(config.provider);
   const openai = createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
-    ...(config.headers ? { headers: config.headers } : {}),
+    ...(ogFetch ? { fetch: ogFetch } : {}),
   });
 
   let promptTokens = 0;
@@ -357,23 +448,28 @@ export async function runAgentTurn(
           }
           break;
 
-        case 'error':
+        case 'error': {
+          const reason = ogFallbackReasonOf(chunk.error);
           emit({
             ...baseEvent(),
             type: 'error',
             message: chunk.error instanceof Error ? chunk.error.message : String(chunk.error),
+            ...(reason ? { ogFallbackReason: reason } : {}),
           });
           break;
+        }
 
         default:
           break;
       }
     }
   } catch (err) {
+    const reason = ogFallbackReasonOf(err);
     emit({
       ...baseEvent(),
       type: 'error',
       message: `Agent loop failed: ${err instanceof Error ? err.message : String(err)}`,
+      ...(reason ? { ogFallbackReason: reason } : {}),
     });
     emit({ ...baseEvent(), type: 'done' });
     return;
