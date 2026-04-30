@@ -26,16 +26,14 @@
 	<div class={cn('space-y-2 p-4', className)}>
 		<!-- header: label + exit-code badge -->
 		<div class="flex items-center gap-2">
-			<span class="text-xs font-medium tracking-wide uppercase text-muted-foreground">
+			<span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
 				Terminal output
 			</span>
 			{#if exitCode !== null}
 				<span
 					class={cn(
 						'inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs font-semibold',
-						exitOk
-							? 'bg-live/15 text-live'
-							: 'bg-destructive/15 text-destructive'
+						exitOk ? 'bg-live/15 text-live' : 'bg-destructive/15 text-destructive'
 					)}
 				>
 					exit&nbsp;{exitCode}
@@ -44,14 +42,14 @@
 		</div>
 
 		<!-- terminal block -->
-		<div class="overflow-hidden rounded-md border border-border bg-muted text-xs font-mono">
+		<div class="overflow-hidden rounded-md border border-border bg-muted font-mono text-xs">
 			{#if errorText}
 				<!-- MCP-level error (not a shell non-zero exit) -->
-				<div class="p-3 text-destructive whitespace-pre-wrap break-all">{errorText}</div>
+				<div class="p-3 break-all whitespace-pre-wrap text-destructive">{errorText}</div>
 			{:else}
 				{#if hasStdout}
 					<pre
-						class="p-3 text-foreground whitespace-pre-wrap break-all leading-relaxed">{output?.stdout}</pre>
+						class="p-3 leading-relaxed break-all whitespace-pre-wrap text-foreground">{output?.stdout}</pre>
 				{/if}
 
 				{#if hasStdout && hasStderr}
@@ -60,11 +58,11 @@
 
 				{#if hasStderr}
 					<pre
-						class="p-3 text-destructive whitespace-pre-wrap break-all leading-relaxed">{output?.stderr}</pre>
+						class="p-3 leading-relaxed break-all whitespace-pre-wrap text-destructive">{output?.stderr}</pre>
 				{/if}
 
 				{#if !hasStdout && !hasStderr}
-					<div class="p-3 italic text-muted-foreground">(no output)</div>
+					<div class="p-3 text-muted-foreground italic">(no output)</div>
 				{/if}
 			{/if}
 		</div>
