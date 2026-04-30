@@ -57,7 +57,9 @@ export interface AgentConfig {
    * When present, the agent connects to that server directly via the AI SDK
    * MCP client rather than routing through the REST proxy in tool-exec.ts.
    */
-  mcpServerUrls?: Partial<Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory', string>>;
+  mcpServerUrls?: Partial<
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
+  >;
 }
 
 /** Shell execution result returned by adapter.runShell. */
@@ -95,7 +97,7 @@ export interface AgentAdapter {
 
 // ── MCP schema registry ──────────────────────────────────────────────────────
 
-type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory';
+type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal';
 
 function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.ZodTypeAny }> {
   switch (server) {
@@ -136,6 +138,13 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         remember: { inputSchema: mcp.memory.RememberInputSchema },
         list_patterns: { inputSchema: mcp.memory.ListPatternsInputSchema },
         provenance: { inputSchema: mcp.memory.ProvenanceInputSchema },
+      };
+    case 'terminal':
+      return {
+        create_session: { inputSchema: mcp.terminal.CreateSessionInputSchema },
+        write: { inputSchema: mcp.terminal.WriteInputSchema },
+        exec: { inputSchema: mcp.terminal.ExecInputSchema },
+        resize: { inputSchema: mcp.terminal.ResizeInputSchema },
       };
   }
 }
