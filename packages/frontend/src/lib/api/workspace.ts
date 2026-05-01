@@ -16,7 +16,11 @@ import type {
 	WorkspaceDeleteResponse,
 	PromptRequest,
 	PromptResponse,
-	AgentEvent
+	AgentEvent,
+	ChatSessionListResponse,
+	ChatSessionCreateRequest,
+	ChatSessionRenameRequest,
+	ChatSessionDeleteResponse
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -92,13 +96,14 @@ export class WorkspaceClient {
 	}
 
 	/**
-	 * Fetch the persisted chat history for a workspace. Returns the raw
+	 * Fetch the persisted chat history for a workspace session. Returns the raw
 	 * `AgentEvent` log so the caller can replay it through the same coalescing
 	 * pipeline that handles live SSE frames.
 	 */
-	async getChatHistory(id: string): Promise<AgentEvent[]> {
+	async getChatHistory(id: string, sessionId?: string): Promise<AgentEvent[]> {
 		const res = await apiClient.api.workspace[':id'].chat.history.$get({
-			param: { id }
+			param: { id },
+			query: sessionId ? { sessionId } : {}
 		});
 		if (!res.ok) {
 			throw new Error(`getChatHistory failed: ${res.status} ${await res.text()}`);
@@ -130,6 +135,57 @@ export class WorkspaceClient {
 			throw new Error(`fetchModels failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as ModelsResponse;
+	}
+
+	// ── Chat sessions ────────────────────────────────────────────────────────
+
+	async listSessions(workspaceId: string): Promise<ChatSessionListResponse> {
+		const res = await apiClient.api.workspace[':id'].sessions.$get({
+			param: { id: workspaceId }
+		});
+		if (!res.ok) {
+			throw new Error(`listSessions failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as ChatSessionListResponse;
+	}
+
+	async createSession(
+		workspaceId: string,
+		req: ChatSessionCreateRequest = {}
+	): Promise<ChatSessionListResponse> {
+		const res = await apiClient.api.workspace[':id'].sessions.$post({
+			param: { id: workspaceId },
+			json: req
+		});
+		if (!res.ok) {
+			throw new Error(`createSession failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as ChatSessionListResponse;
+	}
+
+	async renameSession(
+		workspaceId: string,
+		sessionId: string,
+		req: ChatSessionRenameRequest
+	): Promise<ChatSessionListResponse> {
+		const res = await apiClient.api.workspace[':id'].sessions[':sessionId'].$patch({
+			param: { id: workspaceId, sessionId },
+			json: req
+		});
+		if (!res.ok) {
+			throw new Error(`renameSession failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as ChatSessionListResponse;
+	}
+
+	async deleteSession(workspaceId: string, sessionId: string): Promise<ChatSessionDeleteResponse> {
+		const res = await apiClient.api.workspace[':id'].sessions[':sessionId'].$delete({
+			param: { id: workspaceId, sessionId }
+		});
+		if (!res.ok) {
+			throw new Error(`deleteSession failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as ChatSessionDeleteResponse;
 	}
 }
 

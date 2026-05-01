@@ -212,8 +212,7 @@
 		wallet.setWorkspace(id);
 		try {
 			workspace = await workspaceClient.getWorkspace(id);
-			await stream.hydrate(workspace.id);
-			stream.start(workspace.id);
+			// Note: session hydration and stream start are managed by chat-rail.svelte.
 			devtoolsStream.start(workspace.id);
 			if (!workspaceIsBooted(workspace)) {
 				pollWorkspaceId = id;
