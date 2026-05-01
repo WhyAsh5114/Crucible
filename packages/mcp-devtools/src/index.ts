@@ -91,7 +91,18 @@ app.get('/events', (c) => {
       const listener = (event: DevtoolsEvent) => write(event);
       subscribers.add(listener);
 
+      // Send keepalive comment every 30 seconds to prevent connection timeout
+      const keepaliveInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          // Client disconnected, clear interval
+          clearInterval(keepaliveInterval);
+        }
+      }, 30000);
+
       c.req.raw.signal.addEventListener('abort', () => {
+        clearInterval(keepaliveInterval);
         subscribers.delete(listener);
         try {
           controller.close();
