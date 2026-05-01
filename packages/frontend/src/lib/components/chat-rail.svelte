@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as Conversation from '$lib/components/ai-elements/conversation';
+	import type { StickToBottomContext } from '$lib/components/ai-elements/conversation/stick-to-bottom-context.svelte';
 	import { Loader } from '$lib/components/ai-elements/loader';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import { workspaceClient } from '$lib/api/workspace';
@@ -9,7 +10,7 @@
 	import { pairToolEvents } from './events/pair-tool-events';
 	import EmptyState from './empty-state.svelte';
 	import SendIcon from '@lucide/svelte/icons/send';
-	import LoaderIcon from '@lucide/svelte/icons/loader';
+	import StopIcon from '@lucide/svelte/icons/square';
 	import type { WorkspaceId } from '@crucible/types';
 
 	interface Props {
@@ -23,14 +24,31 @@
 
 	let prompt = $state('');
 	let sending = $state(false);
+	let cancelling = $state(false);
 	let sendError = $state<string | null>(null);
+	// Stick-to-bottom controller from Conversation.Root, bound below. The
+	// MutationObserver inside auto-scrolls only while the user is at bottom;
+	// once they scroll up to read, `userHasScrolled` stays true. We call
+	// `scrollToBottom` on every prompt submit so a new turn always lands in
+	// view, regardless of where the user's reading position drifted to.
+	let stick = $state<StickToBottomContext | undefined>();
+
+	// While the agent is mid-turn we hide the send button and surface a
+	// stop button instead. `streaming` covers active token output; `connecting`
+	// means the SSE handshake is still in flight (the prompt POST has fired
+	// but the first event hasn't arrived yet) — both should let the user back
+	// out without waiting for completion.
+	let inFlight = $derived(
+		sending || stream.status === 'streaming' || stream.status === 'connecting'
+	);
 
 	async function handleSubmit(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		const trimmed = prompt.trim();
-		if (!trimmed || sending) return;
+		if (!trimmed || inFlight) return;
 		sending = true;
 		sendError = null;
+		stick?.scrollToBottom('smooth');
 		try {
 			await workspaceClient.sendPrompt({ workspaceId, prompt: trimmed });
 			prompt = '';
@@ -38,6 +56,19 @@
 			sendError = err instanceof Error ? err.message : String(err);
 		} finally {
 			sending = false;
+		}
+	}
+
+	async function handleCancel(): Promise<void> {
+		if (cancelling) return;
+		cancelling = true;
+		sendError = null;
+		try {
+			await workspaceClient.cancelAgent(workspaceId);
+		} catch (err) {
+			sendError = err instanceof Error ? err.message : String(err);
+		} finally {
+			cancelling = false;
 		}
 	}
 
@@ -72,7 +103,7 @@
 		</div>
 	</header>
 
-	<Conversation.Root class="min-h-0 flex-1">
+	<Conversation.Root class="min-h-0 flex-1" bind:stick>
 		<Conversation.Content class="!p-0">
 			{#if stream.events.length === 0 && stream.status === 'error'}
 				<EmptyState
@@ -92,7 +123,7 @@
 							{#if item.kind === 'tool'}
 								<ToolRow call={item.call} result={item.result} />
 							{:else}
-								<EventRow event={item.event} />
+								<EventRow event={item.event} repeatCount={item.repeatCount} />
 							{/if}
 						</li>
 					{/each}
@@ -114,23 +145,37 @@
 				onkeydown={handleKeydown}
 				placeholder="Ask the agent…  (Enter to send, Shift+Enter for newline)"
 				rows={2}
-				disabled={sending}
+				disabled={inFlight}
 				class="min-h-[2.5rem] flex-1 resize-none bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
 			></textarea>
-			<Button
-				type="submit"
-				size="icon"
-				variant="default"
-				disabled={sending || prompt.trim().length === 0}
-				aria-label="Send prompt"
-				class="shrink-0"
-			>
-				{#if sending || stream.status === 'streaming'}
-					<LoaderIcon class="size-4 animate-spin" />
-				{:else}
+			{#if inFlight}
+				<Button
+					type="button"
+					size="icon"
+					variant="destructive"
+					onclick={handleCancel}
+					disabled={cancelling}
+					aria-label="Cancel agent"
+					class="shrink-0"
+				>
+					{#if cancelling}
+						<Loader class="size-4" />
+					{:else}
+						<StopIcon class="size-4" />
+					{/if}
+				</Button>
+			{:else}
+				<Button
+					type="submit"
+					size="icon"
+					variant="default"
+					disabled={prompt.trim().length === 0}
+					aria-label="Send prompt"
+					class="shrink-0"
+				>
 					<SendIcon class="size-4" />
-				{/if}
-			</Button>
+				</Button>
+			{/if}
 		</div>
 	</form>
 </aside>
