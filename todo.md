@@ -139,8 +139,8 @@
 - [x] `mcp-memory` MCP interface abstracting 0G Storage KV (recall index) and Log (full history)
 - [x] 0G Storage backend code in `mcp-memory` — `KvClient` wired; activates when `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` are set; falls back to local FS otherwise
 - [x] Fallback mode visibly shown in UI — `inference-receipt-row.svelte` distinguishes "0G Compute" / "0G Compute · <reason>" / "Fallback: <reason>" with click-to-expand `x_0g_trace`
-- [ ] Set `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` in demo environment so recall round-trip uses real 0G KV (not FS)
-- [ ] Contract deployment addresses on 0G Chain (required for 0G submission)
+- [x] Set `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` in demo environment so recall round-trip uses real 0G KV (not FS)
+- [x] Contract deployment addresses on 0G Chain (required for 0G submission)
 - [ ] Demo video ≤ 3 min (separate 0G-focused cut)
 - [ ] Architecture diagram showing OpenClaw + 0G Storage/Compute integration
 - [ ] Submission form: protocol features/SDKs used documented (0G Compute, 0G Storage KV + Log)
@@ -151,7 +151,7 @@
 
 - [x] Persistent memory layer across sessions (via `mcp-memory`)
 - [x] 0G Storage KV backend code wired — activates with `OG_STORAGE_PRIVATE_KEY`
-- [ ] Cross-session recall demo: close workspace → reopen → agent recalls a pattern from 0G KV stored in a previous session
+- [x] Cross-session recall demo: close workspace → reopen → agent recalls a pattern from 0G KV stored in a previous session
 - [ ] Submission framing: "Crucible as Digital Twin" — one persistent agent per developer, learns from every revert, memory on 0G Storage KV
 - [ ] ~~Emergent mesh collaboration~~ _(stretch — requires mcp-mesh / AXL; not needed for Track 2 qualifier)_
 - [ ] ~~Cross-node knowledge sharing demo~~ _(stretch — same dependency)_
