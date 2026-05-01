@@ -162,8 +162,11 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  │   • mcp-deployer (in-container 3102, host port published dynamically)    │            │
                 │  │   • mcp-wallet   (in-container 3103, host port published dynamically)    │            │
                 │  │   • mcp-memory   (in-container 3104, host port published dynamically)    │            │
-                │  │   • bash shell   (via docker exec hijack, TTY mode, shared user+agent)   │            │
+                │  │   • bash shell   (via docker exec hijack, TTY mode, browser PTY only)   │            │
                 │  │   • mcp-terminal (in-container 3106, host port published dynamically)    │            │
+                │  │   • mcp-devtools (in-container 3107, host port published dynamically)    │            │
+                │  │       — receives tool_call/result events; SSE'd to browser via control   │            │
+                │  │         plane GET /api/workspace/:id/devtools/events                     │            │
                 │  └──────────────────────────────────────────────────────────────────────────┘            │
                 │                                                                                          │
                 │  Preview (per workspace, on host — NOT inside runner)                                    │
@@ -358,6 +361,7 @@ Every workspace has a real filesystem root managed by the backend:
     state.json
     artifacts/
     logs/
+    chat.jsonl
 ```
 
 | Path                   | Purpose                                                                         |
@@ -367,8 +371,9 @@ Every workspace has a real filesystem root managed by the backend:
 | `.crucible/state.json` | Deployments, selected chain target, snapshots, active account, preview metadata |
 | `.crucible/artifacts/` | Compiler output consumed by deployer tools                                      |
 | `.crucible/logs/`      | Terminal transcript, build logs, and agent-visible execution logs               |
+| `.crucible/chat.jsonl` | Persisted agent event history in JSONL format (one event per line)              |
 
-The editor mirrors the workspace files. The compiler, deployer, preview server, and terminal all operate against that same directory. There is no second hidden representation of the project in browser memory.
+The editor mirrors the workspace files. The compiler, deployer, preview server, and terminal all operate against that same directory. There is no second hidden representation of the project in browser memory. Chat history is appended to `chat.jsonl` as JSONL by `recordChatEvent` (called from `publishAgentEvent` before fan-out to SSE subscribers), with token deltas coalesced to prevent excessive file growth. When a user loads a workspace, the history is hydrated from `GET /api/workspace/:id/chat/history` into the frontend's `AgentStream` before the live SSE stream opens.
 
 Each workspace also gets its own isolated Hardhat process and snapshot stack. That avoids cross-project nonce leaks, deployment collisions, and shared-chain confusion when multiple workspaces are open at once.
 
@@ -378,16 +383,18 @@ Each workspace also gets its own isolated Hardhat process and snapshot stack. Th
 
 The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. All custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments.
 
-| MCP Server        | Port       | Tools                                                                               | Purpose                                                                                                       |
-| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------ |
-| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                                                    |
-| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files, extract artifacts                                                              |
-| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy compiled contracts by name, simulate & trace transactions locally                                      |
-| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                                                    |
-| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                                                   |
-| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                                 |
-| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Own PTY-backed shell sessions and make terminal output visible to both user and agent _(planned)_ _(planned)_ |
-| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains                                                |
+| MCP Server        | Port       | Tools                                                                               | Purpose                                                                                                   |
+| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
+| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                                                |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files, extract artifacts                                                          |
+| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy compiled contracts by name, simulate & trace transactions locally                                  |
+| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                                                |
+| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                                               |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                             |
+| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY |
+| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains _(planned)_                                |
+
+> **Devtools sidecar (port 3107, in-runner, not in the table above):** `packages/mcp-devtools` is an observability service the other in-runner MCPs report `tool_call` / `tool_result` / `container` events to via `POST /event`. The control plane proxies those events to the browser as SSE on `GET /api/workspace/:id/devtools/events`. It is intentionally not part of `McpServerName` — the agent never calls it.
 
 ### chain-mcp — Implementation Notes
 
