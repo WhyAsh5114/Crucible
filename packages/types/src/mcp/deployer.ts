@@ -92,6 +92,8 @@ export const DeployOgChainOutputSchema = z.object({
   address: AddressSchema,
   txHash: HashSchema,
   gasUsed: BigIntStringSchema,
+  /** 0G Galileo testnet chain id. Hardcoded — this tool only targets testnet. */
+  chainId: z.literal(16602),
   /** 0G Chainscan URL for the deployment transaction. */
   explorerUrl: z.string().url(),
 });
@@ -103,5 +105,5 @@ export const tools = {
   simulate_local: { input: SimulateLocalInputSchema, output: SimulateLocalOutputSchema },
   trace: { input: TraceInputSchema, output: TraceOutputSchema },
   call: { input: CallInputSchema, output: CallOutputSchema },
-  deploy_0g_chain: { input: DeployOgChainInputSchema, output: DeployOgChainOutputSchema },
+  deploy_og_chain: { input: DeployOgChainInputSchema, output: DeployOgChainOutputSchema },
 } as const;

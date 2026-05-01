@@ -91,6 +91,7 @@ export interface DeployerService {
     address: `0x${string}`;
     txHash: `0x${string}`;
     gasUsed: string;
+    chainId: 16602;
     explorerUrl: string;
   }>;
 }
@@ -460,6 +461,7 @@ export function createDeployerService(opts: {
         address: receipt.contractAddress,
         txHash,
         gasUsed: encodeBigInt(receipt.gasUsed),
+        chainId: 16602 as const,
         explorerUrl: `https://chainscan-galileo.0g.ai/tx/${txHash}`,
       };
     },

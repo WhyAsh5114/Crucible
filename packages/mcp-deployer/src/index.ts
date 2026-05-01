@@ -195,7 +195,7 @@ const callRoute = createRoute({
 
 const deployOgChainRoute = createRoute({
   method: 'post',
-  path: '/deploy_0g_chain',
+  path: '/deploy_og_chain',
   request: {
     body: {
       content: { 'application/json': { schema: DeployOgChainInputSchema } },
@@ -264,7 +264,7 @@ function deployerToolForPath(path: string): string | null {
   if (path === '/simulate_local') return 'simulate_local';
   if (path === '/trace') return 'trace';
   if (path === '/call') return 'call';
-  if (path === '/deploy_0g_chain') return 'deploy_0g_chain';
+  if (path === '/deploy_og_chain') return 'deploy_og_chain';
   return null;
 }
 
@@ -370,7 +370,7 @@ app.openapi(deployOgChainRoute, async (c) => {
     const output = await service.deploy0gChain(c.req.valid('json'));
     return c.json(output, 200);
   } catch (err) {
-    console.error(`[mcp-deployer] deploy_0g_chain error: ${String(err)}`);
+    console.error(`[mcp-deployer] deploy_og_chain error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });

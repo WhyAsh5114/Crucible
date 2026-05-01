@@ -46,10 +46,12 @@ export function createDeployerServer(opts: {
   server.registerTool(
     'deploy_local',
     {
-      title: 'Deploy Contract Locally',
+      title: 'Deploy Contract to Local Hardhat Node',
       description:
-        'Deploy a compiled contract to the local chain by name. ' +
-        'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
+        'Deploy a compiled contract to the LOCAL Hardhat fork only. ' +
+        'Use this ONLY for local development — NOT for 0G chain, testnet, or any external network. ' +
+        'For 0G Galileo testnet deployment, use deploy_og_chain instead. ' +
+        'Requires the contract to have been compiled first and a local node to be running (start_node). ' +
         'Bytecode is fetched automatically from the artifact store. ' +
         'Returns contract address, tx hash, and gas used.',
       inputSchema: DeployLocalInputSchema,
@@ -150,11 +152,13 @@ export function createDeployerServer(opts: {
   );
 
   server.registerTool(
-    'deploy_0g_chain',
+    'deploy_og_chain',
     {
       title: 'Deploy Contract to 0G Galileo Testnet',
       description:
-        'Deploy a compiled contract to the 0G Galileo testnet (chainId 16602). ' +
+        'USE THIS TOOL when the user asks to deploy to "0G", "0G chain", "testnet", or "Galileo". ' +
+        'Deploys a compiled contract to the 0G Galileo testnet (chainId 16602). ' +
+        'Do NOT call start_node or deploy_local before this — this is an external testnet, not a local node. ' +
         'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
         'Bytecode is fetched automatically from the artifact store. ' +
         'The deployer node must be configured with OG_DEPLOY_PRIVATE_KEY and the wallet ' +
@@ -169,13 +173,13 @@ export function createDeployerServer(opts: {
     },
     async (input: DeployOgChainInput) => {
       try {
-        log('tool:deploy_0g_chain');
+        log('tool:deploy_og_chain');
         const output = await service.deploy0gChain(input);
-        log(`tool:deploy_0g_chain ok  address=${output.address} txHash=${output.txHash}`);
+        log(`tool:deploy_og_chain ok  address=${output.address} txHash=${output.txHash}`);
         return toolResult(output);
       } catch (err) {
-        logError(`tool:deploy_0g_chain error: ${String(err)}`);
-        return errorResult(`deploy_0g_chain failed: ${String(err)}`);
+        logError(`tool:deploy_og_chain error: ${String(err)}`);
+        return errorResult(`deploy_og_chain failed: ${String(err)}`);
       }
     },
   );
