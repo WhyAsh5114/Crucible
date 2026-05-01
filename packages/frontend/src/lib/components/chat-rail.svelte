@@ -8,8 +8,11 @@
 	import ToolRow from './events/tool-row.svelte';
 	import { pairToolEvents } from './events/pair-tool-events';
 	import EmptyState from './empty-state.svelte';
+	import ModelPicker from './model-picker.svelte';
+	import type { ModelSelection } from './model-picker.svelte';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import LoaderIcon from '@lucide/svelte/icons/loader';
+	import { setContext } from 'svelte';
 	import type { WorkspaceId } from '@crucible/types';
 
 	interface Props {
@@ -24,22 +27,50 @@
 	let prompt = $state('');
 	let sending = $state(false);
 	let sendError = $state<string | null>(null);
+	let lastPrompt = $state<string | null>(null);
 
-	async function handleSubmit(event: SubmitEvent): Promise<void> {
-		event.preventDefault();
-		const trimmed = prompt.trim();
-		if (!trimmed || sending) return;
+	// Default to 0G with a placeholder model id; the picker updates this once
+	// it fetches /api/models. The placeholder is never sent to the backend
+	// because the backend uses OG_MODEL from env when provider is '0g'.
+	let selectedModel = $state<ModelSelection>({ provider: '0g', model: '' });
+
+	async function sendPrompt(text: string, forceFallback: boolean): Promise<void> {
 		sending = true;
 		sendError = null;
 		try {
-			await workspaceClient.sendPrompt({ workspaceId, prompt: trimmed });
-			prompt = '';
+			const useOpenAi = forceFallback || selectedModel.provider === 'openai';
+			await workspaceClient.sendPrompt({
+				workspaceId,
+				prompt: text,
+				...(useOpenAi
+					? {
+							force_openai_fallback: true,
+							...(selectedModel.provider === 'openai' ? { model: selectedModel.model } : {})
+						}
+					: {})
+			});
+			lastPrompt = text;
 		} catch (err) {
 			sendError = err instanceof Error ? err.message : String(err);
 		} finally {
 			sending = false;
 		}
 	}
+
+	async function handleSubmit(event: SubmitEvent): Promise<void> {
+		event.preventDefault();
+		const trimmed = prompt.trim();
+		if (!trimmed || sending) return;
+		await sendPrompt(trimmed, false);
+		if (!sendError) prompt = '';
+	}
+
+	// Provide a retry callback to descendant `error-row.svelte` components so
+	// the user can re-run the last prompt against the OpenAI-compatible
+	// fallback after a 0G Compute Router failure.
+	setContext('retryWithFallback', () => {
+		if (lastPrompt && !sending) void sendPrompt(lastPrompt, true);
+	});
 
 	function handleKeydown(event: KeyboardEvent): void {
 		if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -51,10 +82,10 @@
 </script>
 
 <aside class="flex h-full min-h-0 flex-col bg-background">
-	<header class="shrink-0 border-b border-border bg-muted/20 px-4 py-3">
+	<header class="shrink-0 border-b border-border bg-muted/20 px-3 py-2">
 		<div class="flex items-center justify-between gap-2">
 			<h2 class="text-sm font-medium tracking-tight text-foreground">Agent</h2>
-			<div class="flex items-center gap-2 font-mono text-[11px] uppercase">
+			<div class="flex items-center gap-1 font-mono text-[11px] uppercase">
 				{#if stream.status === 'streaming'}
 					<Loader class="size-3 text-live" />
 					<span class="text-live">streaming</span>
@@ -69,6 +100,9 @@
 					<span class="text-muted-foreground">idle</span>
 				{/if}
 			</div>
+		</div>
+		<div class="mt-1.5">
+			<ModelPicker value={selectedModel} onchange={(sel) => (selectedModel = sel)} />
 		</div>
 	</header>
 

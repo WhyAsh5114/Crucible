@@ -22,6 +22,9 @@ export async function provisionWorkspaceDirectory(workspaceId: string): Promise<
   await mkdir(path.join(workspaceDir, 'frontend', 'src'), { recursive: true });
   await mkdir(path.join(workspaceDir, '.crucible'), { recursive: true });
 
+  // Scaffold the contracts directory (package.json + starter Counter.sol).
+  await scaffoldContracts(path.join(workspaceDir, 'contracts'));
+
   // Write the React + Vite + wagmi/viem template if the frontend has not yet
   // been initialised (i.e. package.json does not exist).
   await scaffoldFrontend(path.join(workspaceDir, 'frontend'));
@@ -40,6 +43,56 @@ async function writeIfAbsent(filePath: string, content: string): Promise<void> {
     await writeFile(filePath, content, 'utf8');
   }
 }
+
+// ---------------------------------------------------------------------------
+// Contracts scaffold — Counter.sol starter + package.json for Hardhat
+// ---------------------------------------------------------------------------
+
+async function scaffoldContracts(contractsDir: string): Promise<void> {
+  // Hardhat's createHardhatRuntimeEnvironment requires a package.json in the
+  // project root (the contracts directory) so Node can resolve packages.
+  await writeIfAbsent(
+    path.join(contractsDir, 'package.json'),
+    JSON.stringify({ name: 'crucible-contracts', version: '0.0.0', private: true }, null, 2) + '\n',
+  );
+
+  await writeIfAbsent(
+    path.join(contractsDir, 'Counter.sol'),
+    `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+/// @title Counter
+/// @notice A simple incrementable counter — the canonical Crucible starter contract.
+contract Counter {
+    uint256 private _count;
+
+    event Incremented(address indexed by, uint256 newCount);
+    event Reset(address indexed by);
+
+    /// @notice Increment the counter by 1.
+    function increment() external {
+        _count += 1;
+        emit Incremented(msg.sender, _count);
+    }
+
+    /// @notice Reset the counter to 0.
+    function reset() external {
+        _count = 0;
+        emit Reset(msg.sender);
+    }
+
+    /// @notice Return the current count.
+    function count() external view returns (uint256) {
+        return _count;
+    }
+}
+`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// React + Vite + wagmi/viem scaffold
+// ---------------------------------------------------------------------------
 
 async function scaffoldFrontend(frontendDir: string): Promise<void> {
   const pkg = {
@@ -169,37 +222,169 @@ createRoot(document.getElementById('root')!).render(
 
   await writeIfAbsent(
     path.join(frontendDir, 'src', 'App.tsx'),
-    `import { useAccount, useConnect, useDisconnect, useBalance } from 'wagmi';
+    `import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from 'wagmi';
+import { COUNTER_ADDRESS, COUNTER_ABI } from './contracts/Counter';
 
 export default function App() {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: balance } = useBalance({ address });
+
+  // Read the current count from the deployed Counter contract.
+  const {
+    data: count,
+    isLoading: countLoading,
+    refetch: refetchCount,
+  } = useReadContract({
+    address: COUNTER_ADDRESS,
+    abi: COUNTER_ABI,
+    functionName: 'count',
+  });
+
+  // Write — shared hook instance, re-used for both increment and reset.
+  const { writeContract, data: txHash, isPending, error: writeError } = useWriteContract();
+
+  const { isLoading: isMining } = useWaitForTransactionReceipt({
+    hash: txHash,
+    query: {
+      enabled: !!txHash,
+      // Refetch the count once the tx lands.
+      select: (receipt) => {
+        void refetchCount();
+        return receipt;
+      },
+    },
+  });
+
+  const busy = isPending || isMining;
+
+  function handleIncrement() {
+    writeContract({ address: COUNTER_ADDRESS, abi: COUNTER_ABI, functionName: 'increment' });
+  }
+
+  function handleReset() {
+    writeContract({ address: COUNTER_ADDRESS, abi: COUNTER_ABI, functionName: 'reset' });
+  }
 
   return (
-    <div style={{ fontFamily: 'monospace', padding: '2rem' }}>
-      <h1>Crucible Preview</h1>
-      {isConnected ? (
+    <div style={{ fontFamily: 'monospace', padding: '2rem', maxWidth: '480px' }}>
+      <h1 style={{ marginBottom: '1rem' }}>Counter Demo</h1>
+
+      {!isConnected ? (
         <div>
-          <p>Connected: {address}</p>
-          {balance && (
-            <p>Balance: {balance.formatted} {balance.symbol}</p>
-          )}
-          <button onClick={() => disconnect()}>Disconnect</button>
-        </div>
-      ) : (
-        <div>
+          <p style={{ color: '#888', marginBottom: '0.75rem' }}>Connect a wallet to interact with the Counter contract.</p>
           {connectors.map((connector) => (
-            <button key={connector.id} onClick={() => connect({ connector })}>
+            <button key={connector.id} onClick={() => connect({ connector })}
+              style={{ marginRight: '0.5rem', padding: '0.5rem 1rem', cursor: 'pointer' }}>
               Connect {connector.name}
             </button>
           ))}
+        </div>
+      ) : (
+        <div>
+          <p style={{ fontSize: '0.85rem', color: '#888', marginBottom: '1.5rem' }}>
+            {address}
+            <button onClick={() => disconnect()}
+              style={{ marginLeft: '0.75rem', fontSize: '0.75rem', cursor: 'pointer' }}>
+              Disconnect
+            </button>
+          </p>
+
+          <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid #333', borderRadius: '6px' }}>
+            <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.25rem' }}>Current count</div>
+            <div style={{ fontSize: '2.5rem', fontWeight: 'bold' }}>
+              {countLoading ? '…' : count !== undefined ? String(count) : '—'}
+            </div>
+            {COUNTER_ADDRESS === '0x0000000000000000000000000000000000000000' && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#c87941' }}>
+                Contract not deployed yet. Ask Crucible to deploy Counter.sol.
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button onClick={handleIncrement} disabled={busy}
+              style={{ padding: '0.5rem 1.25rem', cursor: busy ? 'not-allowed' : 'pointer' }}>
+              {busy ? 'Pending…' : 'Increment'}
+            </button>
+            <button onClick={handleReset} disabled={busy}
+              style={{ padding: '0.5rem 1.25rem', cursor: busy ? 'not-allowed' : 'pointer' }}>
+              {busy ? 'Pending…' : 'Reset'}
+            </button>
+          </div>
+
+          {writeError && (
+            <p style={{ marginTop: '0.75rem', color: '#c84141', fontSize: '0.8rem' }}>
+              {writeError.message}
+            </p>
+          )}
+
+          {txHash && (
+            <p style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: '#888' }}>
+              tx: {txHash}
+            </p>
+          )}
         </div>
       )}
     </div>
   );
 }
+`,
+  );
+
+  await mkdir(path.join(frontendDir, 'src', 'contracts'), { recursive: true });
+  await writeIfAbsent(
+    path.join(frontendDir, 'src', 'contracts', 'Counter.ts'),
+    `import type { Address, Abi } from 'viem';
+
+// Update COUNTER_ADDRESS after deploying contracts/Counter.sol.
+// The Crucible agent fills this in automatically after a successful deploy.
+export const COUNTER_ADDRESS: Address =
+  '0x0000000000000000000000000000000000000000';
+
+export const COUNTER_ABI = [
+  {
+    type: 'function',
+    name: 'count',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'increment',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'reset',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: 'event',
+    name: 'Incremented',
+    inputs: [
+      { name: 'by', type: 'address', indexed: true },
+      { name: 'newCount', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Reset',
+    inputs: [{ name: 'by', type: 'address', indexed: true }],
+  },
+] as const satisfies Abi;
 `,
   );
 }

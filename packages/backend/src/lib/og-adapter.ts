@@ -1,71 +1,50 @@
 /**
- * 0G Compute inference adapter.
+ * 0G Compute Router inference adapter.
  *
- * Builds an `AgentConfig` that routes inference through a 0G Compute provider.
+ * Builds an `AgentConfig` that routes inference through the 0G Compute Router
+ * — a single OpenAI-compatible endpoint with unified billing, automatic
+ * provider failover, and verifiable execution receipts (`x_0g_trace`).
+ *
+ * See: https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/overview
+ *
  * Returns `null` when the required environment variables are absent so callers
  * can fall back to the OpenAI-compatible path transparently.
  *
  * Required environment variables:
- *   OG_PROVIDER_ADDRESS  – Ethereum address of the 0G Compute provider
- *   OG_PRIVATE_KEY       – Hex private key of the wallet funding the account
+ *   OG_API_KEY  – `sk-...` from pc.testnet.0g.ai (testnet) or pc.0g.ai (mainnet)
+ *   OG_MODEL    – Model id, e.g. `zai-org/GLM-5-FP8`
  *
  * Optional:
- *   OG_RPC_URL           – EVM RPC URL (defaults to 0G testnet)
+ *   OG_ROUTER_URL – Router base URL. Defaults to the testnet endpoint.
  */
 
-import { ethers } from 'ethers';
-import { createZGComputeNetworkBroker } from '@0glabs/0g-serving-broker';
 import type { AgentConfig } from '@crucible/agent';
 
-const OG_RPC_DEFAULT = 'https://evmrpc-testnet.0g.ai';
+/**
+ * Default Router base URL — the testnet endpoint.
+ *
+ * Mainnet (`https://router-api.0g.ai/v1`) and testnet are fully separate
+ * environments with different API keys and on-chain balances.
+ */
+const OG_ROUTER_DEFAULT_URL = 'https://router-api-testnet.integratenetwork.work/v1';
 
 /**
- * Build an `AgentConfig` that routes inference through 0G Compute.
+ * Build an `AgentConfig` that routes inference through the 0G Compute Router.
  *
- * Calls `getServiceMetadata` to discover the provider's endpoint and model,
- * then `getRequestHeaders` to generate per-request signed auth headers.
- * The Authorization Bearer token is extracted into `apiKey` so the AI SDK
- * sets it normally; remaining signed headers are passed via `config.headers`.
- *
- * Returns `null` when `OG_PROVIDER_ADDRESS` or `OG_PRIVATE_KEY` are not set.
+ * Returns `null` when `OG_API_KEY` or `OG_MODEL` are not set so the inference
+ * router can fall back to the OpenAI-compatible endpoint.
  */
-export async function buildOgAgentConfig(): Promise<AgentConfig | null> {
-  const providerAddress = process.env['OG_PROVIDER_ADDRESS'];
-  const privateKey = process.env['OG_PRIVATE_KEY'];
-  if (!providerAddress || !privateKey) return null;
+export function buildOgAgentConfig(): AgentConfig | null {
+  const apiKey = process.env['OG_API_KEY'];
+  const model = process.env['OG_MODEL'];
+  if (!apiKey || !model) return null;
 
-  const rpcUrl = process.env['OG_RPC_URL'] ?? OG_RPC_DEFAULT;
+  const baseUrl = (process.env['OG_ROUTER_URL'] ?? OG_ROUTER_DEFAULT_URL).replace(/\/+$/u, '');
 
-  const rpcProvider = new ethers.JsonRpcProvider(rpcUrl);
-  const wallet = new ethers.Wallet(privateKey, rpcProvider);
-  const broker = await createZGComputeNetworkBroker(wallet);
-
-  const { endpoint, model } = await broker.inference.getServiceMetadata(providerAddress);
-
-  // Per-request signed headers include Authorization and 0G-specific fields.
-  // ServingRequestHeaders has no index signature, so we cast through unknown.
-  const rawHeaders = (await broker.inference.getRequestHeaders(
-    providerAddress,
-  )) as unknown as Record<string, string>;
-
-  // Split Authorization from the rest so the AI SDK handles Bearer correctly.
-  const authHeader = rawHeaders['Authorization'] ?? rawHeaders['authorization'] ?? '';
-  const apiKey = authHeader.replace(/^Bearer\s+/iu, '');
-
-  const extraHeaders: Record<string, string> = {};
-  for (const [k, v] of Object.entries(rawHeaders)) {
-    if (k.toLowerCase() !== 'authorization') {
-      extraHeaders[k] = v;
-    }
-  }
-
-  // With exactOptionalPropertyTypes we must omit the key entirely rather than
-  // assign undefined to it.
   return {
-    baseUrl: endpoint,
+    baseUrl,
     apiKey,
     model,
-    ...(Object.keys(extraHeaders).length > 0 ? { headers: extraHeaders } : {}),
     provider: '0g-compute' as const,
   };
 }

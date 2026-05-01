@@ -88,27 +88,47 @@ The same Crucible codebase, framed as a **persistent, networked swarm of autonom
 - Crucible agents form an **emergent collaboration mesh** over AXL. They don't just coexist — they actively share knowledge (revert signatures → patches → verification receipts) through a shared 0G Storage knowledge layer coordinated over AXL.
 - The swarm exhibits **emergent behavior**: an agent that has never seen a specific revert can fix it by pulling verified knowledge from a peer that solved it yesterday. No central coordinator. No human intervention.
 
+### Track 2: Best Autonomous Agents, Swarms & iNFT Innovations
+
+**Fit:** Medium → viable with correct framing. **Submission framing: Digital Twin, not swarm.**
+
+**Prize structure:** Flat $1,500 per qualifying team, up to 5 teams. This is not a ranked pool — you qualify or you don't. The bar is demonstrating a persistent autonomous agent on 0G, not beating other teams.
+
+**What we're submitting:**
+
+Crucible as a **persistent autonomous developer agent** — a Digital Twin for smart contract development:
+
+- Each Crucible instance is a long-running autonomous agent with persistent memory on 0G Storage KV (hot recall index for revert patterns) and 0G Log (full debugging history). It survives across sessions — close the browser, reopen tomorrow, the agent remembers every pattern it has learned.
+- The agent uses 0G Compute for sealed inference with verifiable receipts on every turn.
+- The agent deploys to 0G Chain directly via `deploy_og_chain`.
+
+**Why this framing (not swarm):** `mcp-mesh` / AXL is not implemented. The swarm angle requires cross-node AXL communication, which is a hard Gensyn requirement and a Crucible stretch goal. The Digital Twin angle requires only what is already shipped: 0G Storage KV persistence + 0G Compute inference + 0G Chain deployment. No extra code needed to qualify.
+
+**⚠️ Model caveat:** The 0G Compute testnet serves qwen2.5 7b. The self-healing repair loop was designed and validated with qwen3.6 35b a3b. If qwen2.5 7b fails the repair reasoning in demo conditions, fall back to the local provider for the heal step and use 0G Chain only for deployment. Make the fallback receipt badge visible — do not hide it.
+
 **How this maps to the Track 2 brief:**
 
-| Track 2 asks for...                                                                                                         | Crucible delivers...                                                                                                                                                   |
-| :-------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Personal 'Digital Twin' agent that learns from user behavior and maintains evolving persistent memory via 0G Storage"      | Each Crucible agent learns from every revert it encounters and every fix it verifies. Memory persists across sessions on 0G Storage KV + Log.                          |
-| "Specialist agent swarms that collaborate in real time via shared 0G Storage memory and coordinate inference on 0G Compute" | Crucible agents specialize in debugging. They share a 0G Storage knowledge layer and coordinate over AXL. Inference runs on 0G Compute.                                |
-| "Clear explanation of how agents communicate and coordinate"                                                                | Agents communicate over AXL (structured help requests/responses). They coordinate via the shared 0G Storage knowledge layer (recall → remember with cross-node scope). |
+| Track 2 asks for...                                                                                                    | Crucible delivers...                                                                                                                                                          |
+| :--------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Personal 'Digital Twin' agent that learns from user behavior and maintains evolving persistent memory via 0G Storage" | Crucible learns from every revert it encounters. Patterns persist across sessions via 0G Storage KV. Each developer's Crucible instance accumulates a private knowledge base. |
+| "Persistent context on 0G Storage + self-fact-checking using verifiable 0G Compute inference"                          | Every inference turn emits a verifiable `inference_receipt` with `x_0g_trace` from 0G Compute. The repair loop verifies patches in a local snapshot before committing.        |
+| "Contract deployment addresses + demo video"                                                                           | `deploy_og_chain` deploys healed contracts to 0G Galileo testnet. Explorer URLs surface in the UI.                                                                            |
 
-**What we skip:** iNFT minting. It would feel bolted on and dilute the swarm narrative. The persistent-memory + emergent-collaboration angle is strong enough on its own.
+**What we skip:** Swarm framing, iNFT minting, AXL mesh — all require unbuilt infrastructure. The Digital Twin bullet alone qualifies.
 
-**Submission strategy:** Reuse the Track 1 submission. Add a section explicitly explaining agent communication (AXL) and coordination (shared 0G Storage). The demo video already shows two agents collaborating — the Track 2 framing just emphasizes that angle.
+**Submission strategy:** Reuse the Track 1 submission with a focused Track 2 framing section. Demo video shows: agent fixes a revert → recalls pattern from 0G KV → deploys to 0G Chain → close and reopen workspace → agent recalls the same pattern again (cross-session persistence proof).
 
 ---
 
 ## Gensyn — Best Application of Agent eXchange Layer (AXL)
 
-**Fit:** High. The AXL integration is the centerpiece of the demo's "money shot."
+**Fit:** High in theory. **Status: `mcp-mesh` not implemented — stretch goal for Day 8.**
+
+**Current state:** The AXL type contracts are frozen in `packages/types/src/mcp/mesh.ts` and the `mcp-mesh` package directory exists but is empty. AXL binary is not running.
 
 **Why AXL is structural, not decorative:** Crucible doesn't use AXL for "agent chat" or "agent social network" — the two most common hackathon AXL projects. It uses AXL to solve a concrete, measurable problem: **reducing time-to-fix for unfamiliar smart contract reverts.** When the local agent hits a revert it has never seen, AXL is how it finds a peer that has. Remove AXL → the self-healing revert loop loses its mesh fallback and degrades to LLM-only reasoning from traces (unreliable).
 
-**Depth of AXL integration:**
+**Depth of AXL integration (target):**
 
 | Layer                    | What happens on AXL                                                                                                                                                             |
 | :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -129,33 +149,32 @@ The same Crucible codebase, framed as a **persistent, networked swarm of autonom
 
 **Submission requirements checklist:**
 
-- [x] Uses AXL for inter-agent communication (no centralized message broker)
-- [x] Demonstrates communication across separate AXL nodes (two laptops in the demo)
+- [ ] `mcp-mesh` package implemented (AXL node binary lifecycle, peer discovery, structured messaging)
+- [ ] Uses AXL for inter-agent communication (no centralized message broker)
+- [ ] Demonstrates communication across separate AXL nodes (same-machine dual-workspace minimum)
 - [ ] Project built during the hackathon (fresh repo, incremental commits)
 
 **Judge's likely questions & our answers:**
 
 > _"How does the mesh handle malicious peers submitting bad patches?"_
 
-`verify_peer_patch()` re-executes the candidate patch in a local Hardhat snapshot before the agent commits it. A bad patch reverts in the sandbox and is discarded. The agent only commits verified fixes. This is a stronger answer than "we trust peers" — lead with it.
+`verify_peer_patch()` re-executes the candidate patch in a local Hardhat snapshot before the agent commits it. A bad patch reverts in the sandbox and is discarded. The agent only commits verified fixes.
 
 > _"What happens if no peers respond?"_
 
 The agent falls back to LLM reasoning from the trace. The mesh is an accelerator, not a dependency. Crucible works offline; the mesh makes it faster.
 
-> _"Is this really cross-node, or just in-process?"_
-
-The demo uses two separate laptops, each running its own Crucible backend + AXL node binary. We'll include a clip of `axl status` on both machines proving they are independent peers, not parent/child processes.
-
 ---
 
 ## KeeperHub — Best Use of KeeperHub + Builder Feedback Bounty
 
-**Fit:** Very high. KeeperHub is the _only_ path from local to public chain.
+**Fit:** Very high for Focus Area 2 (framework integration). KeeperHub explicitly names OpenClaw as a target.
 
-**Why KeeperHub is structural, not decorative:** There is no `eth_sendRawTransaction` to a public RPC anywhere in the Crucible codebase. Every shipping flow — initial deploy, configuration calls, _and_ post-deploy preview interactions on the deployed testnet address — routes through KeeperHub. Remove KeeperHub → the _Ship_ button breaks. The product cannot reach a public chain.
+**Why KeeperHub is the right framing:** Focus Area 2 asks for "a plugin, connector, or SDK integration for ElizaOS, OpenClaw, LangChain, CrewAI, or any framework with an active builder community." Crucible integrating KeeperHub MCP into an OpenClaw-based agent is the described deliverable.
 
-**Depth of KeeperHub integration:**
+**Builder Feedback Bounty ($250 per winner, 2 winners):** Requires only a `FEEDBACK.md` in the repo root documenting real friction encountered during KeeperHub integration. Essentially free money if any KeeperHub integration ships. Write it during integration, not after.
+
+**Depth of KeeperHub integration (target):**
 
 | Flow            | What happens                                                                                                                                                                        |
 | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -42,7 +42,7 @@
 
 - [x] `@crucible/agent` — real agent loop using AI SDK v6 `streamText`, MCP client per server
 - [x] `POST /api/prompt` inference endpoint — calls `runAgentTurn`, publishes events to SSE bus
-- [x] Inference router — 0G Compute primary (`@0glabs/0g-serving-broker`), OpenAI-compatible fallback
+- [x] Inference router — 0G Compute primary (Compute Router, OpenAI-compatible REST), OpenAI-compatible fallback
 - [x] `inference_receipt` event emitted (provider, fallback reason, token counts)
 - [x] Agent SSE bus (`/api/agent/stream`)
 - [x] System prompt with full tool documentation
@@ -134,11 +134,12 @@
 - [x] `@crucible/agent` as Web3-development OpenClaw extension
 - [x] Web3 tool registry loading MCP servers by URL (chain, compiler, deployer, wallet, memory)
 - [x] Solidity-aware code generation prompt templates with compiler error feedback
-- [x] 0G Compute inference adapter (`og-adapter.ts`) — routes via `@0glabs/0g-serving-broker`, captures receipts
+- [x] 0G Compute inference adapter (`og-adapter.ts`) — routes via the 0G Compute Router (OpenAI-compatible REST), captures `x_0g_trace` receipts
 - [x] OpenAI-compatible fallback path — only active when 0G unavailable; degraded-mode flag in event
 - [x] `mcp-memory` MCP interface abstracting 0G Storage KV (recall index) and Log (full history)
-- [ ] 0G Storage backend wired into `mcp-memory` (currently local file-backed)
-- [ ] Fallback mode visibly shown in UI when non-0G provider is active
+- [x] 0G Storage backend code in `mcp-memory` — `KvClient` wired; activates when `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` are set; falls back to local FS otherwise
+- [x] Fallback mode visibly shown in UI — `inference-receipt-row.svelte` distinguishes "0G Compute" / "0G Compute · <reason>" / "Fallback: <reason>" with click-to-expand `x_0g_trace`
+- [ ] Set `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` in demo environment so recall round-trip uses real 0G KV (not FS)
 - [ ] Contract deployment addresses on 0G Chain (required for 0G submission)
 - [ ] Demo video ≤ 3 min (separate 0G-focused cut)
 - [ ] Architecture diagram showing OpenClaw + 0G Storage/Compute integration
@@ -146,10 +147,14 @@
 
 ### Track 2 — Best Autonomous Agents, Swarms & iNFT Innovations
 
+> **Framing: Digital Twin (no AXL required).** Track 2 pays flat $1,500 per qualifier (up to 5 teams), not ranked. Submit Crucible as a persistent autonomous agent that learns from every build failure and retains that memory across sessions via 0G Storage. The swarm angle requires AXL — skip it.
+
 - [x] Persistent memory layer across sessions (via `mcp-memory`)
-- [ ] 0G Storage backend for cross-session persistence
-- [ ] Emergent mesh collaboration (requires `mcp-mesh` / AXL above)
-- [ ] Cross-node knowledge sharing demo (revert signature → patch → verification receipt shared over AXL + 0G Storage)
+- [x] 0G Storage KV backend code wired — activates with `OG_STORAGE_PRIVATE_KEY`
+- [ ] Cross-session recall demo: close workspace → reopen → agent recalls a pattern from 0G KV stored in a previous session
+- [ ] Submission framing: "Crucible as Digital Twin" — one persistent agent per developer, learns from every revert, memory on 0G Storage KV
+- [ ] ~~Emergent mesh collaboration~~ _(stretch — requires mcp-mesh / AXL; not needed for Track 2 qualifier)_
+- [ ] ~~Cross-node knowledge sharing demo~~ _(stretch — same dependency)_
 
 ---
 
@@ -196,18 +201,22 @@
 
 ## Integration Checkpoints (Go/No-Go Gates)
 
-| Day                 | Gate                                                                                  | Status         |
-| ------------------- | ------------------------------------------------------------------------------------- | -------------- |
-| Day 0 (Apr 24)      | Contracts frozen                                                                      | ✅ done        |
-| Day 2 (Apr 26)      | Stub loop visible — UI renders fixture events, mock workspace opens                   | ✅ done        |
-| Day 4 (Apr 28)      | **POV-1 green** — Prompt → files → compile → deploy → preview click                   | ⬜ in progress |
-| Day 5 (Apr 29)      | **Local heal green** — Revert → trace → patch → verify → remember, no mesh            | ⬜ not started |
-| Day 6 (Apr 30)      | **Memory + 0G inference** — 0G Compute visible in UI; recall round-trip on 0G Storage | ⬜ not started |
-| Day 7 (May 1)       | **Mesh additive** — AXL cross-process peer response verified before apply             | ⬜ not started |
-| Day 8 (May 2)       | **Ship green** — KeeperHub simulation + execution + audit visible for Sepolia         | ⬜ not started |
-| Day 8 (May 2)       | **Full arc green** — Build → break → heal → ship in one sitting                       | ⬜ not started |
-| Day 8 (May 2)       | **Two-laptop rehearsal** — separate AXL processes on separate machines                | ⬜ not started |
-| Day 9 (May 3, noon) | **Record and submit** — demo video (2–4 min) + 0G cut (≤ 3 min) + submission form     | ⬜ not started |
+| Day                 | Gate                                                                                        | Status         |
+| ------------------- | ------------------------------------------------------------------------------------------- | -------------- |
+| Day 0 (Apr 24)      | Contracts frozen                                                                            | ✅ done        |
+| Day 2 (Apr 26)      | Stub loop visible — UI renders fixture events, mock workspace opens                         | ✅ done        |
+| Day 4 (Apr 28)      | **POV-1 green** — Prompt → files → compile → deploy → preview click                         | ✅ done        |
+| Day 5 (Apr 29)      | **Local heal green** — Revert → trace → patch → verify → remember, no mesh                  | ⬜ not started |
+| Day 6 (Apr 30)      | **0G inference visible** — 0G Compute receipt shown in UI; `x_0g_trace` click-to-expand     | ✅ done        |
+| Day 6 (Apr 30)      | **0G Storage code** — `mcp-memory` KV backend wired; awaiting demo env creds                | ✅ code done   |
+| Day 6 (Apr 30)      | **0G Chain deploy** — `deploy_og_chain` tool wired and tool-name fix applied                | ✅ done        |
+| Day 7 (May 1, now)  | **Demo scaffold** — richer contract with seeded revert; self-heal arc validated locally     | ⬜ in progress |
+| Day 7 (May 1, now)  | **0G demo arc** — local heal → deploy_og_chain → chainscan URL → memory cross-session proof | ⬜ not started |
+| Day 7 (May 1, now)  | **FEEDBACK.md** — KeeperHub builder feedback (quick win, ~30 min)                           | ⬜ not started |
+| Day 8 (May 2)       | **KeeperHub green** — simulate_bundle + execute_tx + audit trail in inspector               | ⬜ not started |
+| Day 8 (May 2)       | **Full arc green** — Build → break → heal → deploy_og_chain in one sitting                  | ⬜ not started |
+| Day 8 (May 2)       | **AXL stretch** — same-machine dual-workspace mesh proof (only if KeeperHub ships early)    | ⬜ stretch     |
+| Day 9 (May 3, noon) | **Record and submit** — demo video (2–4 min) + 0G cut (≤ 3 min) + submission form           | ⬜ not started |
 
 ---
 
@@ -220,6 +229,44 @@
 5. Broad contract archetype coverage — nail one strong demo archetype
 6. Fork UX polish — keep fork tool internal, skip UI polish
 7. Dynamic model selection — one stable 0G path + explicit fallback is enough
+
+---
+
+---
+
+## Demo Scaffold — Richer Self-Healing Loop
+
+> Counter.sol is too trivial to demonstrate meaningful self-healing. A stronger demo shows: agent writes a contract with a realistic bug → deploys → revert triggered → agent detects, traces, recalls from 0G Storage → patches → redeploys → verifies. This hits all three 0G touchpoints in one arc (Compute receipt, Storage KV recall/remember, Chain deploy).
+
+### ⚠️ Model Limitation — Plan Around It
+
+The **0G Compute testnet currently serves qwen2.5 7b**, not the local qwen3.6 35b a3b used in dev. The 7b model is significantly weaker at multi-step agentic repair. Two strategies:
+
+- **Strategy A (safer):** Design the self-healing demo contract so the repair is simple enough for qwen2.5 7b — one bug, explicit revert message, short trace. Run the full agentic arc on 0G Compute.
+- **Strategy B (stronger demo):** Run the self-healing arc _locally_ using the fallback provider (qwen3.6 35b a3b), then deploy the healed artifact to 0G chain via `deploy_og_chain`. 0G Storage KV and 0G Chain touchpoints still fire; only the inference receipt shows as fallback during the heal step. Make the fallback badge visible — do not hide it.
+
+Recommended: try Strategy A first. If qwen2.5 7b consistently fails the repair reasoning, fall back to Strategy B and frame it honestly in the demo narration.
+
+### Demo Contract
+
+- [ ] Write a `DemoVault.sol` with one deliberately seeded, traceable bug:
+  - **Option A (model-friendly):** `onlyOwner` modifier checking wrong state variable — clear revert message, trivial to trace, easy for a 7b model to patch in one step
+  - **Option B (richer):** cooldown enforcement where `>=` should be `<=` — triggers on second call, traceable from timestamp arithmetic
+- [ ] Pre-seed `mcp-memory` with a pattern matching the chosen bug (proves `recall` fires on a real hit, not a reasoning-from-scratch miss)
+- [ ] Keep contract under ~60 lines — shorter context = better 7b reasoning
+
+### Self-Healing Loop
+
+- [ ] Write the exact trigger prompt so the demo is repeatable, not LLM-luck dependent
+- [ ] Validate the full arc locally before recording: revert event → trace tool call → recall hit → patch → redeploy green
+- [ ] UI must show all steps visibly: `revert` event, `inference_receipt` (with `x_0g_trace`), agent message containing recall result
+
+### 0G Three-Touchpoint Arc
+
+- [ ] Heal → compile → `deploy_og_chain` → show `chainscan-galileo.0g.ai` URL in UI (0G Chain ✓)
+- [ ] Inference receipt shows 0G Compute provider + `x_0g_trace` expanded (0G Compute ✓)
+- [ ] After fix: agent calls `memory.remember` → close workspace → reopen → `memory.recall` returns pattern (0G Storage KV cross-session ✓)
+- [ ] Fund deployer wallet from https://faucet.0g.ai before recording
 
 ---
 

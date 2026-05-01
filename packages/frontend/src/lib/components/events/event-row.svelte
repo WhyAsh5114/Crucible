@@ -7,6 +7,8 @@
 	import PatchVerifiedRow from './patch-verified-row.svelte';
 	import DoneRow from './done-row.svelte';
 	import MessageRow from './message-row.svelte';
+	import InferenceReceiptRow from './inference-receipt-row.svelte';
+	import ErrorRow from './error-row.svelte';
 	import GenericRow from './generic-row.svelte';
 
 	interface Props {
@@ -28,6 +30,10 @@
 	<PatchProposedRow {event} />
 {:else if event.type === 'patch_verified'}
 	<PatchVerifiedRow {event} />
+{:else if event.type === 'inference_receipt'}
+	<InferenceReceiptRow {event} />
+{:else if event.type === 'error'}
+	<ErrorRow {event} />
 {:else if event.type === 'done'}
 	<DoneRow {event} />
 {:else}

@@ -4,10 +4,12 @@ import {
   SimulateLocalInputSchema,
   TraceInputSchema,
   CallInputSchema,
+  DeployOgChainInputSchema,
   type DeployLocalInput,
   type SimulateLocalInput,
   type TraceInput,
   type CallInput,
+  type DeployOgChainInput,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerService } from './service.ts';
 
@@ -33,6 +35,7 @@ export function createDeployerServer(opts: {
   chainRpcUrl: string;
   workspaceRoot: string;
   compilerUrl?: string;
+  ogDeployPrivateKey?: string;
 }): McpServer {
   const service = createDeployerService(opts);
   const server = new McpServer({
@@ -43,10 +46,12 @@ export function createDeployerServer(opts: {
   server.registerTool(
     'deploy_local',
     {
-      title: 'Deploy Contract Locally',
+      title: 'Deploy Contract to Local Hardhat Node',
       description:
-        'Deploy a compiled contract to the local chain by name. ' +
-        'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
+        'Deploy a compiled contract to the LOCAL Hardhat fork only. ' +
+        'Use this ONLY for local development — NOT for 0G chain, testnet, or any external network. ' +
+        'For 0G Galileo testnet deployment, use deploy_og_chain instead. ' +
+        'Requires the contract to have been compiled first and a local node to be running (start_node). ' +
         'Bytecode is fetched automatically from the artifact store. ' +
         'Returns contract address, tx hash, and gas used.',
       inputSchema: DeployLocalInputSchema,
@@ -142,6 +147,39 @@ export function createDeployerServer(opts: {
       } catch (err) {
         logError(`tool:call error: ${String(err)}`);
         return errorResult(`call failed: ${String(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'deploy_og_chain',
+    {
+      title: 'Deploy Contract to 0G Galileo Testnet',
+      description:
+        'USE THIS TOOL when the user asks to deploy to "0G", "0G chain", "testnet", or "Galileo". ' +
+        'Deploys a compiled contract to the 0G Galileo testnet (chainId 16602). ' +
+        'Do NOT call start_node or deploy_local before this — this is an external testnet, not a local node. ' +
+        'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
+        'Bytecode is fetched automatically from the artifact store. ' +
+        'The deployer node must be configured with OG_DEPLOY_PRIVATE_KEY and the wallet ' +
+        'must hold testnet OG (faucet: https://faucet.0g.ai). ' +
+        'Returns contract address, tx hash, gas used, and a 0G Chainscan explorer URL.',
+      inputSchema: DeployOgChainInputSchema,
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input: DeployOgChainInput) => {
+      try {
+        log('tool:deploy_og_chain');
+        const output = await service.deploy0gChain(input);
+        log(`tool:deploy_og_chain ok  address=${output.address} txHash=${output.txHash}`);
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:deploy_og_chain error: ${String(err)}`);
+        return errorResult(`deploy_og_chain failed: ${String(err)}`);
       }
     },
   );
