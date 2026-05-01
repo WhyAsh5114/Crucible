@@ -158,7 +158,10 @@
 		const templateSettled =
 			ws.templateState.phase === 'ready' ||
 			ws.templateState.phase === 'failed' ||
-			ws.templateState.phase === 'unavailable';
+			ws.templateState.phase === 'unavailable' ||
+			// `idle` after chain boot = backend restart cleared in-memory state;
+			// the deploy won't re-run, so don't block the workspace indefinitely.
+			ws.templateState.phase === 'idle';
 		return chainReady && previewSettled && templateSettled;
 	}
 
