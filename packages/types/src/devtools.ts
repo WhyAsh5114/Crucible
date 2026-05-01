@@ -1,15 +1,33 @@
-export type DevtoolsEvent =
-  | { type: 'tool_call'; ts: number; server: string; tool: string; args: unknown }
-  | {
-      type: 'tool_result';
-      ts: number;
-      server: string;
-      tool: string;
-      ok: boolean;
-      result: unknown;
-      durationMs: number;
-    }
-  | { type: 'container'; ts: number; subtype: string; message: string };
+import { z } from 'zod';
+
+import { TimestampMsSchema } from './primitives.ts';
+
+export const DevtoolsEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('tool_call'),
+    ts: TimestampMsSchema,
+    server: z.string().min(1),
+    tool: z.string().min(1),
+    args: z.unknown(),
+  }),
+  z.object({
+    type: z.literal('tool_result'),
+    ts: TimestampMsSchema,
+    server: z.string().min(1),
+    tool: z.string().min(1),
+    ok: z.boolean(),
+    result: z.unknown(),
+    durationMs: z.number().finite().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('container'),
+    ts: TimestampMsSchema,
+    subtype: z.string().min(1),
+    message: z.string(),
+  }),
+]);
+
+export type DevtoolsEvent = z.infer<typeof DevtoolsEventSchema>;
 
 const DEFAULT_DEVTOOLS_URL = 'http://127.0.0.1:3107/event';
 
