@@ -14,9 +14,11 @@
 					| 'tool_result'
 					| 'file_write'
 					| 'message'
+					| 'user_prompt'
 					| 'revert_detected'
 					| 'patch_proposed'
 					| 'patch_verified'
+					| 'repair_failed'
 					| 'done';
 			}
 		>;

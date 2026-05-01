@@ -1,10 +1,12 @@
 <script lang="ts">
 	import type { ChatEvent } from './pair-tool-events';
 	import ThinkingRow from './thinking-row.svelte';
+	import UserPromptRow from './user-prompt-row.svelte';
 	import FileWriteRow from './file-write-row.svelte';
 	import RevertDetectedRow from './revert-detected-row.svelte';
 	import PatchProposedRow from './patch-proposed-row.svelte';
 	import PatchVerifiedRow from './patch-verified-row.svelte';
+	import RepairFailedRow from './repair-failed-row.svelte';
 	import DoneRow from './done-row.svelte';
 	import MessageRow from './message-row.svelte';
 	import InferenceReceiptRow from './inference-receipt-row.svelte';
@@ -19,7 +21,9 @@
 	let { event, repeatCount = 1 }: Props = $props();
 </script>
 
-{#if event.type === 'thinking'}
+{#if event.type === 'user_prompt'}
+	<UserPromptRow {event} />
+{:else if event.type === 'thinking'}
 	<ThinkingRow {event} />
 {:else if event.type === 'file_write'}
 	<FileWriteRow {event} />
@@ -31,6 +35,8 @@
 	<PatchProposedRow {event} />
 {:else if event.type === 'patch_verified'}
 	<PatchVerifiedRow {event} />
+{:else if event.type === 'repair_failed'}
+	<RepairFailedRow {event} />
 {:else if event.type === 'inference_receipt'}
 	<InferenceReceiptRow {event} />
 {:else if event.type === 'error'}

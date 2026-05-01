@@ -17,9 +17,9 @@
 	let id = $props.id();
 </script>
 
-<div {id} class={cn('space-y-2 overflow-hidden p-4', className)} {...restProps}>
+<div {id} class={cn('space-y-1.5 overflow-hidden px-2 py-2', className)} {...restProps}>
 	<h4 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">Parameters</h4>
-	<div class="rounded-md bg-muted/50">
+	<div class="rounded-md bg-muted/50 [&_pre.shiki]:py-2 [&_pre.shiki]:text-xs">
 		<Code.Root code={formattedInput} lang="json" hideLines>
 			<Code.CopyButton />
 		</Code.Root>

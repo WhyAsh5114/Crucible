@@ -53,35 +53,24 @@
 
 <CollapsibleTrigger
 	{id}
-	class={cn('flex w-full items-center justify-between gap-4 p-3', className)}
+	class={cn('flex w-full items-center justify-between gap-2 px-2 py-1', className)}
 	{...restProps}
 >
-	<div class="flex items-center gap-2">
-		<WrenchIcon class="size-4 text-muted-foreground" />
-		<span class="text-sm font-medium">{type}</span>
-		<Badge class="gap-1.5 rounded-full text-xs" variant="secondary">
-			<!-- <svelte:component
-        this={getStatusBadge.IconComponent}
-        class={cn(
-          "size-4",
-          state === "input-available" && "animate-pulse",
-          state === "output-available" && "text-green-600",
-          state === "output-error" && "text-red-600"
-        )}
-      /> -->
+	<div class="flex items-center gap-1.5">
+		<WrenchIcon class="size-3 text-muted-foreground" />
+		<span class="font-mono text-xs font-medium">{type}</span>
+		<Badge class="gap-1 rounded-full px-1.5 py-0 text-[10px]" variant="secondary">
 			<IconComponent
 				class={cn(
-					'size-4',
+					'size-3',
 					state === 'input-available' && 'animate-pulse',
 					state === 'output-available' && 'text-live',
 					state === 'output-error' && 'text-destructive'
 				)}
 			/>
-
-			{getStatusBadge.label}
 		</Badge>
 	</div>
 	<ChevronDownIcon
-		class="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+		class="size-3 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
 	/>
 </CollapsibleTrigger>

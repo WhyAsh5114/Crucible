@@ -33,8 +33,8 @@
 	);
 </script>
 
-<div class="px-4 py-2">
-	<Tool.Root class="!mb-0 border-border">
+<div class="px-2 py-1">
+	<Tool.Root class="!mb-0 border-border/60">
 		<Tool.Header type={call.tool} {state} />
 		<Tool.Content>
 			<Tool.Input input={call.args} />

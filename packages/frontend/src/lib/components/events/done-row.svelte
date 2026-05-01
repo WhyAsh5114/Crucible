@@ -1,14 +1,12 @@
 <script lang="ts">
 	import type { AgentEvent } from '@crucible/types';
-	import EventFrame from './event-frame.svelte';
 
 	interface Props {
 		event: Extract<AgentEvent, { type: 'done' }>;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	let { event }: Props = $props();
 </script>
 
-<EventFrame label="done" tone="success" seq={event.seq} emittedAt={event.emittedAt}>
-	<span class="text-muted-foreground">Stream complete.</span>
-</EventFrame>
+<div class="mx-3 my-1.5 border-t border-border/40" aria-hidden="true"></div>
