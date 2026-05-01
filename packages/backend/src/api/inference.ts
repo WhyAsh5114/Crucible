@@ -35,7 +35,11 @@ import { auth } from '../lib/auth';
  * Router error).
  */
 function resolveAgentConfig(
-  options: { forceOpenAiFallback?: boolean; fallbackReason?: FallbackReason } = {},
+  options: {
+    forceOpenAiFallback?: boolean;
+    fallbackReason?: FallbackReason;
+    modelOverride?: string;
+  } = {},
 ): { ok: true; config: AgentConfig } | { ok: false; reason: string } {
   if (!options.forceOpenAiFallback) {
     const og = buildOgAgentConfig();
@@ -45,7 +49,7 @@ function resolveAgentConfig(
   // OpenAI-compatible fallback.
   const baseUrl = process.env['OPENAI_BASE_URL'];
   const apiKey = process.env['OPENAI_API_KEY'];
-  const model = process.env['OPENAI_MODEL'];
+  const model = options.modelOverride ?? process.env['OPENAI_MODEL'];
   if (!baseUrl) return { ok: false, reason: 'OPENAI_BASE_URL is not set' };
   if (!apiKey) return { ok: false, reason: 'OPENAI_API_KEY is not set' };
   if (!model) return { ok: false, reason: 'OPENAI_MODEL is not set' };
@@ -91,11 +95,17 @@ function buildAdapter(): AgentAdapter {
 async function runInference(
   workspaceId: string,
   prompt: string,
-  options: { forceOpenAiFallback?: boolean } = {},
+  options: { forceOpenAiFallback?: boolean; modelOverride?: string } = {},
 ): Promise<void> {
   const force = options.forceOpenAiFallback ?? false;
   const resolved = resolveAgentConfig(
-    force ? { forceOpenAiFallback: true, fallbackReason: 'admin_override' } : {},
+    force
+      ? {
+          forceOpenAiFallback: true,
+          fallbackReason: 'admin_override',
+          ...(options.modelOverride !== undefined ? { modelOverride: options.modelOverride } : {}),
+        }
+      : {},
   );
   const streamId = StreamIdSchema.parse(workspaceId);
 
@@ -191,7 +201,12 @@ export const inferenceApi = new OpenAPIHono({
     return undefined;
   },
 }).openapi(promptRoute, async (c) => {
-  const { workspaceId, prompt, force_openai_fallback: forceOpenAiFallback } = c.req.valid('json');
+  const {
+    workspaceId,
+    prompt,
+    force_openai_fallback: forceOpenAiFallback,
+    model,
+  } = c.req.valid('json');
 
   const session = await auth.api.getSession({ headers: c.req.raw.headers });
   const userId = session?.user.id ?? null;
@@ -213,7 +228,13 @@ export const inferenceApi = new OpenAPIHono({
 
   // Kick off in the background; the caller is expected to be subscribed to
   // /api/agent/stream already.
-  void runInference(workspaceId, prompt, forceOpenAiFallback ? { forceOpenAiFallback: true } : {});
+  void runInference(
+    workspaceId,
+    prompt,
+    forceOpenAiFallback
+      ? { forceOpenAiFallback: true, ...(model !== undefined ? { modelOverride: model } : {}) }
+      : {},
+  );
 
   return c.json(PromptResponseSchema.parse({ streamId: StreamIdSchema.parse(workspaceId) }), 202);
 });
