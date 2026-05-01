@@ -18,11 +18,13 @@ import {
 import { runAgentTurn, type AgentAdapter, type AgentConfig } from '@crucible/agent';
 import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
-import { nextAgentSeq, publishAgentEvent } from '../lib/agent-bus';
+import { nextAgentSeq, publishAgentEvent, warmAgentSeq } from '../lib/agent-bus';
 import { collectWorkspaceFiles, workspaceHostPath, writeWorkspaceFile } from '../lib/workspace-fs';
 import { getWorkspaceContainerPorts, runtimeServiceBaseUrl } from '../lib/runtime-docker';
 import { buildOgAgentConfig } from '../lib/og-adapter';
 import { auth } from '../lib/auth';
+import { registerAgentTurn, clearAgentTurn } from '../lib/agent-cancel';
+import { loopbackFetch } from '../lib/loopback-fetch';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +99,11 @@ async function runInference(
   prompt: string,
   options: { forceOpenAiFallback?: boolean; modelOverride?: string } = {},
 ): Promise<void> {
+  // Replay the on-disk chat log to lift the in-memory seq counter past
+  // anything we already persisted — required after `bun run --hot` reloads
+  // so we don't re-emit seq 0..N and trip the frontend's keyed-each guard.
+  await warmAgentSeq(workspaceId);
+
   const force = options.forceOpenAiFallback ?? false;
   const resolved = resolveAgentConfig(
     force
@@ -150,7 +157,21 @@ async function runInference(
     // Container not running yet — agent will degrade without MCP tools.
   }
 
-  await runAgentTurn(workspaceId, prompt, { ...resolved.config, mcpServerUrls }, buildAdapter());
+  // Register an AbortController so POST /api/workspace/:id/cancel can stop
+  // this turn mid-flight. `registerAgentTurn` aborts any prior controller
+  // for the same workspace, so back-to-back prompts don't race.
+  const controller = registerAgentTurn(workspaceId);
+  try {
+    await runAgentTurn(
+      workspaceId,
+      prompt,
+      { ...resolved.config, mcpServerUrls, mcpFetch: loopbackFetch as typeof fetch },
+      buildAdapter(),
+      controller.signal,
+    );
+  } finally {
+    clearAgentTurn(workspaceId, controller);
+  }
 }
 
 // ── OpenAPI route definition ─────────────────────────────────────────────────

@@ -18,6 +18,8 @@ import {
   PREVIEW_BRIDGE_PROTOCOL,
   PREVIEW_BRIDGE_VERSION,
   ALLOWED_RPC_METHODS,
+  type PreviewState,
+  type PreviewPhase,
 } from '@crucible/types';
 import { prisma } from './prisma';
 
@@ -36,6 +38,61 @@ type PreviewEntry = {
 // ---------------------------------------------------------------------------
 
 const previews = new Map<string, PreviewEntry>();
+
+/**
+ * Live boot status per workspace, surfaced to the frontend via the workspace
+ * GET response so the preview pane can render real progress (currently
+ * installing dependencies, starting Vite, …) instead of a generic "DEGRADED"
+ * banner. Reset to `idle` when the supervisor first sees the workspace.
+ */
+const previewStates = new Map<string, PreviewState>();
+const LOG_TAIL_LIMIT = 40;
+
+function makeIdleState(): PreviewState {
+  return { phase: 'idle', logTail: [], updatedAt: Date.now() };
+}
+
+function setPhase(workspaceId: string, phase: PreviewPhase): void {
+  const current = previewStates.get(workspaceId) ?? makeIdleState();
+  previewStates.set(workspaceId, {
+    phase,
+    logTail: current.logTail,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Append log lines to the workspace's preview log tail, keeping only the most
+ * recent `LOG_TAIL_LIMIT` lines so the GET workspace response stays small.
+ * Splits on newlines and drops empty lines.
+ */
+function appendLogTail(workspaceId: string, chunk: string): void {
+  if (!chunk) return;
+  const current = previewStates.get(workspaceId) ?? makeIdleState();
+  const incoming = chunk
+    .split(/\r?\n/u)
+    // bun/vite stdout includes ANSI color codes; strip them so the log tail
+    // renders cleanly in the preview pane.
+    // eslint-disable-next-line no-control-regex
+    .map((line) => line.replace(/\[[0-9;]*m/gu, '').trimEnd())
+    .filter((line) => line.length > 0);
+  if (incoming.length === 0) return;
+  const next = [...current.logTail, ...incoming];
+  const trimmed = next.length > LOG_TAIL_LIMIT ? next.slice(next.length - LOG_TAIL_LIMIT) : next;
+  previewStates.set(workspaceId, {
+    phase: current.phase,
+    logTail: trimmed,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Returns the current preview boot state for a workspace.
+ * Returns the `idle` default when the supervisor has never run for it.
+ */
+export function getPreviewState(workspaceId: string): PreviewState {
+  return previewStates.get(workspaceId) ?? makeIdleState();
+}
 
 // ---------------------------------------------------------------------------
 // Port helpers
@@ -122,7 +179,7 @@ export function buildBridgeScript(): string {
     }
   });
 
-  window.ethereum = {
+  var crucibleProvider = {
     isMetaMask: false,
     isCrucible: true,
     request: function (req) {
@@ -157,8 +214,32 @@ export function buildBridgeScript(): string {
     },
   };
 
-  // Announce via EIP-6963 so wagmi/viem discover us as "Crucible" instead
-  // of falling back to the MetaMask extension (if installed).
+  // Lock window.ethereum so MetaMask (or any other wallet extension) can't
+  // overwrite our bridge by injecting after we run. Without this, the dApp
+  // ends up talking to MetaMask on whatever public chain MetaMask happens to
+  // be on, while the Crucible wallet pane shows "no account connected"
+  // because nothing is going through /rpc anymore.
+  try {
+    Object.defineProperty(window, 'ethereum', {
+      value: crucibleProvider,
+      writable: false,
+      configurable: false,
+      enumerable: true,
+    });
+  } catch (_e) {
+    // Some environment already locked it (rare). Fall back to direct assign;
+    // EIP-6963 announce below still lets the dApp pick Crucible explicitly.
+    window.ethereum = crucibleProvider;
+  }
+
+  // Announce via EIP-6963 so wagmi/viem discover us as "Crucible". MetaMask
+  // (if installed) also announces itself; we can't suppress its event but we
+  // can re-announce on a short cadence so wagmi's provider discovery list
+  // consistently includes Crucible — and we re-announce whenever the dApp
+  // re-emits eip6963:requestProvider. Without the periodic re-announce,
+  // dApps that mount their connect modal after our initial dispatch see only
+  // MetaMask in the list and route txs there, leaving Crucible's wallet
+  // pane empty.
   var providerDetail = {
     info: {
       uuid: 'crucible-preview-bridge-v1',
@@ -166,13 +247,18 @@ export function buildBridgeScript(): string {
       icon: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><text y=%2224%22 font-size=%2224%22>⚗</text></svg>',
       rdns: 'app.crucible.preview',
     },
-    provider: window.ethereum,
+    provider: crucibleProvider,
   };
   function announceProvider() {
     window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: Object.freeze(providerDetail) }));
   }
   window.addEventListener('eip6963:requestProvider', announceProvider);
   announceProvider();
+  // Re-announce shortly after to catch dApps that mount their connect modal
+  // after the initial dispatch (common with framework-driven UIs).
+  setTimeout(announceProvider, 100);
+  setTimeout(announceProvider, 500);
+  setTimeout(announceProvider, 1500);
 
   // Kick off the handshake once the document is ready.
   function sendHello() {
@@ -213,18 +299,56 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
 
   // Ensure the workspace frontend's dependencies are installed before starting
   // Vite. `writeIfAbsent` only writes package.json — bun install is not run
-  // during scaffold, so node_modules may be absent on first launch.
-  await new Promise<void>((resolve, reject) => {
-    const install = spawn('bun', ['install'], {
-      cwd: frontendDir,
-      stdio: 'pipe',
-    });
-    (install as unknown as EventEmitter).on('exit', (code: number | null) => {
-      if (code === 0) resolve();
-      else reject(new Error(`bun install exited with code ${code}`));
-    });
-    (install as unknown as EventEmitter).on('error', reject);
-  });
+  // during scaffold, so node_modules may be absent on first launch. We
+  // capture stdout + stderr both so install failures bubble up with the
+  // actual reason and so the frontend can render live progress (the install
+  // is the slowest leg of preview boot, ~30–60s cold).
+  //
+  // Cache shortcut: if `node_modules/.crucible-installed` is present we
+  // assume the workspace is already prepared and skip the install entirely.
+  const { existsSync } = await import('node:fs');
+  const { writeFile: writeFileFs } = await import('node:fs/promises');
+  const installedMarker = path.join(frontendDir, 'node_modules', '.crucible-installed');
+  const alreadyInstalled = existsSync(installedMarker);
+
+  if (!alreadyInstalled) {
+    setPhase(workspaceId, 'installing');
+    appendLogTail(workspaceId, `Installing dependencies in ${frontendDir}…`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const install = spawn('bun', ['install'], {
+          cwd: frontendDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        install.stdout?.on('data', (chunk: Buffer) => {
+          appendLogTail(workspaceId, chunk.toString());
+        });
+        install.stderr?.on('data', (chunk: Buffer) => {
+          appendLogTail(workspaceId, chunk.toString());
+        });
+        (install as unknown as EventEmitter).on('exit', (code: number | null) => {
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          reject(new Error(`bun install exited with code ${code}`));
+        });
+        (install as unknown as EventEmitter).on('error', reject);
+      });
+    } catch (err) {
+      setPhase(workspaceId, 'failed');
+      appendLogTail(
+        workspaceId,
+        `Install failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      throw err;
+    }
+    // Drop the marker so we skip the install on subsequent boots.
+    await writeFileFs(installedMarker, `${Date.now()}\n`, 'utf8').catch(() => undefined);
+  }
+
+  setPhase(workspaceId, 'starting');
+  appendLogTail(workspaceId, `Starting Vite dev server on port ${port}…`);
 
   // Spawn the launcher script which uses Vite's programmatic createServer() API.
   // The bridge plugin is injected in-memory — no files are written into the
@@ -241,14 +365,22 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
     stdio: 'pipe',
   });
 
-  (vite as unknown as EventEmitter).on('exit', () => {
+  // Forward Vite stdout/stderr into the log tail so failures during dev
+  // server boot are visible in the preview pane.
+  vite.stdout?.on('data', (chunk: Buffer) => appendLogTail(workspaceId, chunk.toString()));
+  vite.stderr?.on('data', (chunk: Buffer) => appendLogTail(workspaceId, chunk.toString()));
+
+  (vite as unknown as EventEmitter).on('exit', (code: number | null) => {
     previews.delete(workspaceId);
+    setPhase(workspaceId, code === 0 || code === null ? 'idle' : 'failed');
+    appendLogTail(workspaceId, `Vite exited with code ${code ?? 'null'}.`);
     prisma.workspaceRuntime
       .updateMany({ where: { workspaceId }, data: { previewUrl: null } })
       .catch(() => undefined);
   });
 
   previews.set(workspaceId, { process: vite, port, previewUrl });
+  setPhase(workspaceId, 'ready');
 
   await prisma.workspaceRuntime
     .updateMany({ where: { workspaceId }, data: { previewUrl } })

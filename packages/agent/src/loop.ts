@@ -27,6 +27,90 @@ import {
 } from '@crucible/types';
 import { buildSystemPrompt } from './system-prompt.ts';
 
+// ── OpenAI-compat response normalisation ────────────────────────────────────
+
+/**
+ * Some OpenAI-compatible providers (DigitalOcean's serverless inference,
+ * Zhipu glm-5, Moonshot kimi) emit `tool_calls[].type: ""` on streaming
+ * deltas instead of the spec-required `"function"`. The Vercel AI SDK
+ * validates incoming chunks with a strict zod schema and rejects anything
+ * else, blowing up the agent loop on every tool call.
+ *
+ * This fetch wrapper transforms the SSE response body line-by-line, parsing
+ * each `data: {...}` JSON payload, fixing empty `type` strings, and
+ * re-emitting. Non-streaming responses pass through untouched. Errors during
+ * parsing are swallowed silently — the original chunk is forwarded as-is so
+ * the SDK can still handle it (or report its own validation error).
+ */
+// Typed loosely on purpose — the AI SDK passes whatever it would pass to the
+// global `fetch`, and we just forward verbatim. Using DOM-typed `RequestInfo`
+// would force pulling DOM lib into the agent package's tsconfig.
+async function normalizingFetch(input: unknown, init?: unknown): Promise<Response> {
+  const res = await (fetch as unknown as (i: unknown, x?: unknown) => Promise<Response>)(
+    input,
+    init,
+  );
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('text/event-stream') || !res.body) return res;
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const text = decoder.decode(chunk, { stream: true });
+      const lines = text.split('\n');
+      const out: string[] = [];
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) {
+          out.push(line);
+          continue;
+        }
+        const payload = line.slice(6);
+        if (payload === '[DONE]') {
+          out.push(line);
+          continue;
+        }
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: Array<{
+              delta?: {
+                tool_calls?: Array<{ type?: string; function?: unknown }>;
+              };
+            }>;
+          };
+          const calls = parsed.choices?.[0]?.delta?.tool_calls;
+          if (Array.isArray(calls)) {
+            for (const call of calls) {
+              if (call && typeof call === 'object' && (!call.type || call.type === '')) {
+                call.type = 'function';
+              }
+            }
+            out.push(`data: ${JSON.stringify(parsed)}`);
+          } else {
+            out.push(line);
+          }
+        } catch {
+          out.push(line);
+        }
+      }
+      controller.enqueue(encoder.encode(out.join('\n')));
+    },
+  });
+
+  // The Response body stream is typed loosely across `stream/web` vs.
+  // `node:stream/web`; the runtime contract is identical so we cast through
+  // unknown rather than fight the types.
+  const transformed = (res.body as unknown as ReadableStream<Uint8Array>).pipeThrough(transform);
+  // `BodyInit` is a DOM type; the runtime accepts the transformed stream, so
+  // cast through unknown rather than pulling DOM lib into the package config.
+  return new Response(transformed as unknown as ReadableStream<Uint8Array>, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 /** OpenAI-compatible inference provider configuration. */
@@ -55,6 +139,13 @@ export interface AgentConfig {
   mcpServerUrls?: Partial<
     Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
   >;
+  /**
+   * Custom fetch passed through to the MCP HTTP transport. Used by the
+   * control plane to inject a loopback-aware fetch (Connection: close +
+   * retry-on-socket-close) for backend → docker-published runtime hops where
+   * Bun's keep-alive pool races docker-proxy idle timeouts.
+   */
+  mcpFetch?: typeof fetch;
 }
 
 /**
@@ -231,7 +322,12 @@ function makeOgRouterFetch(
       }
     }
 
-    const response = await globalThis.fetch(input, nextInit);
+    // Use the normalising fetch under the hood so non-conformant
+    // OpenAI-compatible providers behind the 0G Router (e.g. providers that
+    // emit `tool_calls[].type: ""` on streaming deltas) don't blow up the AI
+    // SDK's strict schema validation. The wrapper is a no-op for compliant
+    // streams.
+    const response = await normalizingFetch(input, nextInit);
     if (!response.ok) {
       const text = await response
         .clone()
@@ -330,12 +426,17 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
  *
  * Never throws — all errors are swallowed and forwarded to the bus as
  * `error` + `done` events so the frontend always gets a terminal frame.
+ *
+ * Pass `signal` to allow the caller to cancel the turn mid-flight. When the
+ * signal aborts, the active `streamText` call rejects with an AbortError; the
+ * loop catches it, emits a "cancelled by user" message + `done`, and returns.
  */
 export async function runAgentTurn(
   workspaceId: string,
   prompt: string,
   config: AgentConfig,
   adapter: AgentAdapter,
+  signal?: AbortSignal,
 ): Promise<void> {
   const streamId = StreamIdSchema.parse(workspaceId);
 
@@ -362,10 +463,21 @@ export async function runAgentTurn(
   const ogFetch = makeOgRouterFetch(config.provider, (t) => {
     ogTraceRef.value = t;
   });
+  // Always install a normalising fetch wrapper. Some OpenAI-compatible
+  // providers (observed: DigitalOcean Serverless Inference for glm-5 and
+  // kimi-k2.5; some 0G Router providers) emit `tool_calls[].type: ""` on
+  // streaming deltas instead of `"function"`. The AI SDK validates incoming
+  // chunks with a strict zod schema and rejects them, blowing up the loop.
+  // The wrapper is a no-op for compliant streams. When 0G is the active
+  // provider, ogFetch *also* wraps normalizingFetch under the hood (see
+  // makeOgRouterFetch above) so verify_tee injection and trace filtering
+  // compose with the normalisation pass.
+  // Cast through unknown: the AI SDK's `fetch` field uses DOM types we
+  // intentionally don't pull into this package's tsconfig.
   const openai = createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
-    ...(ogFetch ? { fetch: ogFetch } : {}),
+    fetch: (ogFetch ?? normalizingFetch) as unknown as typeof fetch,
   });
 
   let promptTokens = 0;
@@ -386,7 +498,13 @@ export async function runAgentTurn(
   for (const [serverName, url] of Object.entries(config.mcpServerUrls ?? {})) {
     if (!url) continue;
     try {
-      const client = await createMCPClient({ transport: { type: 'http', url } });
+      const client = await createMCPClient({
+        transport: {
+          type: 'http',
+          url,
+          ...(config.mcpFetch ? { fetch: config.mcpFetch } : {}),
+        },
+      });
       mcpClients.push(client);
       const serverTools = await client.tools({
         schemas: getMcpSchemas(serverName as McpServerKey),
@@ -418,6 +536,7 @@ export async function runAgentTurn(
       messages: [{ role: 'user', content: prompt }],
       stopWhen: stepCountIs(20),
       maxRetries: 1,
+      ...(signal ? { abortSignal: signal } : {}),
       tools: {
         // ── read_file ──────────────────────────────────────────────────────
         read_file: tool({
@@ -564,6 +683,19 @@ export async function runAgentTurn(
       }
     }
   } catch (err) {
+    // Aborts come back either as native AbortError or with `signal.aborted`
+    // already set — surface them as a user-facing cancel notice rather than
+    // a generic agent-loop failure, and short-circuit out of the receipt
+    // path since cancellation is not an inference outcome.
+    const aborted =
+      signal?.aborted === true ||
+      (err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message)));
+    if (aborted) {
+      emit({ ...baseEvent(), type: 'message', content: '_Cancelled by user._' });
+      emit({ ...baseEvent(), type: 'done' });
+      return;
+    }
+
     const reason = ogFallbackReasonOf(err);
     if (reason) ogErrorFallbackReason = reason;
     emit({

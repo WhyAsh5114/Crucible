@@ -11,8 +11,12 @@ import type {
 	WorkspaceCreateResponse,
 	WorkspaceListResponse,
 	WorkspaceState,
+	WorkspaceUpdateRequest,
+	WorkspaceUpdateResponse,
+	WorkspaceDeleteResponse,
 	PromptRequest,
-	PromptResponse
+	PromptResponse,
+	AgentEvent
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -54,6 +58,25 @@ export class WorkspaceClient {
 		return (await res.json()) as WorkspaceListResponse;
 	}
 
+	async renameWorkspace(id: string, req: WorkspaceUpdateRequest): Promise<WorkspaceUpdateResponse> {
+		const res = await apiClient.api.workspace[':id'].$patch({
+			param: { id },
+			json: req
+		});
+		if (!res.ok) {
+			throw new Error(`renameWorkspace failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as WorkspaceUpdateResponse;
+	}
+
+	async deleteWorkspace(id: string): Promise<WorkspaceDeleteResponse> {
+		const res = await apiClient.api.workspace[':id'].$delete({ param: { id } });
+		if (!res.ok) {
+			throw new Error(`deleteWorkspace failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as WorkspaceDeleteResponse;
+	}
+
 	/**
 	 * Send a user prompt to the agent. The HTTP response is fast (just a
 	 * stream id); model tokens are delivered over the existing
@@ -66,6 +89,38 @@ export class WorkspaceClient {
 			throw new Error(`sendPrompt failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as PromptResponse;
+	}
+
+	/**
+	 * Fetch the persisted chat history for a workspace. Returns the raw
+	 * `AgentEvent` log so the caller can replay it through the same coalescing
+	 * pipeline that handles live SSE frames.
+	 */
+	async getChatHistory(id: string): Promise<AgentEvent[]> {
+		const res = await apiClient.api.workspace[':id'].chat.history.$get({
+			param: { id }
+		});
+		if (!res.ok) {
+			throw new Error(`getChatHistory failed: ${res.status} ${await res.text()}`);
+		}
+		const body = (await res.json()) as { events: AgentEvent[] };
+		return body.events;
+	}
+
+	/**
+	 * Abort the workspace's currently-running agent turn, if any. Resolves to
+	 * `true` when a turn was cancelled and `false` when there was no in-flight
+	 * controller to abort (already finished or never started).
+	 */
+	async cancelAgent(id: string): Promise<boolean> {
+		const res = await apiClient.api.workspace[':id'].cancel.$post({
+			param: { id }
+		});
+		if (!res.ok) {
+			throw new Error(`cancelAgent failed: ${res.status} ${await res.text()}`);
+		}
+		const body = (await res.json()) as { cancelled: boolean };
+		return body.cancelled;
 	}
 
 	/** Fetch available inference providers and their models. */

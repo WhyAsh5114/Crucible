@@ -31,6 +31,27 @@ export const WorkspaceCreateResponseSchema = z.object({
 });
 export type WorkspaceCreateResponse = z.infer<typeof WorkspaceCreateResponseSchema>;
 
+// --- PATCH /api/workspace/:id (rename) ---------------------------------------
+
+export const WorkspaceUpdateRequestSchema = z.object({
+  name: z.string().min(1).max(100),
+});
+export type WorkspaceUpdateRequest = z.infer<typeof WorkspaceUpdateRequestSchema>;
+
+export const WorkspaceUpdateResponseSchema = z.object({
+  id: WorkspaceIdSchema,
+  name: z.string().min(1),
+});
+export type WorkspaceUpdateResponse = z.infer<typeof WorkspaceUpdateResponseSchema>;
+
+// --- DELETE /api/workspace/:id -----------------------------------------------
+
+export const WorkspaceDeleteResponseSchema = z.object({
+  id: WorkspaceIdSchema,
+  deleted: z.literal(true),
+});
+export type WorkspaceDeleteResponse = z.infer<typeof WorkspaceDeleteResponseSchema>;
+
 // --- GET /api/workspace/:id --------------------------------------------------
 
 /** Response is `WorkspaceState` from `./workspace.ts`. */

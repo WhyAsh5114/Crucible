@@ -9,7 +9,7 @@
 /// <reference types="bun-types" />
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { createEip1193Bridge } from '../src/lib/eip1193-bridge';
+import { createEip1193Bridge, __test_clearFailureUntil } from '../src/lib/eip1193-bridge';
 import {
 	PREVIEW_BRIDGE_PROTOCOL,
 	PREVIEW_BRIDGE_VERSION,
@@ -62,6 +62,10 @@ describe('createEip1193Bridge', () => {
 		document.body.appendChild(iframe);
 		posted = [];
 		originalFetch = globalThis.fetch;
+
+		// Clear module-level circuit-breaker state so tests don't interfere
+		// with one another when the runner reuses the same process.
+		__test_clearFailureUntil();
 
 		// Capture postMessage calls sent by the bridge to the iframe's window.
 		// In happy-dom, iframe.contentWindow is available once attached to body.

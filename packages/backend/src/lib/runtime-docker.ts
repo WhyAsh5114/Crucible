@@ -20,6 +20,21 @@ const docker = process.env['DOCKER_SOCKET_PATH']
 const WORKSPACES_BIND_ROOT = process.env['CRUCIBLE_RUNTIME_BIND_ROOT'];
 const MOUNT_MODE = process.env['CRUCIBLE_RUNTIME_MOUNT_MODE'] ?? 'bind';
 const RUNTIME_IMAGE = process.env['CRUCIBLE_RUNTIME_IMAGE'] ?? 'crucible-runtime:latest';
+
+// Loud guard: the test suite uses generic base images (e.g. ubuntu:24.04) that
+// have no MCP services baked in — the container is kept alive by a fallback
+// `sleep` CMD only. If a developer copies that override into their dev .env,
+// every workspace silently spawns a useless container and `/rpc` returns 503
+// forever (TCP RSTs from the kernel because nothing is listening on the
+// in-container ports). Surface it once at startup so the failure mode is
+// obvious instead of mysterious. Test runs (NODE_ENV=test) suppress this.
+if (process.env['NODE_ENV'] !== 'test' && !RUNTIME_IMAGE.startsWith('crucible-runtime')) {
+  console.warn(
+    `[runtime-docker] WARNING: CRUCIBLE_RUNTIME_IMAGE='${RUNTIME_IMAGE}' is not a crucible-runtime image. ` +
+      `Workspaces will spawn with a keep-alive shell only — no MCP services, /rpc will 503. ` +
+      `Build the runtime first (\`bun run --cwd packages/backend runtime:build\`) and unset this override.`,
+  );
+}
 const DOCKER_RETRY_COUNT = Number(process.env['CRUCIBLE_DOCKER_RETRY_COUNT'] ?? '2');
 const DOCKER_TIMEOUT_MS = Number(process.env['CRUCIBLE_DOCKER_TIMEOUT_MS'] ?? '15000');
 const VOLUME_MOUNT_ROOT = process.env['CRUCIBLE_RUNTIME_VOLUME_ROOT'] ?? '/workspace-root';
@@ -312,6 +327,26 @@ export async function stopWorkspaceContainer(workspaceId: string): Promise<void>
   await withRetry(() =>
     withTimeout(docker.getContainer(containerName).stop({ t: 10 }), `Stop ${containerName}`),
   );
+}
+
+/**
+ * Stop and remove the per-workspace container, releasing its name and host
+ * ports so the workspace can be deleted cleanly. No-ops if the container
+ * doesn't exist; tolerates "already stopped" / "in-progress remove".
+ */
+export async function removeWorkspaceContainer(workspaceId: string): Promise<void> {
+  const containerName = runtimeContainerName(workspaceId);
+  const inspect = await getContainerInspect(containerName);
+  if (!inspect) return;
+  try {
+    await withTimeout(
+      docker.getContainer(containerName).remove({ force: true, v: true }),
+      `Remove ${containerName}`,
+    );
+  } catch (error) {
+    if (isDockerNotFound(error)) return;
+    throw error;
+  }
 }
 
 export type WorkspaceRuntimePorts = {
