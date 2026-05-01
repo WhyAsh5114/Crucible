@@ -46,6 +46,13 @@ COPY packages/mcp-memory ./packages/mcp-memory
 COPY packages/mcp-terminal ./packages/mcp-terminal
 COPY packages/mcp-devtools ./packages/mcp-devtools
 
+# Pre-warm Hardhat's solc cache so the first per-workspace compile doesn't pay
+# the 30–60s download cost (and avoids racing Hardhat's MultiProcessMutex,
+# which has a 60s timeout). Bakes solc 0.8.28 into /root/.cache/hardhat-nodejs/
+# in this image layer; every workspace container starts with the cache primed.
+COPY packages/backend/runtime/warm-solc.ts /app/packages/backend/runtime/warm-solc.ts
+RUN bun /app/packages/backend/runtime/warm-solc.ts
+
 # /workspace is the per-workspace bind mount target.
 WORKDIR /workspace
 
