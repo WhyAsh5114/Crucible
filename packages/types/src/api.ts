@@ -82,6 +82,12 @@ export const PromptRequestSchema = z.object({
    * a Router failure so the user can recover without changing server config.
    */
   force_openai_fallback: z.boolean().optional(),
+  /**
+   * Model override for the OpenAI-compatible fallback path. When provided
+   * with `force_openai_fallback: true`, uses this model instead of
+   * `OPENAI_MODEL` from the environment.
+   */
+  model: z.string().optional(),
 });
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 

@@ -9,6 +9,7 @@ import { rpcApi } from './api/rpc';
 import { workspaceApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
+import { modelsApi } from './api/models';
 
 export { upgradeWebSocket };
 
@@ -48,6 +49,7 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => {
 // Routes that live outside sub-apps still need explicit auth guards.
 app.use('/api/agent/*', requireSession);
 app.use('/api/prompt', requireSession);
+app.use('/api/models', requireSession);
 
 const apiRoutes = app
   .route('/api', workspaceApi)
@@ -55,6 +57,7 @@ const apiRoutes = app
   .route('/api', rpcApi)
   .route('/api', agentApi)
   .route('/api', inferenceApi)
+  .route('/api', modelsApi)
   .route('/', terminalApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
