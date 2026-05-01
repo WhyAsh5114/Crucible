@@ -8,6 +8,7 @@
  */
 
 import { getWorkspaceContainerPorts, runtimeServiceBaseUrl } from './runtime-docker';
+import { loopbackFetch } from './loopback-fetch';
 
 type ToolExecInput = {
   tool: string;
@@ -148,7 +149,7 @@ async function proxyToService(
 
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await loopbackFetch(url, init);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown';
     return { ok: false, error: `runtime service '${server}' unreachable: ${message}` };
