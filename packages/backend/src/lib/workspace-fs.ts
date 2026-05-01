@@ -56,26 +56,75 @@ export async function provisionWorkspaceDirectory(workspaceId: string): Promise<
 
 async function scaffoldContracts(contractsDir: string): Promise<void> {
   await writeIfAbsent(
-    path.join(contractsDir, 'Counter.sol'),
+    path.join(contractsDir, 'DemoVault.sol'),
     `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-/// @notice Default Crucible workspace template. Replace as you build.
-contract Counter {
-    uint256 public count;
+/// @title  DemoVault
+/// @notice Crucible workspace scaffold — accepts ETH deposits from anyone;
+///         only the owner may withdraw.
+///
+/// SEEDED BUG
+///   The \`onlyOwner\` modifier checks \`pendingOwner\` instead of \`owner\`.
+///   Because \`pendingOwner\` is address(0) at deploy time, every call to
+///   \`withdraw()\` reverts with "DemoVault: caller is not owner" — even when
+///   the deployer calls it.
+///
+/// FIX
+///   Change \`pendingOwner\` to \`owner\` on the require line inside onlyOwner.
+///
+/// DEMO PROMPT
+///   "Deposit 1 ETH into the vault, then withdraw it to the owner.
+///    Fix any issues that come up."
+contract DemoVault {
+    address public owner;
+    /// @dev Intentionally unset (address(0)) — see SEEDED BUG above.
+    address public pendingOwner;
 
-    event Incremented(address indexed by, uint256 newCount);
-    event Decremented(address indexed by, uint256 newCount);
+    uint64 public constant COOLDOWN = 60; // seconds between withdrawals
+    uint64 public lastWithdrawAt;
 
-    function increment() external {
-        count += 1;
-        emit Incremented(msg.sender, count);
+    mapping(address => uint256) public balances;
+
+    event Deposited(address indexed by, uint256 amount, uint256 vaultBalance);
+    event Withdrawn(address indexed to, uint256 amount);
+
+    /// @dev BUG: checks \`pendingOwner\` (address(0)) instead of \`owner\`.
+    modifier onlyOwner() {
+        require(msg.sender == pendingOwner, "DemoVault: caller is not owner");
+        _;
     }
 
-    function decrement() external {
-        require(count > 0, "Counter: cannot go below zero");
-        count -= 1;
-        emit Decremented(msg.sender, count);
+    constructor() {
+        owner = msg.sender;
+        lastWithdrawAt = uint64(block.timestamp);
+    }
+
+    /// @notice Deposit ETH into the vault. Open to all callers.
+    function deposit() external payable {
+        require(msg.value > 0, "DemoVault: zero deposit");
+        balances[msg.sender] += msg.value;
+        emit Deposited(msg.sender, msg.value, address(this).balance);
+    }
+
+    /// @notice Withdraw ETH to the owner. Enforces a 60-second cooldown.
+    /// @dev    Will always revert at the onlyOwner check due to the bug above.
+    function withdraw(uint256 amount) external onlyOwner {
+        require(amount > 0, "DemoVault: zero amount");
+        require(address(this).balance >= amount, "DemoVault: insufficient balance");
+        require(
+            uint64(block.timestamp) >= lastWithdrawAt + COOLDOWN,
+            "DemoVault: cooldown not elapsed"
+        );
+        lastWithdrawAt = uint64(block.timestamp);
+        (bool ok, ) = owner.call{ value: amount }("");
+        require(ok, "DemoVault: ETH transfer failed");
+        emit Withdrawn(owner, amount);
+    }
+
+    receive() external payable {
+        balances[msg.sender] += msg.value;
+        emit Deposited(msg.sender, msg.value, address(this).balance);
     }
 }
 `,
@@ -343,7 +392,7 @@ function shortAddress(addr: string): string {
 }
 
 interface ContractsManifest {
-  counter?: { address: Address; abi: Abi; deployedAt: number };
+  vault?: { address: Address; abi: Abi; deployedAt: number };
 }
 
 /**
@@ -404,9 +453,21 @@ export default function App() {
   const { address, isConnected, status } = useAccount();
   const { connect, connectors, isPending: isConnecting, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
-  const { data: balance, refetch: refetchBalance } = useBalance({ address });
+  const { data: walletBalance, refetch: refetchWalletBalance } = useBalance({ address });
   const { manifest, error: manifestError } = useContractsManifest();
-  const counter = manifest?.counter;
+  const vault = manifest?.vault;
+
+  // Vault's total ETH balance.
+  const { data: vaultBalance, refetch: refetchVaultBalance } = useBalance({
+    address: vault?.address,
+  });
+
+  // User's recorded deposit balance inside the vault mapping.
+  const { data: userDeposit, refetch: refetchUserDeposit } = useReadContract(
+    vault && address
+      ? { address: vault.address, abi: vault.abi, functionName: 'balances', args: [address] }
+      : undefined,
+  );
 
   // Auto-connect to the Crucible bridge on first load. There's only ever one
   // connector configured (filtered by RDNS in config.ts), so the user never
@@ -417,21 +478,6 @@ export default function App() {
     }
   }, [status, connectors, isConnecting, connect]);
 
-  // Read the on-chain counter value. Refetches whenever a write succeeds.
-  const {
-    data: count,
-    refetch: refetchCount,
-    isFetching: isCountLoading,
-  } = useReadContract(
-    counter
-      ? {
-          address: counter.address,
-          abi: counter.abi,
-          functionName: 'count',
-        }
-      : undefined,
-  );
-
   const {
     writeContract,
     data: txHash,
@@ -440,52 +486,53 @@ export default function App() {
     reset: resetWrite,
   } = useWriteContract();
 
-  // Watch the tx through to inclusion so we know exactly when to refetch.
   const { isLoading: isMining, isSuccess: isMined } = useWaitForTransactionReceipt({
     hash: txHash,
   });
 
   useEffect(() => {
     if (isMined) {
-      void refetchCount();
-      void refetchBalance();
+      void refetchVaultBalance();
+      void refetchWalletBalance();
+      void refetchUserDeposit();
     }
-  }, [isMined, refetchCount, refetchBalance]);
+  }, [isMined, refetchVaultBalance, refetchWalletBalance, refetchUserDeposit]);
 
-  function handleIncrement() {
-    if (!counter) return;
+  function handleDeposit() {
+    if (!vault) return;
     resetWrite();
     writeContract({
-      address: counter.address,
-      abi: counter.abi,
-      functionName: 'increment',
+      address: vault.address,
+      abi: vault.abi,
+      functionName: 'deposit',
+      value: BigInt('100000000000000000'), // 0.1 ETH
     });
   }
 
-  function handleDecrement() {
-    if (!counter) return;
+  // NOTE: withdraw will revert with "DemoVault: caller is not owner" due to
+  // the seeded bug in onlyOwner. That revert is the demo trigger for the
+  // agent self-healing loop.
+  function handleWithdraw() {
+    if (!vault) return;
     resetWrite();
     writeContract({
-      address: counter.address,
-      abi: counter.abi,
-      functionName: 'decrement',
+      address: vault.address,
+      abi: vault.abi,
+      functionName: 'withdraw',
+      args: [BigInt('100000000000000000')], // 0.1 ETH
     });
   }
 
-  const buttonLabel = isSubmitting
-    ? 'Awaiting approval…'
-    : isMining
-      ? 'Mining…'
-      : 'Increment';
+  const txLabel = isSubmitting ? 'Awaiting approval…' : isMining ? 'Mining…' : null;
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Crucible counter</h1>
+        <h1 style={styles.title}>DemoVault</h1>
         <p style={styles.hint}>
-          Default workspace scaffold. Each <strong>Increment</strong> sends a real transaction
-          to the deployed <code>Counter</code> contract — the Crucible wallet pane on the left
-          will prompt you to approve it.
+          Workspace scaffold. <strong>Deposit</strong> sends 0.1 ETH to the vault.{' '}
+          <strong>Withdraw</strong> (owner-only) will revert — that's the bug for the
+          self-healing agent to find and fix.
         </p>
 
         {isConnected && address ? (
@@ -495,51 +542,51 @@ export default function App() {
               <div style={styles.value}>{shortAddress(address)}</div>
             </div>
             <div style={styles.row}>
-              <div style={styles.label}>Balance</div>
+              <div style={styles.label}>Wallet balance</div>
               <div style={styles.value}>
-                {balance ? \`\${balance.formatted} \${balance.symbol}\` : '—'}
+                {walletBalance ? \`\${walletBalance.formatted} \${walletBalance.symbol}\` : '—'}
               </div>
             </div>
-            {counter ? (
+            {vault ? (
               <div style={styles.row}>
-                <div style={styles.label}>Counter contract</div>
-                <div style={styles.value}>{shortAddress(counter.address)}</div>
+                <div style={styles.label}>Vault contract</div>
+                <div style={styles.value}>{shortAddress(vault.address)}</div>
               </div>
             ) : null}
 
             <div style={styles.counterBox}>
               <div>
-                <div style={styles.label}>Count</div>
+                <div style={styles.label}>Vault balance</div>
                 <div style={styles.counterValue}>
-                  {counter
-                    ? count !== undefined
-                      ? String(count)
-                      : isCountLoading
-                        ? '…'
-                        : '?'
+                  {vaultBalance ? vaultBalance.formatted : vault ? '…' : '—'}
+                </div>
+                <div style={{ ...styles.label, marginTop: '0.6rem' }}>Your deposit</div>
+                <div style={{ fontSize: '0.85rem', marginTop: '0.15rem' }}>
+                  {userDeposit !== undefined
+                    ? \`\${(Number(userDeposit as bigint) / 1e18).toFixed(4)} ETH\`
                     : '—'}
                 </div>
               </div>
-              <div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <button
                   style={styles.button}
-                  onClick={handleIncrement}
-                  disabled={!counter || isSubmitting || isMining}
+                  onClick={handleDeposit}
+                  disabled={!vault || isSubmitting || isMining}
                 >
-                  {buttonLabel}
+                  {txLabel ?? 'Deposit 0.1 ETH'}
                 </button>
                 <button
-                  style={{ ...styles.buttonOutline, marginLeft: '0.5rem', marginRight: 0 }}
-                  onClick={handleDecrement}
-                  disabled={!counter || isSubmitting || isMining || count === 0n}
+                  style={styles.buttonOutline}
+                  onClick={handleWithdraw}
+                  disabled={!vault || isSubmitting || isMining}
                 >
-                  Decrement
+                  Withdraw 0.1 ETH
                 </button>
               </div>
             </div>
 
-            {!counter && !manifestError ? (
-              <p style={styles.hint}>Waiting for backend to deploy Counter contract…</p>
+            {!vault && !manifestError ? (
+              <p style={styles.hint}>Waiting for backend to deploy DemoVault contract…</p>
             ) : null}
             {manifestError ? (
               <div style={styles.error}>Couldn't load contracts.json: {manifestError}</div>
@@ -547,7 +594,9 @@ export default function App() {
 
             {txHash ? (
               <div style={styles.txStatus}>
-                <div style={styles.label}>Last tx {isMining ? '(mining)' : isMined ? '(mined)' : ''}</div>
+                <div style={styles.label}>
+                  Last tx {isMining ? '(mining)' : isMined ? '(mined)' : ''}
+                </div>
                 <div>{txHash}</div>
               </div>
             ) : null}
