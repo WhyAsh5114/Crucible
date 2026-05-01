@@ -331,7 +331,7 @@ export function createDeployerService(opts: {
           from: sender,
           to: null,
           data,
-          ...(input.value !== undefined ? { value: toHexQuantity(input.value) } : {}),
+          ...(input.value !== undefined ? { value: toHexQuantity(BigInt(input.value)) } : {}),
         },
       ]);
 
@@ -352,8 +352,8 @@ export function createDeployerService(opts: {
         ...(input.tx.from ? { from: input.tx.from } : {}),
         ...(input.tx.to ? { to: input.tx.to } : { to: null }),
         data: input.tx.data,
-        ...(input.tx.value !== undefined ? { value: toHexQuantity(input.tx.value) } : {}),
-        ...(input.tx.gas !== undefined ? { gas: toHexQuantity(input.tx.gas) } : {}),
+        ...(input.tx.value !== undefined ? { value: toHexQuantity(BigInt(input.tx.value)) } : {}),
+        ...(input.tx.gas !== undefined ? { gas: toHexQuantity(BigInt(input.tx.gas)) } : {}),
       };
 
       const [callRes, estimateRes] = await Promise.all([
@@ -372,7 +372,7 @@ export function createDeployerService(opts: {
         gasEstimate:
           estimateRes.result !== undefined
             ? encodeBigInt(BigInt(estimateRes.result))
-            : encodeBigInt(input.tx.gas ?? 0n),
+            : encodeBigInt(input.tx.gas !== undefined ? BigInt(input.tx.gas) : 0n),
         ...(revertReason ? { revertReason } : {}),
         logs,
       };
@@ -449,7 +449,7 @@ export function createDeployerService(opts: {
 
       const txHash = await wallet.sendTransaction({
         data,
-        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.value !== undefined ? { value: BigInt(input.value) } : {}),
       });
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
