@@ -9,7 +9,7 @@
 	let { event }: Props = $props();
 </script>
 
-<div class="px-4 py-2">
+<div class="px-2 py-1">
 	<Reasoning.Root class="!mb-0" defaultOpen={false}>
 		<Reasoning.Trigger />
 		<Reasoning.Content content={event.text} />
