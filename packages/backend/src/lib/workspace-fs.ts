@@ -439,6 +439,7 @@ export default function App() {
   const { data: walletBalance, refetch: refetchWalletBalance } = useBalance({ address });
   const { manifest, error: manifestError } = useContractsManifest();
   const vault = manifest?.vault;
+  const { data: vaultBalance, refetch: refetchVaultBalance } = useBalance({ address: vault?.address });
 
   // Auto-connect to the Crucible bridge on first load. There's only ever one
   // connector configured (filtered by RDNS in config.ts), so the user never
@@ -464,8 +465,9 @@ export default function App() {
   useEffect(() => {
     if (isMined) {
       void refetchWalletBalance();
+      void refetchVaultBalance();
     }
-  }, [isMined, refetchWalletBalance]);
+  }, [isMined, refetchWalletBalance, refetchVaultBalance]);
 
   function handleDeposit() {
     if (!vault) return;
@@ -516,6 +518,12 @@ export default function App() {
             ) : null}
 
             <div style={styles.counterBox}>
+              <div>
+                <div style={styles.label}>Vault balance</div>
+                <div style={styles.counterValue}>
+                  {vaultBalance ? vaultBalance.formatted : vault ? '\u2026' : '\u2014'}
+                </div>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <button
                   style={styles.button}
