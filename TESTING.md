@@ -156,7 +156,7 @@ With `OG_STORAGE_PRIVATE_KEY` set, these hits write to 0G Storage KV. Without it
 
 ### 7. Testing 0G Chain deployment (mcp-deployer)
 
-The agent uses `deploy_0g_chain` when you ask it to deploy to testnet. You can also call it directly:
+The agent uses `deploy_og_chain` when you ask it to deploy to testnet. You can also call it directly:
 
 ```bash
 DEPLOYER_PORT=$(docker inspect crucible-ws-<id> \
@@ -182,7 +182,7 @@ On success you get `{ address, txHash, gasUsed, explorerUrl }` where `explorerUr
 | `OG_API_KEY` / `OG_MODEL` | Inference falls back to OpenAI-compatible; UI shows fallback mode                |
 | `OG_STORAGE_PRIVATE_KEY`  | `mcp-memory` uses local filesystem; patterns survive only for container lifetime |
 | `OG_STORAGE_KV_URL`       | Error at startup if `OG_STORAGE_PRIVATE_KEY` is set (required pair)              |
-| `OG_DEPLOY_PRIVATE_KEY`   | `deploy_0g_chain` tool throws "not configured"; local deploy still works         |
+| `OG_DEPLOY_PRIVATE_KEY`   | `deploy_og_chain` tool throws "not configured"; local deploy still works         |
 
 ---
 
@@ -190,6 +190,6 @@ On success you get `{ address, txHash, gasUsed, explorerUrl }` where `explorerUr
 
 After a successful demo run, collect:
 
-- **Contract deployment addresses** — from the `deploy_0g_chain` responses during the demo, on 0G Galileo testnet (`chainId 16602`, explorer: `chainscan-galileo.0g.ai`)
+- **Contract deployment addresses** — from the `deploy_og_chain` responses during the demo, on 0G Galileo testnet (`chainId 16602`, explorer: `chainscan-galileo.0g.ai`)
 - **Architecture diagram** — showing OpenClaw → 0G Compute Router → 0G Storage KV/Log flow (required for both Track 1 and Track 2)
 - **Demo video cut** — separate 3-min 0G-focused cut from the main demo
