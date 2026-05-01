@@ -11,7 +11,7 @@
  * frontend's SSE stream receives live updates.
  */
 
-import { streamText, tool, stepCountIs } from 'ai';
+import { streamText, tool, stepCountIs, type ToolSet } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
 import { z } from 'zod';
@@ -415,6 +415,178 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
   }
 }
 
+// ── Repair loop types ────────────────────────────────────────────────────────
+
+/**
+ * Phases of the self-healing repair sub-loop.
+ *
+ * The `prepareStep` callback transitions through these in order each time a
+ * revert is detected. The LLM receives a narrowed `activeTools` + forced
+ * `toolChoice` per phase so it cannot stray from the repair sequence.
+ *
+ *   idle       — normal operation (no active repair)
+ *   snapshot   — chain.snapshot (save state before repair attempt)
+ *   trace      — deployer.trace (get EVM trace of the reverting tx)
+ *   recall     — memory.recall  (look up known fix patterns)
+ *   patch      — write_file     (apply the fix to the .sol source)
+ *   compile    — compiler.compile
+ *   revert     — chain.revert   (reset to snapshot)
+ *   deploy     — deployer.deploy_local (verify the fix)
+ */
+type RepairPhase =
+  | 'idle'
+  | 'snapshot'
+  | 'trace'
+  | 'recall'
+  | 'patch'
+  | 'compile'
+  | 'revert'
+  | 'deploy';
+
+/** Mutable repair-loop state threaded through experimental_context. */
+interface RepairContext {
+  phase: RepairPhase;
+  /** How many repair attempts have started (incremented on each 'snapshot' entry). */
+  attempts: number;
+  /** The revert signature that triggered the current repair loop. */
+  revertSignature: string;
+  /** The txHash of the reverting deploy (for the trace call). */
+  revertTxHash: string;
+  /** The snapshotId from chain.snapshot so we can revert after patching. */
+  snapshotId: string | null;
+  /** The compiled contract name being deployed (for compile + redeploy). */
+  contractName: string;
+  /** The sourcePath of the .sol file being fixed (for compile step). */
+  sourcePath: string;
+}
+
+/** Per-phase tool restriction tables. */
+const REPAIR_PHASE_TOOLS: Record<
+  Exclude<RepairPhase, 'idle'>,
+  { activeTools: string[]; toolName: string }
+> = {
+  snapshot: { activeTools: ['snapshot'], toolName: 'snapshot' },
+  trace: { activeTools: ['trace'], toolName: 'trace' },
+  recall: { activeTools: ['recall'], toolName: 'recall' },
+  patch: { activeTools: ['write_file'], toolName: 'write_file' },
+  compile: { activeTools: ['compile'], toolName: 'compile' },
+  revert: { activeTools: ['revert'], toolName: 'revert' },
+  deploy: { activeTools: ['deploy_local'], toolName: 'deploy_local' },
+};
+
+// ── Repair loop helpers ───────────────────────────────────────────────────────
+
+/**
+ * Detect whether a `deploy_local` tool result contains a revert.
+ * Returns `{ reverted: true, txHash, revertSignature }` or `{ reverted: false }`.
+ */
+export function extractDeployRevert(
+  toolName: string,
+  toolResult: unknown,
+): { reverted: false } | { reverted: true; txHash: string; revertSignature: string } {
+  if (toolName !== 'deploy_local') return { reverted: false };
+  // MCP tool results come back as { isError?: boolean; content?: [{type:'text',text:string}] }
+  // A revert surfaces as isError:true with the revert reason in the text.
+  const raw = toolResult as {
+    isError?: boolean;
+    content?: Array<{ type: string; text?: string }>;
+  };
+  if (!raw.isError) return { reverted: false };
+  const message =
+    raw.content
+      ?.filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('\n') ?? '';
+  // Only treat as a revert if the error message actually describes an EVM
+  // revert. Infrastructure errors (e.g. "contract not found in artifact store",
+  // "node not running") must not trigger the repair loop.
+  const isRevertMessage = /revert/i.test(message) || /0x[0-9a-f]{64}/i.test(message);
+  if (!isRevertMessage) return { reverted: false };
+  // Extract txHash from common Hardhat revert messages, e.g.
+  // "Transaction reverted: 0xabc... reverted with reason: …"
+  const txMatch = /0x[0-9a-f]{64}/i.exec(message);
+  const txHash = txMatch?.[0] ?? '0x' + '0'.repeat(64);
+  // Normalise a revert signature: prefer decoded reason string; fall back to
+  // first 4 bytes as a selector if present; otherwise use the raw message.
+  const reasonMatch = /reverted with reason:\s*"([^"]+)"/i.exec(message);
+  const revertSignature = reasonMatch?.[1] ?? message.slice(0, 200);
+  return { reverted: true, txHash, revertSignature };
+}
+
+/**
+ * Extract the snapshotId from a `chain.snapshot` tool result.
+ * Returns null on any parsing failure.
+ */
+export function extractSnapshotId(toolResult: unknown): string | null {
+  try {
+    const raw = toolResult as {
+      isError?: boolean;
+      content?: Array<{ type: string; text?: string }>;
+    };
+    if (raw.isError) return null;
+    const text = raw.content?.find((c) => c.type === 'text')?.text ?? '';
+    const parsed = JSON.parse(text) as { snapshotId?: string };
+    return parsed.snapshotId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect a reverted `send_tx_local` call.
+ *
+ * `send_tx_local` succeeds at the MCP level (`isError: false`) but returns
+ * `status: 'reverted'` in the JSON body when the EVM transaction reverted.
+ * The `txHash` in the body is a REAL mined transaction — it can be passed to
+ * `deployer.trace` to decode the revert reason.
+ */
+export function extractSendTxRevert(
+  toolName: string,
+  toolResult: unknown,
+): { reverted: false } | { reverted: true; txHash: string; revertSignature: string } {
+  if (toolName !== 'send_tx_local') return { reverted: false };
+  const raw = toolResult as
+    | { isError?: boolean; content?: Array<{ type: string; text?: string }> }
+    | null
+    | undefined;
+  if (!raw || raw.isError) return { reverted: false };
+  const text = raw.content?.find((c) => c.type === 'text')?.text ?? '';
+  try {
+    const parsed = JSON.parse(text) as { status?: string; txHash?: string };
+    if (parsed.status === 'reverted') {
+      const txHash = parsed.txHash ?? '0x' + '0'.repeat(64);
+      return {
+        reverted: true,
+        txHash,
+        // Revert reason is not in send_tx_local output — the trace step will
+        // decode it from the mined transaction via debug_traceTransaction.
+        revertSignature: `transaction reverted (${txHash.slice(0, 10)}…)`,
+      };
+    }
+  } catch {
+    // Not JSON — no revert detected.
+  }
+  return { reverted: false };
+}
+
+/**
+ * Extract the deployed contract name and sourcePath from a deploy_local success result.
+ * Used to seed the repair context for compile/redeploy.
+ */
+export function extractDeployMeta(
+  toolName: string,
+  toolArgs: unknown,
+): { contractName: string; sourcePath: string } | null {
+  if (toolName !== 'deploy_local') return null;
+  const args = toolArgs as { contractName?: string; sourcePath?: string };
+  if (!args.contractName) return null;
+  return {
+    contractName: args.contractName,
+    // sourcePath may not be in args; fall back to "contracts/<Name>.sol"
+    sourcePath: args.sourcePath ?? `contracts/${args.contractName}.sol`,
+  };
+}
+
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 /**
@@ -449,7 +621,7 @@ export async function runAgentTurn(
   const emit = (event: AgentEvent): void => adapter.publishEvent(workspaceId, event);
 
   // Echo the user's prompt so the chat rail shows it.
-  emit({ ...baseEvent(), type: 'message', content: `**you:** ${prompt}` });
+  emit({ ...baseEvent(), type: 'user_prompt', content: prompt });
 
   // Collect workspace files for the system prompt.  Non-fatal if the
   // workspace directory doesn't exist yet.
@@ -494,7 +666,10 @@ export async function runAgentTurn(
   const mcpClients: MCPClient[] = [];
   const mcpToolNames = new Set<string>();
   const toolToServer = new Map<string, string>(); // toolName → serverName for event emission
-  const mcpToolsObj: Awaited<ReturnType<MCPClient['tools']>> = {};
+  // Typed as ToolSet (Record<string, Tool>) so the spread contributes an
+  // index signature to the tools object; this makes keyof TOOLS = string,
+  // which lets prepareStep return { toolChoice: { toolName: string } }.
+  const mcpToolsObj: ToolSet = {};
   for (const [serverName, url] of Object.entries(config.mcpServerUrls ?? {})) {
     if (!url) continue;
     try {
@@ -525,6 +700,13 @@ export async function runAgentTurn(
   // toolCallId → AgentEvent callId — links tool_call and tool_result events.
   const pendingMcpCalls = new Map<string, CallId>();
 
+  // ── Repair loop state (closure-scoped per turn) ──────────────────────────
+  let repairCtx: RepairContext | null = null;
+  let repairFailed = false;
+  // Tracks the most-recently successfully deployed contract so that a
+  // subsequent send_tx_local revert can reference the right source file.
+  let lastDeployedMeta: { contractName: string; sourcePath: string } | null = null;
+
   try {
     const result = streamText({
       // Use .chat() to target /v1/chat/completions (standard SSE format).
@@ -534,9 +716,247 @@ export async function runAgentTurn(
       model: openai.chat(config.model),
       system: buildSystemPrompt(files),
       messages: [{ role: 'user', content: prompt }],
-      stopWhen: stepCountIs(20),
+      // Allow 40 steps to accommodate up to 3 repair attempts (7 steps each)
+      // on top of a normal turn. The `repairFailed` flag provides an early exit.
+      stopWhen: [stepCountIs(40), () => repairFailed],
       maxRetries: 1,
       ...(signal ? { abortSignal: signal } : {}),
+
+      // ── prepareStep: steer the model into each repair phase ─────────────
+      prepareStep: ({ experimental_context }) => {
+        // Merge any context from a prior step back into our closure variable
+        // (experimental_context threads RepairContext through the SDK).
+        if (experimental_context && typeof experimental_context === 'object') {
+          repairCtx = experimental_context as RepairContext;
+        }
+
+        if (repairCtx === null || repairCtx.phase === 'idle') {
+          // Normal operation — no tool restrictions.
+          return {};
+        }
+
+        const phaseConfig = REPAIR_PHASE_TOOLS[repairCtx.phase];
+        // Double-cast: TypeScript infers TOOLS from the statically-declared
+        // tools only (read_file/write_file) because the ToolSet spread from
+        // mcpToolsObj is not reflected in generic inference. At runtime,
+        // phaseConfig.activeTools and toolName reference valid MCP tool names
+        // that are registered in the full tools object via ...mcpToolsObj.
+        return {
+          activeTools: phaseConfig.activeTools as unknown as Array<'read_file' | 'write_file'>,
+          toolChoice: {
+            type: 'tool' as const,
+            toolName: phaseConfig.toolName as unknown as 'read_file' | 'write_file',
+          },
+          experimental_context: repairCtx,
+        };
+      },
+
+      // ── onStepFinish: update repair state and emit typed events ──────────
+      onStepFinish: (step) => {
+        for (const tc of step.toolCalls ?? []) {
+          const rawResult = (
+            step.toolResults as Array<{ toolCallId: string; output: unknown }>
+          )?.find((r) => r.toolCallId === tc.toolCallId)?.output;
+
+          // ── Phase transitions (inside repair loop) ──────────────────────
+          if (repairCtx !== null) {
+            switch (tc.toolName) {
+              case 'snapshot': {
+                const snapshotId = extractSnapshotId(rawResult);
+                repairCtx.snapshotId = snapshotId;
+                repairCtx.phase = 'trace';
+                break;
+              }
+              case 'trace': {
+                // Parse trace from MCP output if possible; emit raw text otherwise.
+                const raw = rawResult as
+                  | {
+                      isError?: boolean;
+                      content?: Array<{ type: string; text?: string }>;
+                    }
+                  | undefined;
+                const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
+                let trace: import('@crucible/types').TxTrace;
+                try {
+                  trace = JSON.parse(text) as import('@crucible/types').TxTrace;
+                } catch {
+                  trace = {
+                    txHash: repairCtx.revertTxHash as import('@crucible/types').Hash,
+                    decodedCalls: [],
+                    storageReads: [],
+                    storageWrites: [],
+                    events: [],
+                    revertReason: text.slice(0, 500),
+                    gasUsed: 0n,
+                  };
+                }
+                emit({ ...baseEvent(), type: 'trace_captured', trace });
+                repairCtx.phase = 'recall';
+                break;
+              }
+              case 'recall': {
+                const raw = rawResult as
+                  | {
+                      isError?: boolean;
+                      content?: Array<{ type: string; text?: string }>;
+                    }
+                  | undefined;
+                const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
+                let hits: import('@crucible/types').MemoryRecallHit[];
+                try {
+                  const parsed = JSON.parse(text) as { hits?: unknown[] };
+                  hits = (parsed.hits ?? []) as import('@crucible/types').MemoryRecallHit[];
+                } catch {
+                  hits = [];
+                }
+                emit({ ...baseEvent(), type: 'memory_recall', hits });
+                repairCtx.phase = 'patch';
+                break;
+              }
+              case 'write_file': {
+                const args = tc.input as { path?: string; content?: string };
+                emit({
+                  ...baseEvent(),
+                  type: 'patch_proposed',
+                  source: 'reasoning',
+                  patch: args.content ?? '',
+                });
+                repairCtx.phase = 'compile';
+                break;
+              }
+              case 'compile': {
+                repairCtx.phase = 'revert';
+                break;
+              }
+              case 'revert': {
+                repairCtx.phase = 'deploy';
+                break;
+              }
+            }
+          }
+
+          // ── Revert detection (from any deploy_local call) ─────────────
+          if (tc.toolName === 'deploy_local') {
+            const revertInfo = extractDeployRevert('deploy_local', rawResult);
+            if (revertInfo.reverted) {
+              if (repairCtx === null) {
+                // First revert — start repair loop.
+                const meta = extractDeployMeta('deploy_local', tc.input);
+                repairCtx = {
+                  phase: 'snapshot',
+                  attempts: 1,
+                  revertSignature: revertInfo.revertSignature,
+                  revertTxHash: revertInfo.txHash,
+                  snapshotId: null,
+                  contractName: meta?.contractName ?? '',
+                  sourcePath: meta?.sourcePath ?? '',
+                };
+                emit({
+                  ...baseEvent(),
+                  type: 'revert_detected',
+                  txHash: revertInfo.txHash as import('@crucible/types').Hash,
+                  revertSignature: revertInfo.revertSignature,
+                });
+              } else {
+                // Subsequent revert during repair — increment attempt counter.
+                repairCtx.attempts += 1;
+                if (repairCtx.attempts > 3) {
+                  repairFailed = true;
+                  emit({
+                    ...baseEvent(),
+                    type: 'repair_failed',
+                    attempts: repairCtx.attempts,
+                    lastRevertSignature: revertInfo.revertSignature,
+                  });
+                  repairCtx = null;
+                } else {
+                  // Retry — restart repair loop from snapshot phase.
+                  repairCtx.phase = 'snapshot';
+                  repairCtx.revertSignature = revertInfo.revertSignature;
+                  repairCtx.revertTxHash = revertInfo.txHash;
+                  repairCtx.snapshotId = null;
+                }
+              }
+            } else if (repairCtx !== null && repairCtx.phase === 'deploy') {
+              // Successful redeploy after repair — extract txHash for receipt.
+              const raw = rawResult as
+                | {
+                    isError?: boolean;
+                    content?: Array<{ type: string; text?: string }>;
+                  }
+                | undefined;
+              const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
+              let localReceipt: string = '0x' + '0'.repeat(64);
+              try {
+                const parsed = JSON.parse(text) as { txHash?: string };
+                if (parsed.txHash) localReceipt = parsed.txHash;
+              } catch {
+                // Use default zero hash.
+              }
+              emit({
+                ...baseEvent(),
+                type: 'patch_verified',
+                localReceipt: localReceipt as import('@crucible/types').Hash,
+              });
+              // Clear repair state — loop will continue normally.
+              repairCtx = null;
+            } else {
+              // Normal successful deploy (no active repair context) — remember
+              // which contract was just deployed in case a following
+              // send_tx_local call reverts and triggers the repair loop.
+              const meta = extractDeployMeta('deploy_local', tc.input);
+              if (meta) lastDeployedMeta = meta;
+            }
+          }
+
+          // ── Revert detection (from send_tx_local calls) ───────────────
+          // deploy_local reverts surface as isError:true; send_tx_local
+          // reverts surface as isError:false with status:'reverted' in the
+          // JSON body because the tx is mined regardless of outcome.
+          if (tc.toolName === 'send_tx_local') {
+            const revertInfo = extractSendTxRevert('send_tx_local', rawResult);
+            if (revertInfo.reverted) {
+              if (repairCtx === null) {
+                // First send_tx_local revert — start repair loop.
+                repairCtx = {
+                  phase: 'snapshot',
+                  attempts: 1,
+                  revertSignature: revertInfo.revertSignature,
+                  revertTxHash: revertInfo.txHash,
+                  snapshotId: null,
+                  contractName: lastDeployedMeta?.contractName ?? '',
+                  sourcePath: lastDeployedMeta?.sourcePath ?? '',
+                };
+                emit({
+                  ...baseEvent(),
+                  type: 'revert_detected',
+                  txHash: revertInfo.txHash as import('@crucible/types').Hash,
+                  revertSignature: revertInfo.revertSignature,
+                });
+              } else {
+                // Subsequent revert during repair — same handling as deploy_local.
+                repairCtx.attempts += 1;
+                if (repairCtx.attempts > 3) {
+                  repairFailed = true;
+                  emit({
+                    ...baseEvent(),
+                    type: 'repair_failed',
+                    attempts: repairCtx.attempts,
+                    lastRevertSignature: revertInfo.revertSignature,
+                  });
+                  repairCtx = null;
+                } else {
+                  repairCtx.phase = 'snapshot';
+                  repairCtx.revertSignature = revertInfo.revertSignature;
+                  repairCtx.revertTxHash = revertInfo.txHash;
+                  repairCtx.snapshotId = null;
+                }
+              }
+            }
+          }
+        }
+      },
+
       tools: {
         // ── read_file ──────────────────────────────────────────────────────
         read_file: tool({
@@ -707,6 +1127,43 @@ export async function runAgentTurn(
     // Fall through to emit the inference_receipt below so the receipt's
     // fallbackReason field always reflects what happened on this turn.
   } finally {
+    // Clean up any dangling chain snapshot if the repair loop was interrupted.
+    // We attempt a best-effort revert via the MCP chain server so the local
+    // Hardhat node doesn't end up at an unexpected block height after a cancel
+    // or unexpected error mid-repair.
+    //
+    // Type assertion: TypeScript narrows `repairCtx` too aggressively in the
+    // finally block because it can't track mutations inside `streamText`
+    // callbacks. The declared type is `RepairContext | null`; cast to confirm.
+    const finalCtx = repairCtx as RepairContext | null;
+    if (finalCtx?.snapshotId != null) {
+      const chainUrl = config.mcpServerUrls?.chain;
+      if (chainUrl) {
+        try {
+          const cleanupClient = await createMCPClient({
+            transport: {
+              type: 'http',
+              url: chainUrl,
+              ...(config.mcpFetch ? { fetch: config.mcpFetch } : {}),
+            },
+          });
+          const cleanupTools = await cleanupClient.tools({
+            schemas: getMcpSchemas('chain'),
+          });
+          // Call chain.revert to restore state; ignore errors — best-effort only.
+          await (
+            cleanupTools['revert'] as unknown as {
+              execute: (args: { snapshotId: string }, opts?: unknown) => Promise<unknown>;
+            }
+          )
+            ?.execute({ snapshotId: finalCtx.snapshotId })
+            .catch(() => undefined);
+          await cleanupClient.close().catch(() => undefined);
+        } catch {
+          // Best-effort — do not rethrow.
+        }
+      }
+    }
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
 
