@@ -12,8 +12,6 @@
 <div class="px-4 py-2">
 	<Reasoning.Root class="!mb-0" defaultOpen={false}>
 		<Reasoning.Trigger />
-		<Reasoning.Content>
-			{event.text}
-		</Reasoning.Content>
+		<Reasoning.Content content={event.text} />
 	</Reasoning.Root>
 </div>

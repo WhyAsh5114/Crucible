@@ -11,9 +11,10 @@
 
 	interface Props {
 		event: ChatEvent;
+		repeatCount?: number;
 	}
 
-	let { event }: Props = $props();
+	let { event, repeatCount = 1 }: Props = $props();
 </script>
 
 {#if event.type === 'thinking'}
@@ -31,5 +32,5 @@
 {:else if event.type === 'done'}
 	<DoneRow {event} />
 {:else}
-	<GenericRow {event} />
+	<GenericRow {event} {repeatCount} />
 {/if}
