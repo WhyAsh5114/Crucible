@@ -76,6 +76,14 @@ const Message = base.extend({
   content: z.string(),
 });
 
+/** The human's prompt, echoed back so it appears in the chat rail above the
+ *  agent's response. Rendered with strong visual differentiation from agent
+ *  `message` events. */
+const UserPrompt = base.extend({
+  type: z.literal('user_prompt'),
+  content: z.string(),
+});
+
 /** Streaming delta for the assistant's reply. Accumulated into a `message`
  *  row by the frontend so text appears token-by-token. */
 const MessageDelta = base.extend({
@@ -209,6 +217,18 @@ const ErrorEvent = base.extend({
   ogFallbackReason: FallbackReasonSchema.optional(),
 });
 
+/**
+ * All 3 repair attempts were exhausted without a successful deploy.
+ * The frontend should surface this as a terminal failure banner.
+ */
+const RepairFailed = base.extend({
+  type: z.literal('repair_failed'),
+  /** How many repair attempts were made (1–3). */
+  attempts: z.number().int().min(1).max(3),
+  /** The revert signature that triggered the repair loop. */
+  lastRevertSignature: z.string(),
+});
+
 export const AgentEventSchema = z.discriminatedUnion('type', [
   Thinking,
   ToolCall,
@@ -216,6 +236,7 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   FileWrite,
   Message,
   MessageDelta,
+  UserPrompt,
   InferenceReceiptEvent,
   RevertDetected,
   TraceCaptured,
@@ -231,6 +252,7 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   ShipConfirmed,
   Done,
   ErrorEvent,
+  RepairFailed,
 ]);
 export type AgentEvent = z.infer<typeof AgentEventSchema>;
 

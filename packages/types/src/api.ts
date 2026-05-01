@@ -92,10 +92,45 @@ export type FileWriteRequest = z.infer<typeof FileWriteRequestSchema>;
 export const FileWriteResponseSchema = WorkspaceFileSchema;
 export type FileWriteResponse = z.infer<typeof FileWriteResponseSchema>;
 
+// --- Chat sessions -----------------------------------------------------------
+
+export const ChatSessionSchema = z.object({
+  id: z.string(),
+  workspaceId: WorkspaceIdSchema,
+  title: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ChatSession = z.infer<typeof ChatSessionSchema>;
+
+export const ChatSessionListResponseSchema = z.object({
+  sessions: z.array(ChatSessionSchema),
+});
+export type ChatSessionListResponse = z.infer<typeof ChatSessionListResponseSchema>;
+
+export const ChatSessionCreateRequestSchema = z.object({
+  title: z.string().min(1).max(200).optional(),
+});
+export type ChatSessionCreateRequest = z.infer<typeof ChatSessionCreateRequestSchema>;
+
+export const ChatSessionRenameRequestSchema = z.object({
+  title: z.string().min(1).max(200),
+});
+export type ChatSessionRenameRequest = z.infer<typeof ChatSessionRenameRequestSchema>;
+
+export const ChatSessionDeleteResponseSchema = z.object({
+  id: z.string(),
+  deleted: z.literal(true),
+});
+export type ChatSessionDeleteResponse = z.infer<typeof ChatSessionDeleteResponseSchema>;
+
 // --- POST /api/prompt --------------------------------------------------------
 
 export const PromptRequestSchema = z.object({
   workspaceId: WorkspaceIdSchema,
+  /** ID of the chat session to append this turn to. If absent the most recent
+   *  session is used; if none exist a "Chat 1" session is created automatically. */
+  sessionId: z.string().optional(),
   prompt: z.string().min(1).max(8192),
   /**
    * When true, skip the 0G Compute Router and use the OpenAI-compatible
