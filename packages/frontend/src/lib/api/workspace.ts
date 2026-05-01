@@ -28,6 +28,11 @@ export const apiClient = hc<AppType>(base, {
 	init: { credentials: 'include' }
 });
 
+export interface ModelsResponse {
+	og: { model: string } | null;
+	openai: string[] | null;
+}
+
 export class WorkspaceClient {
 	async createWorkspace(req: WorkspaceCreateRequest): Promise<WorkspaceCreateResponse> {
 		const res = await apiClient.api.workspace.$post({ json: req });
@@ -116,6 +121,15 @@ export class WorkspaceClient {
 		}
 		const body = (await res.json()) as { cancelled: boolean };
 		return body.cancelled;
+	}
+
+	/** Fetch available inference providers and their models. */
+	async fetchModels(): Promise<ModelsResponse> {
+		const res = await apiClient.api.models.$get();
+		if (!res.ok) {
+			throw new Error(`fetchModels failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as ModelsResponse;
 	}
 }
 

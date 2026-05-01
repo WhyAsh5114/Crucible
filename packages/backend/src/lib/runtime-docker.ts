@@ -397,24 +397,67 @@ async function probeOnce(url: string): Promise<boolean> {
 }
 
 /**
- * Wait until both in-container MCP services answer HTTP. Returns true when
- * both are reachable; false on timeout. The caller decides whether a partial
+ * Wait until all in-container MCP services answer HTTP. Returns true when
+ * all are reachable; false on timeout. The caller decides whether a partial
  * boot warrants `degraded` or `crashed`.
  */
 export async function waitForRuntimeReady(ports: WorkspaceRuntimePorts): Promise<boolean> {
   if (ports.chain === null || ports.compiler === null) return false;
 
-  const chainUrl = `http://${RUNTIME_HOST}:${ports.chain}/state`;
-  const compilerUrl = `http://${RUNTIME_HOST}:${ports.compiler}/contracts`;
+  // Build probe list for all services that have allocated ports.
+  const probeUrls: string[] = [];
+  if (ports.chain !== null) probeUrls.push(`http://${RUNTIME_HOST}:${ports.chain}/state`);
+  if (ports.compiler !== null) probeUrls.push(`http://${RUNTIME_HOST}:${ports.compiler}/contracts`);
+  if (ports.deployer !== null) probeUrls.push(`http://${RUNTIME_HOST}:${ports.deployer}/mcp`);
+  if (ports.wallet !== null) probeUrls.push(`http://${RUNTIME_HOST}:${ports.wallet}/mcp`);
+  if (ports.terminal !== null) probeUrls.push(`http://${RUNTIME_HOST}:${ports.terminal}/mcp`);
+
   const deadline = Date.now() + READINESS_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
-    const [chainOk, compilerOk] = await Promise.all([probeOnce(chainUrl), probeOnce(compilerUrl)]);
-    if (chainOk && compilerOk) return true;
+    const results = await Promise.all(probeUrls.map((url) => probeOnce(url)));
+    if (results.every(Boolean)) return true;
     await new Promise((resolve) => setTimeout(resolve, READINESS_INTERVAL_MS));
   }
 
   return false;
+}
+
+// Build the Env array for a workspace container. Static port assignments and
+// workspace identity are always included. 0G credentials are forwarded from
+// the host process so mcp-memory and mcp-deployer can use 0G Storage / 0G
+// Chain without the operator having to build a custom image.
+function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] {
+  const env: string[] = [
+    `WORKSPACE_ID=${workspaceId}`,
+    `CHAIN_MCP_PORT=${CONTAINER_CHAIN_PORT}`,
+    `COMPILER_MCP_PORT=${CONTAINER_COMPILER_PORT}`,
+    `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
+    `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
+    `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
+    `TERMINAL_MCP_PORT=${CONTAINER_TERMINAL_PORT}`,
+    `DEVTOOLS_MCP_PORT=${CONTAINER_DEVTOOLS_PORT}`,
+    `WORKSPACE_ROOT=${workspaceDir}`,
+  ];
+
+  // Forward 0G credentials when set so in-container services can use 0G
+  // Storage (mcp-memory) and 0G Chain (mcp-deployer) without a custom image.
+  const ogPassthrough = [
+    'OG_STORAGE_PRIVATE_KEY',
+    'OG_STORAGE_KV_URL',
+    'OG_STORAGE_RPC_URL',
+    'OG_STORAGE_INDEXER_URL',
+    'OG_STORAGE_LOCAL_STREAM_ID',
+    'OG_STORAGE_MESH_STREAM_ID',
+    'OG_DEPLOY_PRIVATE_KEY',
+  ] as const;
+
+  for (const key of ogPassthrough) {
+    const val = process.env[key];
+    if (val) env.push(`${key}=${val}`);
+  }
+
+  return env;
 }
 
 export async function ensureWorkspaceContainer(
@@ -442,17 +485,7 @@ export async function ensureWorkspaceContainer(
           Image: RUNTIME_IMAGE,
           WorkingDir: workspaceDir,
           ...(isCrucibleRuntime ? {} : { Cmd: ['sh', '-lc', 'while true; do sleep 3600; done'] }),
-          Env: [
-            `WORKSPACE_ID=${workspaceId}`,
-            `CHAIN_MCP_PORT=${CONTAINER_CHAIN_PORT}`,
-            `COMPILER_MCP_PORT=${CONTAINER_COMPILER_PORT}`,
-            `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
-            `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
-            `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
-            `TERMINAL_MCP_PORT=${CONTAINER_TERMINAL_PORT}`,
-            `DEVTOOLS_MCP_PORT=${CONTAINER_DEVTOOLS_PORT}`,
-            `WORKSPACE_ROOT=${workspaceDir}`,
-          ],
+          Env: buildContainerEnv(workspaceId, workspaceDir),
           ExposedPorts: {
             [`${CONTAINER_CHAIN_PORT}/tcp`]: {},
             [`${CONTAINER_COMPILER_PORT}/tcp`]: {},

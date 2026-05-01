@@ -21,7 +21,6 @@
     "runtime:build": "docker build -t ${CRUCIBLE_RUNTIME_IMAGE:-crucible-runtime:latest} -f runtime/Dockerfile ../.."
   },
   "dependencies": {
-    "@0glabs/0g-serving-broker": "^0.7.5",
     "@crucible/agent": "workspace:*",
     "@crucible/types": "workspace:*",
     "@hono/zod-openapi": "^1.3.0",

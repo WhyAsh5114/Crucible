@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from './prisma';
-import { betterAuth } from 'better-auth';
+import { betterAuth, type Auth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { siwe } from 'better-auth/plugins/siwe';
 import { verifyMessage } from 'viem';
@@ -38,6 +38,9 @@ if (!googleClientId || !googleClientSecret) {
 const frontendOrigin = process.env['CRUCIBLE_FRONTEND_ORIGIN'] ?? 'http://localhost:5173';
 const siweDomain = process.env['SIWE_DOMAIN'] ?? new URL(frontendOrigin).host;
 
+// Cast through `unknown` to suppress TS2742: the inferred return type of
+// `betterAuth(...)` references zod v4 internals that cannot be named in this
+// compilation unit. Runtime behaviour is unaffected.
 export const auth = betterAuth({
   baseURL: betterAuthUrl,
   database: prismaAdapter(prisma, {
@@ -83,7 +86,7 @@ export const auth = betterAuth({
   ...(Object.keys(googleProviderConfig).length > 0
     ? { socialProviders: googleProviderConfig }
     : {}),
-});
+}) as unknown as Auth;
 
 /**
  * Hono middleware that requires a valid better-auth session.

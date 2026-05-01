@@ -467,7 +467,9 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
         compilerPort: container.ports.compiler,
         deployerPort: container.ports.deployer,
         walletPort: container.ports.wallet,
+        memoryPort: container.ports.memory,
         terminalPort: container.ports.terminal,
+        devtoolsPort: container.ports.devtools,
       },
     });
 
@@ -622,10 +624,6 @@ export const workspaceApi = workspaceApiBase
     // Treat foreign workspaces as 404 to avoid leaking the existence of
     // someone else's workspace IDs to a probing client.
     if (!row || row.userId !== userId) {
-      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
-    }
-
-    if (row.userId !== userId) {
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 

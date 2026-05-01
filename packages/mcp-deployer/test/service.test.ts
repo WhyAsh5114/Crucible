@@ -117,4 +117,108 @@ describe('mcp-deployer service', () => {
 
     expect(output.result).toBe('0x00000000000000000000000000000001');
   });
+
+  it('deploy0gChain throws when OG_DEPLOY_PRIVATE_KEY is absent', async () => {
+    const service = createDeployerService({ chainRpcUrl: 'http://rpc.local', workspaceRoot });
+    await expect(
+      service.deploy0gChain({ contractName: 'Counter', constructorData: '0x' }),
+    ).rejects.toThrow('OG_DEPLOY_PRIVATE_KEY is not set');
+  });
+
+  it('deploy0gChain sends tx and returns address/hash/explorer URL', async () => {
+    // Minimal funded test private key (not used in any real deployment).
+    const testPrivKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    const CONTRACT_ADDRESS = '0x3333333333333333333333333333333333333333';
+
+    globalThis.fetch = (async (url, init) => {
+      const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.toString() : '';
+
+      // Compiler bytecode endpoint
+      if (urlStr.includes('/bytecode/')) {
+        return jsonResponse({ bytecode: '0x6000' });
+      }
+
+      const body = JSON.parse(String(init?.body ?? '{}')) as { method?: string };
+
+      switch (body.method) {
+        case 'eth_chainId':
+          // 16602 = 0x40DA
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x40da' });
+        case 'eth_getTransactionCount':
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x0' });
+        case 'eth_gasPrice':
+        case 'eth_maxPriorityFeePerGas':
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x3b9aca00' });
+        case 'eth_estimateGas':
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: '0x5208' });
+        case 'eth_sendRawTransaction':
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: TX_HASH });
+        case 'eth_getTransactionReceipt':
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: 1,
+            result: {
+              transactionHash: TX_HASH,
+              contractAddress: CONTRACT_ADDRESS,
+              gasUsed: '0x5208',
+              status: '0x1',
+              logs: [],
+              blockHash: '0x' + 'ab'.repeat(32),
+              blockNumber: '0x1',
+              cumulativeGasUsed: '0x5208',
+              effectiveGasPrice: '0x3b9aca00',
+              type: '0x2',
+            },
+          });
+        case 'eth_getBlockByHash':
+        case 'eth_getBlockByNumber':
+          return jsonResponse({
+            jsonrpc: '2.0',
+            id: 1,
+            result: {
+              hash: '0x' + 'ab'.repeat(32),
+              number: '0x1',
+              parentHash: '0x' + '00'.repeat(32),
+              timestamp: '0x6700',
+              gasLimit: '0x1c9c380',
+              gasUsed: '0x5208',
+              transactions: [],
+              miner: '0x' + '00'.repeat(20),
+              difficulty: '0x0',
+              totalDifficulty: '0x0',
+              size: '0x0',
+              extraData: '0x',
+              logsBloom: '0x' + '00'.repeat(256),
+              receiptsRoot: '0x' + '00'.repeat(32),
+              stateRoot: '0x' + '00'.repeat(32),
+              transactionsRoot: '0x' + '00'.repeat(32),
+              nonce: '0x0000000000000000',
+              sha3Uncles: '0x' + '00'.repeat(32),
+              uncles: [],
+              baseFeePerGas: '0x0',
+            },
+          });
+        default:
+          return jsonResponse({ jsonrpc: '2.0', id: 1, result: null });
+      }
+    }) as typeof fetch;
+
+    const service = createDeployerService({
+      chainRpcUrl: 'http://rpc.local',
+      workspaceRoot,
+      compilerUrl: 'http://compiler.local',
+      ogDeployPrivateKey: testPrivKey,
+    });
+
+    const output = await service.deploy0gChain({
+      contractName: 'Counter',
+      constructorData: '0x',
+    });
+
+    expect(output.address).toBe(CONTRACT_ADDRESS);
+    expect(output.txHash).toBe(TX_HASH);
+    expect(output.chainId).toBe(16602);
+    expect(output.explorerUrl).toContain('chainscan-galileo.0g.ai');
+    expect(output.explorerUrl).toContain(TX_HASH);
+  });
 });

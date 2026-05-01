@@ -33,7 +33,9 @@ model WorkspaceRuntime {
     compilerPort      Int?
     deployerPort      Int?
     walletPort        Int?
+    memoryPort        Int?
     terminalPort      Int?
+    devtoolsPort      Int?
     chainState        Json?
     createdAt         DateTime      @default(now())
     updatedAt         DateTime      @updatedAt

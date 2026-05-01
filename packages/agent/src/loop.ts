@@ -119,11 +119,6 @@ export interface AgentConfig {
   apiKey: string;
   model: string;
   /**
-   * Extra HTTP headers injected on every request.
-   * Used for 0G Compute per-request signed auth headers.
-   */
-  headers?: Record<string, string>;
-  /**
    * Which provider is serving this turn.
    * Defaults to 'openai-compatible' when not set.
    */
@@ -176,6 +171,195 @@ export interface AgentAdapter {
   nextSeq(workspaceId: string): number;
 }
 
+// ── 0G Compute Router fetch wrapper ──────────────────────────────────────────
+
+/**
+ * Error thrown by the custom Router fetch when the upstream returns a non-2xx
+ * status. Carries a classified `fallbackReason` so the agent loop can surface
+ * a meaningful retry hint to the user via the `error` event.
+ */
+class OgRouterError extends Error {
+  override readonly name = 'OgRouterError';
+  readonly fallbackReason: FallbackReason;
+  readonly status: number;
+
+  constructor(message: string, status: number, fallbackReason: FallbackReason) {
+    super(message);
+    this.status = status;
+    this.fallbackReason = fallbackReason;
+  }
+}
+
+/**
+ * Map a 0G Router HTTP error to a `FallbackReason`.
+ *
+ * See the Router error reference:
+ * https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/errors
+ */
+export function classifyRouterError(status: number, body: string): FallbackReason {
+  if (status === 429) return 'rate_limited';
+  if (status === 402 || /insufficient\s+balance/iu.test(body)) return 'balance_exhausted';
+  return 'provider_unavailable';
+}
+
+/** Shape of the 0G Compute Router's trailing `x_0g_trace` SSE chunk. */
+export type OgTrace = {
+  request_id?: string;
+  provider?: string;
+  billing?: { input_cost?: string; output_cost?: string; total_cost?: string };
+  tee_verified?: boolean;
+};
+
+/**
+ * Wrap a streaming response body to filter out 0G Router's proprietary
+ * `x_0g_trace`-only SSE chunks. The Vercel AI SDK's OpenAI parser rejects
+ * them (they have no `choices` / `error` field), causing a type validation
+ * crash. Filtered chunks are forwarded to `onTrace` so billing/attestation
+ * data can still be surfaced in the inference_receipt event.
+ */
+export function filterOgTraceFromStream(
+  body: ReadableStream<Uint8Array>,
+  onTrace?: (t: OgTrace) => void,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buf = '';
+
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buf += decoder.decode(chunk, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+
+        const keep: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const parsed = JSON.parse(line.slice(6)) as Record<string, unknown>;
+              const keys = Object.keys(parsed);
+              if (keys.length === 1 && keys[0] === 'x_0g_trace') {
+                onTrace?.(parsed['x_0g_trace'] as OgTrace);
+                continue;
+              }
+            } catch {
+              // Non-JSON or partial — pass through.
+            }
+          }
+          keep.push(line);
+        }
+
+        if (keep.length > 0) {
+          controller.enqueue(encoder.encode(keep.join('\n') + '\n'));
+        }
+      },
+      flush(controller) {
+        if (!buf) return;
+        if (buf.startsWith('data: ') && buf !== 'data: [DONE]') {
+          try {
+            const parsed = JSON.parse(buf.slice(6)) as Record<string, unknown>;
+            const keys = Object.keys(parsed);
+            if (keys.length === 1 && keys[0] === 'x_0g_trace') {
+              onTrace?.(parsed['x_0g_trace'] as OgTrace);
+              return;
+            }
+          } catch {
+            // Pass through.
+          }
+        }
+        controller.enqueue(encoder.encode(buf));
+      },
+    }),
+  );
+}
+
+/**
+ * Recursively unwrap an error to find an `OgRouterError`. AI SDK wraps fetch
+ * errors in `APICallError` / cause chains, so direct `instanceof` checks miss.
+ */
+export function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current; depth++) {
+    if (current instanceof OgRouterError) return current.fallbackReason;
+    if (current instanceof Error && current.cause) {
+      current = current.cause;
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Build a `fetch` implementation for `createOpenAI` that:
+ *   1. Injects `verify_tee: true` into chat-completion request bodies when the
+ *      active provider is 0G Compute, asking the Router for a TEE attestation
+ *      receipt (surfaced in the `x_0g_trace` field of the response).
+ *   2. Throws a typed `OgRouterError` on non-2xx responses so the agent loop
+ *      can classify the fallback reason and tell the UI how to recover.
+ *   3. Filters the trailing `x_0g_trace`-only SSE chunk from streaming
+ *      responses so the Vercel AI SDK parser never sees it (it has no `choices`
+ *      or `error` field and fails schema validation).
+ */
+function makeOgRouterFetch(
+  provider: AgentConfig['provider'],
+  onOgTrace?: (t: OgTrace) => void,
+): typeof globalThis.fetch | undefined {
+  if (provider !== '0g-compute') return undefined;
+
+  const wrapped = async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ): Promise<Response> => {
+    let nextInit = init;
+    if (init?.body && typeof init.body === 'string') {
+      try {
+        const parsed = JSON.parse(init.body) as Record<string, unknown>;
+        parsed['verify_tee'] = true;
+        nextInit = { ...init, body: JSON.stringify(parsed) };
+      } catch {
+        // Non-JSON body — leave untouched.
+      }
+    }
+
+    // Use the normalising fetch under the hood so non-conformant
+    // OpenAI-compatible providers behind the 0G Router (e.g. providers that
+    // emit `tool_calls[].type: ""` on streaming deltas) don't blow up the AI
+    // SDK's strict schema validation. The wrapper is a no-op for compliant
+    // streams.
+    const response = await normalizingFetch(input, nextInit);
+    if (!response.ok) {
+      const text = await response
+        .clone()
+        .text()
+        .catch(() => '');
+      throw new OgRouterError(
+        `0G Compute Router error ${response.status}: ${text || response.statusText}`,
+        response.status,
+        classifyRouterError(response.status, text),
+      );
+    }
+
+    // Filter x_0g_trace-only SSE chunks out of streaming responses.
+    // We do NOT check content-type — the 0G Router omits or varies the header.
+    if (response.body) {
+      // Cast: response.body may be typed as ReadableStream<any> in some envs.
+      const filteredBody = filterOgTraceFromStream(
+        response.body as ReadableStream<Uint8Array>,
+        onOgTrace,
+      );
+      return new Response(filteredBody, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+
+    return response;
+  };
+  return wrapped as typeof globalThis.fetch;
+}
+
 // ── MCP schema registry ──────────────────────────────────────────────────────
 
 type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal';
@@ -204,6 +388,7 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         simulate_local: { inputSchema: mcp.deployer.SimulateLocalInputSchema },
         trace: { inputSchema: mcp.deployer.TraceInputSchema },
         call: { inputSchema: mcp.deployer.CallInputSchema },
+        deploy_og_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
       };
     case 'wallet':
       return {
@@ -275,24 +460,35 @@ export async function runAgentTurn(
     // Proceed without file context.
   }
 
+  const ogFetch = makeOgRouterFetch(config.provider, (t) => {
+    ogTraceRef.value = t;
+  });
+  // Always install a normalising fetch wrapper. Some OpenAI-compatible
+  // providers (observed: DigitalOcean Serverless Inference for glm-5 and
+  // kimi-k2.5; some 0G Router providers) emit `tool_calls[].type: ""` on
+  // streaming deltas instead of `"function"`. The AI SDK validates incoming
+  // chunks with a strict zod schema and rejects them, blowing up the loop.
+  // The wrapper is a no-op for compliant streams. When 0G is the active
+  // provider, ogFetch *also* wraps normalizingFetch under the hood (see
+  // makeOgRouterFetch above) so verify_tee injection and trace filtering
+  // compose with the normalisation pass.
+  // Cast through unknown: the AI SDK's `fetch` field uses DOM types we
+  // intentionally don't pull into this package's tsconfig.
   const openai = createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
-    ...(config.headers ? { headers: config.headers } : {}),
-    // Some OpenAI-compatible providers (observed: DigitalOcean Serverless
-    // Inference for glm-5 and kimi-k2.5) emit `tool_calls[].type: ""` on
-    // streaming deltas instead of either `"function"` or omitting the field.
-    // The AI SDK validates incoming chunks with a strict zod schema and
-    // rejects them, blowing up the agent loop. Other models on the same
-    // endpoint (e.g. Llama 3.3, Qwen 3) appear compliant — but the wrapper
-    // is a no-op for compliant streams, so it stays on unconditionally.
-    // Cast through unknown: the AI SDK's `fetch` field uses DOM types we
-    // intentionally don't pull into this package's tsconfig.
-    fetch: normalizingFetch as unknown as typeof fetch,
+    fetch: (ogFetch ?? normalizingFetch) as unknown as typeof fetch,
   });
 
   let promptTokens = 0;
   let completionTokens = 0;
+  // Use a ref object so TypeScript doesn't narrow this to `never` via control
+  // flow analysis — the assignment happens inside a callback.
+  const ogTraceRef: { value: OgTrace | null } = { value: null };
+  // Captures the FallbackReason of any 0G Router failure so the
+  // inference_receipt emitted at the end can surface it on the receipt itself
+  // (in addition to the standalone `error` event).
+  let ogErrorFallbackReason: FallbackReason | null = null;
 
   // ── MCP client setup ───────────────────────────────────────────────────────
   const mcpClients: MCPClient[] = [];
@@ -470,13 +666,17 @@ export async function runAgentTurn(
           }
           break;
 
-        case 'error':
+        case 'error': {
+          const reason = ogFallbackReasonOf(chunk.error);
+          if (reason) ogErrorFallbackReason = reason;
           emit({
             ...baseEvent(),
             type: 'error',
             message: chunk.error instanceof Error ? chunk.error.message : String(chunk.error),
+            ...(reason ? { ogFallbackReason: reason } : {}),
           });
           break;
+        }
 
         default:
           break;
@@ -485,26 +685,42 @@ export async function runAgentTurn(
   } catch (err) {
     // Aborts come back either as native AbortError or with `signal.aborted`
     // already set — surface them as a user-facing cancel notice rather than
-    // a generic agent-loop failure.
+    // a generic agent-loop failure, and short-circuit out of the receipt
+    // path since cancellation is not an inference outcome.
     const aborted =
       signal?.aborted === true ||
       (err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message)));
     if (aborted) {
       emit({ ...baseEvent(), type: 'message', content: '_Cancelled by user._' });
-    } else {
-      emit({
-        ...baseEvent(),
-        type: 'error',
-        message: `Agent loop failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      emit({ ...baseEvent(), type: 'done' });
+      return;
     }
-    emit({ ...baseEvent(), type: 'done' });
-    return;
+
+    const reason = ogFallbackReasonOf(err);
+    if (reason) ogErrorFallbackReason = reason;
+    emit({
+      ...baseEvent(),
+      type: 'error',
+      message: `Agent loop failed: ${err instanceof Error ? err.message : String(err)}`,
+      ...(reason ? { ogFallbackReason: reason } : {}),
+    });
+    // Fall through to emit the inference_receipt below so the receipt's
+    // fallbackReason field always reflects what happened on this turn.
   } finally {
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
 
   // Emit inference receipt so the frontend can display cost / provenance.
+  // For 0G Compute turns, `attestation` is the JSON-stringified `x_0g_trace`
+  // (request_id, provider, billing, and tee_verified when supported) so the
+  // UI has the full verifiable receipt — not just the request id.
+  const isOg = config.provider === '0g-compute';
+  if (isOg && !ogTraceRef.value) {
+    console.warn(
+      '[agent] 0G Compute turn completed without an x_0g_trace receipt — ' +
+        'attestation will be null on this inference receipt.',
+    );
+  }
   emit({
     ...baseEvent(),
     type: 'inference_receipt',
@@ -512,9 +728,8 @@ export async function runAgentTurn(
       id: InferenceReceiptIdSchema.parse(crypto.randomUUID()),
       provider: config.provider ?? 'openai-compatible',
       model: config.model,
-      attestation: null,
-      fallbackReason:
-        config.provider === '0g-compute' ? null : (config.fallbackReason ?? 'admin_override'),
+      attestation: isOg && ogTraceRef.value ? JSON.stringify(ogTraceRef.value) : null,
+      fallbackReason: isOg ? ogErrorFallbackReason : (config.fallbackReason ?? 'admin_override'),
       promptTokens,
       completionTokens,
       createdAt: Date.now(),

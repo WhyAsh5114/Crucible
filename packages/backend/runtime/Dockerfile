@@ -33,8 +33,14 @@ COPY packages/mcp-wallet/package.json packages/mcp-wallet/
 COPY packages/mcp-memory/package.json packages/mcp-memory/
 COPY packages/mcp-terminal/package.json packages/mcp-terminal/
 COPY packages/mcp-devtools/package.json packages/mcp-devtools/
+COPY packages/agent/package.json packages/agent/
+COPY packages/backend/package.json packages/backend/
+COPY packages/frontend/package.json packages/frontend/
+# Prisma postinstall (prisma generate) needs the schema to be present
+COPY packages/backend/prisma packages/backend/prisma
+COPY packages/backend/prisma.config.ts packages/backend/prisma.config.ts
 
-RUN bun install --frozen-lockfile || bun install
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Copy source for the packages the runtime needs.
 COPY packages/types ./packages/types

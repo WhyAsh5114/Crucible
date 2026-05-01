@@ -27,16 +27,26 @@ export type FallbackReason = z.infer<typeof FallbackReasonSchema>;
 
 /**
  * The receipt that accompanies every agent inference call. When the provider
- * is `0g-compute`, `attestation` carries the verifiable inference receipt. In
- * fallback mode, `attestation` is null and `fallbackReason` is populated.
+ * is `0g-compute`, `attestation` carries the verifiable inference receipt
+ * (the full `x_0g_trace` JSON, including `tee_verified` when supported by the
+ * serving provider). In fallback mode, `attestation` is null and
+ * `fallbackReason` is populated.
+ *
+ * `fallbackReason` is also populated on 0g-compute receipts when the Router
+ * call failed (rate limit, balance exhausted, provider unavailable) so the UI
+ * can explain a failed turn without conflating it with an OpenAI-compatible
+ * fallback that did not actually run.
  */
 export const InferenceReceiptSchema = z.object({
   id: InferenceReceiptIdSchema,
   provider: InferenceProviderSchema,
   model: z.string().min(1),
-  /** Opaque verifiable receipt blob from 0G Compute. Null for fallback. */
+  /** JSON-stringified `x_0g_trace` from the 0G Compute Router. Null for fallback. */
   attestation: z.string().nullable(),
-  /** Populated only when `provider === 'openai-compatible'`. */
+  /**
+   * Set when fallback was triggered, OR when 0G Compute itself failed with a
+   * recoverable error (so the UI can explain the failure on the receipt).
+   */
   fallbackReason: FallbackReasonSchema.nullable(),
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
