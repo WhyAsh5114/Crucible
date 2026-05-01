@@ -38,9 +38,13 @@
 		const phase = workspace.templateState.phase;
 		if (phase === 'ready') return 'done';
 		if (phase === 'failed') return 'failed';
-		// `unavailable` = workspace has no Counter.sol (agent removed it).
+		// `unavailable` = workspace has no DemoVault.sol (agent removed it).
 		// Treat as a skipped step so the overlay doesn't block on it.
 		if (phase === 'unavailable') return 'skipped';
+		// `idle` when chain is already booted means the in-memory deploy state was
+		// reset (e.g. backend restart). The deploy won't re-run automatically, so
+		// treat it as skipped to avoid the overlay spinning forever.
+		if (phase === 'idle') return workspace.chainState === null ? 'pending' : 'skipped';
 		if (workspace.chainState === null) return 'pending';
 		return 'active';
 	});
@@ -56,14 +60,14 @@
 	const steps: Step[] = $derived([
 		{ id: 'container', label: 'Container ready', status: containerStatus },
 		{ id: 'chain', label: 'Chain booted', status: chainStatus },
-		{ id: 'template', label: 'Counter deployed', status: templateStatus },
+		{ id: 'template', label: 'Contract deployed', status: templateStatus },
 		{ id: 'preview', label: 'Preview ready', status: previewStatus }
 	]);
 
 	const title = $derived.by(() => {
 		if (loadError) return 'Workspace failed to load';
 		if (previewFailed) return 'Preview crashed';
-		if (templateFailed) return 'Counter deploy failed';
+		if (templateFailed) return 'Contract deploy failed';
 		return 'Initializing workspace';
 	});
 
@@ -75,7 +79,7 @@
 		if (templateFailed) {
 			return (
 				workspace?.templateState.message ??
-				'The Counter template failed to compile or deploy. The agent can recover via tools.'
+				'The contract failed to compile or deploy. The agent can recover via tools.'
 			);
 		}
 		if (!workspace) {
@@ -89,8 +93,8 @@
 		// Surface the template phase before falling through to the preview phase
 		// so the user sees what's actually blocking boot.
 		const tphase = workspace.templateState.phase;
-		if (tphase === 'compiling') return 'Compiling the Counter template with Hardhat.';
-		if (tphase === 'deploying') return 'Deploying the Counter template to the local chain.';
+		if (tphase === 'compiling') return 'Compiling the contract with Hardhat.';
+		if (tphase === 'deploying') return 'Deploying the contract to the local chain.';
 		const phase = workspace.previewState.phase;
 		if (phase === 'installing') {
 			return 'Installing dependencies — first-time `bun install` can take 30–60 seconds.';
