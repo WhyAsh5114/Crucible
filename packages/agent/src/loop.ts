@@ -292,7 +292,7 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         simulate_local: { inputSchema: mcp.deployer.SimulateLocalInputSchema },
         trace: { inputSchema: mcp.deployer.TraceInputSchema },
         call: { inputSchema: mcp.deployer.CallInputSchema },
-        deploy_0g_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
+        deploy_og_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
       };
     case 'wallet':
       return {
@@ -373,6 +373,10 @@ export async function runAgentTurn(
   // Use a ref object so TypeScript doesn't narrow this to `never` via control
   // flow analysis — the assignment happens inside a callback.
   const ogTraceRef: { value: OgTrace | null } = { value: null };
+  // Captures the FallbackReason of any 0G Router failure so the
+  // inference_receipt emitted at the end can surface it on the receipt itself
+  // (in addition to the standalone `error` event).
+  let ogErrorFallbackReason: FallbackReason | null = null;
 
   // ── MCP client setup ───────────────────────────────────────────────────────
   const mcpClients: MCPClient[] = [];
@@ -545,6 +549,7 @@ export async function runAgentTurn(
 
         case 'error': {
           const reason = ogFallbackReasonOf(chunk.error);
+          if (reason) ogErrorFallbackReason = reason;
           emit({
             ...baseEvent(),
             type: 'error',
@@ -560,19 +565,24 @@ export async function runAgentTurn(
     }
   } catch (err) {
     const reason = ogFallbackReasonOf(err);
+    if (reason) ogErrorFallbackReason = reason;
     emit({
       ...baseEvent(),
       type: 'error',
       message: `Agent loop failed: ${err instanceof Error ? err.message : String(err)}`,
       ...(reason ? { ogFallbackReason: reason } : {}),
     });
-    emit({ ...baseEvent(), type: 'done' });
-    return;
+    // Fall through to emit the inference_receipt below so the receipt's
+    // fallbackReason field always reflects what happened on this turn.
   } finally {
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
   }
 
   // Emit inference receipt so the frontend can display cost / provenance.
+  // For 0G Compute turns, `attestation` is the JSON-stringified `x_0g_trace`
+  // (request_id, provider, billing, and tee_verified when supported) so the
+  // UI has the full verifiable receipt — not just the request id.
+  const isOg = config.provider === '0g-compute';
   emit({
     ...baseEvent(),
     type: 'inference_receipt',
@@ -580,9 +590,8 @@ export async function runAgentTurn(
       id: InferenceReceiptIdSchema.parse(crypto.randomUUID()),
       provider: config.provider ?? 'openai-compatible',
       model: config.model,
-      attestation: ogTraceRef.value?.request_id ?? null,
-      fallbackReason:
-        config.provider === '0g-compute' ? null : (config.fallbackReason ?? 'admin_override'),
+      attestation: isOg && ogTraceRef.value ? JSON.stringify(ogTraceRef.value) : null,
+      fallbackReason: isOg ? ogErrorFallbackReason : (config.fallbackReason ?? 'admin_override'),
       promptTokens,
       completionTokens,
       createdAt: Date.now(),

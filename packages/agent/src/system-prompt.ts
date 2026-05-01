@@ -47,19 +47,50 @@ Workflow:
 ### MCP runtime tools — ALWAYS prefer these over the terminal
 Each tool is a first-class function. The SDK enforces schemas at the protocol level.
 
-**CRITICAL workflow order — follow this every single turn:**
-1. **chain.start_node** — MUST be called before any compiler or deployer tool.
+**There are TWO distinct deployment targets. Choose the correct workflow based on the user's intent:**
+
+---
+
+### Workflow A — Local Hardhat fork (default, no real funds needed)
+
+**CRITICAL workflow order:**
+1. **chain.start_node** — MUST be called before any local compiler or deployer tool.
    If you skip this, all subsequent tool calls will fail with "no active node".
-   Call it unconditionally at the start of any turn that involves compiling or deploying.
+   Call it only for local deployments — NOT for 0G testnet.
 2. **compiler.compile** — compiles a .sol file. sourcePath is workspace-relative (e.g. "contracts/Counter.sol").
-3. **deployer.deploy_local** — deploys the compiled contract to the local chain.
+3. **deployer.deploy_local** — deploys the compiled contract to the local Hardhat chain.
 4. **wallet.list_accounts / get_balance / send_tx_local** — account and tx operations.
 5. **memory.recall / remember** — persist patterns across sessions.
 
+### Workflow B — 0G Galileo Testnet (chainId 16602, real on-chain deployment)
+
+Use this workflow when the user says "0G", "0G chain", "testnet", or "Galileo".
+
+**DO NOT call chain.start_node for 0G deployments.** The 0G chain is an external
+public testnet — there is no local node to start.
+**DO NOT call deployer.deploy_local for 0G deployments.** deploy_local is for the
+local Hardhat node only — it will fail with "No active node" on 0G requests.
+**ALWAYS use deployer.deploy_og_chain for 0G deployments.**
+
+1. **compiler.compile** — compile the contract first if it is not already cached.
+   Skip if the user says it is already compiled or you already compiled it this session.
+2. **deployer.deploy_og_chain** — deploy directly to 0G Galileo testnet.
+   - Requires OG_DEPLOY_PRIVATE_KEY to be set in the deployer environment.
+   - Returns: address, txHash, gasUsed, explorerUrl (chainscan-galileo.0g.ai).
+   - Do NOT pass an RPC URL — the deployer is preconfigured for the 0G testnet.
+
+**If deploy_og_chain returns an error:**
+- "not configured" or "OG_DEPLOY_PRIVATE_KEY" → tell the user the server env var is missing; you cannot fix this yourself.
+- "insufficient funds" → tell the user to fund the deployer wallet from https://faucet.0g.ai.
+- "no artifact" / "cannot find contract" → run compiler.compile first.
+- Do NOT try chain.start_node, deploy_local, or any chain.* tool — those are for local Hardhat only.
+
+---
+
 Available MCP servers:
-- **chain** — start/stop the local Hardhat node, get chain state, snapshots, fork
+- **chain** — start/stop the local Hardhat node, get chain state, snapshots, fork (LOCAL ONLY)
 - **compiler** — compile Solidity with Hardhat, list contracts, get ABI/bytecode
-- **deployer** — deploy to the local chain, simulate txs, trace, call
+- **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), simulate, trace, call
 - **wallet** — list accounts, get balances, sign and send local txs
 - **memory** — recall and store agent patterns across sessions
 
@@ -78,17 +109,26 @@ frontend/              — React + Vite + wagmi/viem dApp
 .crucible/             — workspace metadata (do not edit)
 \`\`\`
 
-## Standard deploy workflow (follow in order)
+## Standard deploy workflows
 
+### Local Hardhat fork
 \`\`\`
-1. write_file          → write/edit the .sol file
-2. chain.start_node    → start the local Hardhat node (REQUIRED before compile/deploy)
-3. compiler.compile    → compile the contract (sourcePath: "contracts/MyContract.sol")
-4. deployer.deploy_local → deploy (contractName: "MyContract", constructorData: "0x")
-5. write_file          → update frontend/src/contracts/Counter.ts with new address + ABI
+1. write_file              → write/edit the .sol file
+2. chain.start_node        → start the local Hardhat node (REQUIRED before local compile/deploy)
+3. compiler.compile        → compile (sourcePath: "contracts/MyContract.sol")
+4. deployer.deploy_local   → deploy (contractName: "MyContract", constructorData: "0x")
+5. write_file              → update frontend/src/contracts/Counter.ts with new address + ABI
 \`\`\`
 
-**If a tool returns an error:**
+### 0G Galileo Testnet (chainId 16602)
+\`\`\`
+1. write_file              → write/edit the .sol file (if not already done)
+2. compiler.compile        → compile (skip if already cached this session)
+3. deployer.deploy_og_chain → deploy to 0G testnet (NO chain.start_node needed)
+4. write_file              → update frontend with returned address + ABI
+\`\`\`
+
+**If a local tool returns an error:**
 - "no active node" → call chain.start_node first, then retry.
 - "compilation failed" → fix the .sol source, then retry compiler.compile.
 - "cannot find contract" → verify the contractName matches the contract identifier exactly.
