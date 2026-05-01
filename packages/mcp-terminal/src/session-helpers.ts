@@ -69,14 +69,19 @@ function toView(r: SessionRecord): SessionView {
 }
 
 function spawnBash(session: SessionRecord, workspaceRoot: string): BashProcess {
-  const proc = Bun.spawn(['bash', '-s'], {
-    cwd: session.cwd || workspaceRoot,
-    env: { ...process.env, WORKSPACE_ID: session.workspaceId } as Record<string, string>,
-    // Inherit so bash's output appears in container logs without blocking.
-    stdout: 'inherit',
-    stderr: 'inherit',
-    stdin: 'pipe',
-  });
+  const proc = Bun.spawn(
+    // +e: don't exit on error, +u: don't exit on unset vars — the interactive
+    // bash session must survive failed commands so the agent can retry.
+    ['bash', '--norc', '--noprofile', '+eu', '-s'],
+    {
+      cwd: session.cwd || workspaceRoot,
+      env: { ...process.env, WORKSPACE_ID: session.workspaceId } as Record<string, string>,
+      // Inherit so bash's output appears in container logs without blocking.
+      stdout: 'inherit',
+      stderr: 'inherit',
+      stdin: 'pipe',
+    },
+  );
 
   const bash: BashProcess = {
     stdin: proc.stdin,
@@ -177,7 +182,7 @@ export async function execCommand(
     ...(env ?? {}),
   };
 
-  const proc = Bun.spawn(['bash', '-c', command], {
+  const proc = Bun.spawn(['bash', '--norc', '--noprofile', '+eu', '-c', command], {
     cwd: resolvedCwd,
     env: mergedEnv,
     stdout: 'pipe',
