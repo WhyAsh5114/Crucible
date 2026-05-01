@@ -91,7 +91,8 @@ function labelForIndex(index: number): string {
   return DEFAULT_LABELS[index] ?? `Account ${index + 1}`;
 }
 
-function txToRpcObject(tx: mcp.wallet.SignTxInput['tx']): Record<string, unknown> {
+/** Builds the base RPC transaction object (for eth_sendTransaction). */
+function txToSendObject(tx: mcp.wallet.SignTxInput['tx']): Record<string, unknown> {
   return {
     from: tx.from,
     to: tx.to,
@@ -99,9 +100,11 @@ function txToRpcObject(tx: mcp.wallet.SignTxInput['tx']): Record<string, unknown
     ...(tx.value !== undefined ? { value: toHexQuantity(BigInt(tx.value)) } : {}),
     ...(tx.gas !== undefined ? { gas: toHexQuantity(BigInt(tx.gas)) } : {}),
     ...(tx.nonce !== undefined ? { nonce: `0x${tx.nonce.toString(16)}` } : {}),
-    ...(tx.chainId !== undefined ? { chainId: `0x${tx.chainId.toString(16)}` } : {}),
   };
 }
+
+/** Alias for eth_signTransaction (includes same fields). */
+const txToRpcObject = txToSendObject;
 
 async function readStateFile(statePath: string): Promise<StateShape> {
   try {
@@ -178,10 +181,11 @@ export function createWalletService(opts: {
     },
 
     async sendTxLocal({ tx }) {
-      const signedTx = await rpc<string>(opts.chainRpcUrl, 'eth_signTransaction', [
-        txToRpcObject(tx),
+      // Hardhat test nodes don't support eth_signTransaction. Use eth_sendTransaction
+      // directly — the node auto-signs with the unlocked account referenced by `from`.
+      const txHash = await rpc<string>(opts.chainRpcUrl, 'eth_sendTransaction', [
+        txToSendObject(tx),
       ]);
-      const txHash = await rpc<string>(opts.chainRpcUrl, 'eth_sendRawTransaction', [signedTx]);
       const receipt = await waitForReceipt(opts.chainRpcUrl, txHash);
 
       return {
