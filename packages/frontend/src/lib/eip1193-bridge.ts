@@ -111,6 +111,13 @@ export function createEip1193Bridge(
 	return () => window.removeEventListener('message', handler);
 }
 
+// Test helpers ----------------------------------------------------------------
+// Exported only so tests can clear module-level state between cases where the
+// test runner reuses the same process. Not used in production code.
+export function __test_clearFailureUntil(): void {
+	failureUntil.clear();
+}
+
 // ── Internal ─────────────────────────────────────────────────────────────────
 
 // Per-method circuit breaker: when `/rpc` returns 503 (chain unreachable),
