@@ -69,7 +69,7 @@ function resolveAgentConfig(
 
 // ── AgentAdapter implementation ──────────────────────────────────────────────
 
-function buildAdapter(): AgentAdapter {
+function buildAdapter(sessionId: string): AgentAdapter {
   return {
     getWorkspaceFiles: async (workspaceId) => {
       const ws = await prisma.workspace.findUnique({
@@ -86,9 +86,9 @@ function buildAdapter(): AgentAdapter {
     writeFile: async (workspaceId, filePath, content) =>
       writeWorkspaceFile(workspaceId, filePath, content),
 
-    publishEvent: (workspaceId, event) => publishAgentEvent(workspaceId, event),
+    publishEvent: (workspaceId, event) => publishAgentEvent(workspaceId, sessionId, event),
 
-    nextSeq: (workspaceId) => nextAgentSeq(workspaceId),
+    nextSeq: (workspaceId) => nextAgentSeq(workspaceId, sessionId),
   };
 }
 
@@ -96,13 +96,14 @@ function buildAdapter(): AgentAdapter {
 
 async function runInference(
   workspaceId: string,
+  sessionId: string,
   prompt: string,
   options: { forceOpenAiFallback?: boolean; modelOverride?: string } = {},
 ): Promise<void> {
   // Replay the on-disk chat log to lift the in-memory seq counter past
   // anything we already persisted — required after `bun run --hot` reloads
   // so we don't re-emit seq 0..N and trip the frontend's keyed-each guard.
-  await warmAgentSeq(workspaceId);
+  await warmAgentSeq(workspaceId, sessionId);
 
   const force = options.forceOpenAiFallback ?? false;
   const resolved = resolveAgentConfig(
@@ -117,17 +118,17 @@ async function runInference(
   const streamId = StreamIdSchema.parse(workspaceId);
 
   if (!resolved.ok) {
-    const seq = nextAgentSeq(workspaceId);
-    publishAgentEvent(workspaceId, {
+    const seq = nextAgentSeq(workspaceId, sessionId);
+    publishAgentEvent(workspaceId, sessionId, {
       streamId,
       seq,
       emittedAt: Date.now(),
       type: 'error',
       message: `Inference unavailable: ${resolved.reason}`,
     });
-    publishAgentEvent(workspaceId, {
+    publishAgentEvent(workspaceId, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspaceId),
+      seq: nextAgentSeq(workspaceId, sessionId),
       emittedAt: Date.now(),
       type: 'done',
     });
@@ -166,7 +167,7 @@ async function runInference(
       workspaceId,
       prompt,
       { ...resolved.config, mcpServerUrls, mcpFetch: loopbackFetch as typeof fetch },
-      buildAdapter(),
+      buildAdapter(sessionId),
       controller.signal,
     );
   } finally {
@@ -224,6 +225,7 @@ export const inferenceApi = new OpenAPIHono({
 }).openapi(promptRoute, async (c) => {
   const {
     workspaceId,
+    sessionId: rawSessionId,
     prompt,
     force_openai_fallback: forceOpenAiFallback,
     model,
@@ -247,10 +249,46 @@ export const inferenceApi = new OpenAPIHono({
     return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
   }
 
+  // Resolve the session to use for this turn.
+  let sessionId: string;
+  if (rawSessionId) {
+    const existing = await prisma.chatSession.findUnique({
+      where: { id: rawSessionId },
+      select: { id: true, workspaceId: true },
+    });
+    if (!existing || existing.workspaceId !== workspaceId) {
+      return c.json(createApiErrorBody('not_found', 'Chat session not found'), 404);
+    }
+    sessionId = existing.id;
+    // Touch the session so "most recent" ordering reflects the current turn.
+    await prisma.chatSession.update({ where: { id: sessionId }, data: { updatedAt: new Date() } });
+  } else {
+    // Use the most recently updated session, or auto-create one.
+    const latest = await prisma.chatSession.findFirst({
+      where: { workspaceId },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true },
+    });
+    if (latest) {
+      sessionId = latest.id;
+      await prisma.chatSession.update({
+        where: { id: sessionId },
+        data: { updatedAt: new Date() },
+      });
+    } else {
+      const created = await prisma.chatSession.create({
+        data: { workspaceId, title: 'Chat 1' },
+        select: { id: true },
+      });
+      sessionId = created.id;
+    }
+  }
+
   // Kick off in the background; the caller is expected to be subscribed to
   // /api/agent/stream already.
   void runInference(
     workspaceId,
+    sessionId,
     prompt,
     forceOpenAiFallback
       ? { forceOpenAiFallback: true, ...(model !== undefined ? { modelOverride: model } : {}) }

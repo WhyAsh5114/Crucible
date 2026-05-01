@@ -352,9 +352,19 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
     const streamId = StreamIdSchema.parse(workspace.id);
     const toolName = `${parsed.data.server}.${parsed.data.tool}`;
 
-    publishAgentEvent(workspace.id, {
+    // Resolve the active session: runtime tool-exec events belong to the most
+    // recently active chat session for this workspace (the agent always has a
+    // session in flight when it calls tool_exec).
+    const activeSession = await prisma.chatSession.findFirst({
+      where: { workspaceId: workspace.id },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true },
+    });
+    const sessionId = activeSession?.id ?? 'unknown';
+
+    publishAgentEvent(workspace.id, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspace.id),
+      seq: nextAgentSeq(workspace.id, sessionId),
       emittedAt: TimestampMsSchema.parse(Date.now()),
       type: 'tool_call',
       callId,
@@ -372,9 +382,9 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       error: error instanceof Error ? error.message : 'Failed to execute runtime tool',
     }));
 
-    publishAgentEvent(workspace.id, {
+    publishAgentEvent(workspace.id, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspace.id),
+      seq: nextAgentSeq(workspace.id, sessionId),
       emittedAt: TimestampMsSchema.parse(Date.now()),
       type: 'tool_result',
       callId,
