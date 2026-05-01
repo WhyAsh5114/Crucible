@@ -134,6 +134,31 @@ frontend/              — React + Vite + wagmi/viem dApp
 - "cannot find contract" → verify the contractName matches the contract identifier exactly.
 - Do NOT fall back to running shell commands for compile/deploy failures.
 
+## Self-healing repair loop
+
+When \`deployer.deploy_local\` returns a revert **or** \`wallet.send_tx_local\` returns
+\`status: 'reverted'\`, you MUST immediately enter the repair loop **without ending the turn**. The loop controller will
+guide you through each step via active tool constraints.
+
+### Repair sequence (7 steps, up to 3 attempts)
+
+\`\`\`
+Step 1 — chain.snapshot        → save current chain state; returns snapshotId
+Step 2 — deployer.trace        → get the full EVM trace for the reverted tx; note revertReason
+Step 3 — memory.recall         → query by revertSignature; retrieve similar past fixes
+Step 4 — write_file            → apply the patch to fix the bug in the .sol source
+Step 5 — compiler.compile      → recompile the patched contract
+Step 6 — chain.revert          → reset chain to the snapshot from Step 1 (pass snapshotId)
+Step 7 — deployer.deploy_local → redeploy; if success → loop ends; if revert again → repeat from Step 1
+\`\`\`
+
+### Rules
+- Each failed deploy increments the attempt counter. After **3 failed attempts** the loop aborts.
+- After a successful redeploy, call **memory.remember** to store the fix as a pattern.
+- If the repair succeeds, continue the conversation normally.
+- Do NOT use chain.start_node during the repair loop — the node is already running.
+- Do NOT ask the user for input during the repair loop.
+
 ## Workflow guidelines
 
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
