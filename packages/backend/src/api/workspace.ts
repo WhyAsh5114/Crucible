@@ -306,16 +306,15 @@ async function bootChain(workspaceId: string, chainPort: number): Promise<void> 
 }
 
 /**
- * Compile + deploy `contracts/Counter.sol` (the workspace template) so the
+ * Compile + deploy `contracts/DemoVault.sol` (the workspace scaffold) so the
  * preview iframe lands on a live contract address from the very first frame.
  * The address + ABI get written to `frontend/public/contracts.json`, which the
  * scaffold App.tsx fetches at runtime and uses for `useReadContract` /
  * `useWriteContract` calls.
  *
- * This makes the wallet approval flow testable out of the box: clicking
- * Increment in the preview encodes the function selector, sends an
- * eth_sendTransaction, the bridge routes it through the wallet pane, the user
- * approves, mcp-chain mines, the count refetches.
+ * This makes the deposit/withdraw flow testable out of the box immediately
+ * after workspace creation. The withdraw will revert (seeded bug) — that is
+ * intentional and is the trigger for the agent self-healing loop.
  *
  * Idempotent across container restarts: Hardhat state is in-memory, so every
  * boot needs a fresh deploy. Best-effort — failures are logged but don't
@@ -323,8 +322,8 @@ async function bootChain(workspaceId: string, chainPort: number): Promise<void> 
  */
 /**
  * In-memory template-deploy state per workspace, surfaced via the GET
- * workspace response so the boot overlay can show a "Compiling Counter…" /
- * "Deploying Counter…" phase and only clear once contracts.json has been
+ * workspace response so the boot overlay can show a "Compiling DemoVault…" /
+ * "Deploying DemoVault…" phase and only clear once contracts.json has been
  * written. Volatile (resets on backend restart); the workspace re-deploys on
  * next boot anyway because Hardhat state is in-memory.
  */
@@ -359,24 +358,24 @@ async function deployCounterTemplate(
   const path = await import('node:path');
   const { writeFile, stat } = await import('node:fs/promises');
 
-  // If the workspace's Counter.sol was removed (e.g. agent rewrote the
+  // If the workspace's DemoVault.sol was removed (e.g. agent rewrote the
   // contract layout), don't error out — mark template as unavailable so the
   // boot overlay clears and the agent can take over.
   try {
-    await stat(path.join(workspaceDir, 'contracts', 'Counter.sol'));
+    await stat(path.join(workspaceDir, 'contracts', 'DemoVault.sol'));
   } catch {
     setTemplateState(workspaceId, {
       phase: 'unavailable',
-      message: 'contracts/Counter.sol not present',
+      message: 'contracts/DemoVault.sol not present',
     });
     return;
   }
 
-  setTemplateState(workspaceId, { phase: 'compiling', message: 'Compiling Counter.sol…' });
+  setTemplateState(workspaceId, { phase: 'compiling', message: 'Compiling DemoVault.sol…' });
   const compileRes = await loopbackFetch(`http://127.0.0.1:${compilerPort}/compile`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sourcePath: 'contracts/Counter.sol' }),
+    body: JSON.stringify({ sourcePath: 'contracts/DemoVault.sol' }),
   });
   if (!compileRes.ok) {
     const message = `compile returned HTTP ${compileRes.status}`;
@@ -386,20 +385,20 @@ async function deployCounterTemplate(
   const compiled = (await compileRes.json()) as {
     contracts: Array<{ name: string; abi: unknown }>;
   };
-  const counter = compiled.contracts.find(
-    (c) => c.name === 'Counter' || c.name.endsWith(':Counter') || c.name.endsWith('/Counter'),
+  const vault = compiled.contracts.find(
+    (c) => c.name === 'DemoVault' || c.name.endsWith(':DemoVault') || c.name.endsWith('/DemoVault'),
   );
-  if (!counter) {
-    const message = `compile output missing "Counter" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
+  if (!vault) {
+    const message = `compile output missing "DemoVault" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
     setTemplateState(workspaceId, { phase: 'failed', message });
     throw new Error(message);
   }
 
-  setTemplateState(workspaceId, { phase: 'deploying', message: 'Deploying Counter to chain…' });
+  setTemplateState(workspaceId, { phase: 'deploying', message: 'Deploying DemoVault to chain…' });
   const deployRes = await loopbackFetch(`http://127.0.0.1:${deployerPort}/deploy_local`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ contractName: 'Counter', constructorData: '0x' }),
+    body: JSON.stringify({ contractName: 'DemoVault', constructorData: '0x' }),
   });
   if (!deployRes.ok) {
     const message = `deploy_local returned HTTP ${deployRes.status}`;
@@ -412,9 +411,9 @@ async function deployCounterTemplate(
   // `frontend/public/` means Vite serves it at the iframe origin without
   // bundler involvement; the path is `/contracts.json`.
   const manifest = {
-    counter: {
+    vault: {
       address: deployed.address,
-      abi: counter.abi,
+      abi: vault.abi,
       deployTxHash: deployed.txHash,
       deployedAt: Date.now(),
     },
@@ -427,9 +426,9 @@ async function deployCounterTemplate(
   setTemplateState(workspaceId, {
     phase: 'ready',
     contractAddress: deployed.address,
-    message: `Counter deployed at ${deployed.address}`,
+    message: `DemoVault deployed at ${deployed.address}`,
   });
-  console.log(`[workspace ${workspaceId}] Counter deployed at ${deployed.address}`);
+  console.log(`[workspace ${workspaceId}] DemoVault deployed at ${deployed.address}`);
 }
 
 // ── Background runtime bootstrap ─────────────────────────────────────────────
