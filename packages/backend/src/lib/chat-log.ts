@@ -1,14 +1,22 @@
 /**
- * Per-workspace chat history persisted as JSONL on the host disk.
+ * Per-session chat history persisted as JSONL on the host disk.
  *
- * Path: `${workspaceDir}/.crucible/chat.jsonl` — same root as `state.json`,
- * already bind-mounted into the runner so the log travels with the workspace.
+ * Path: `${workspaceDir}/.crucible/sessions/${sessionId}.jsonl`
+ *
+ * Each `ChatSession` in the DB corresponds to one JSONL file. Sessions allow
+ * users to maintain separate, focused chat contexts for a workspace instead
+ * of one unbounded history.
+ *
+ * Legacy migration: if `chat.jsonl` (the old single-file format) exists for
+ * a workspace it is treated as the backing file for a session whose id is
+ * the special string `"legacy"`. The migration endpoint moves it to a real
+ * session file on first session creation.
  *
  * `message_delta` and `thinking` token-deltas are coalesced into a single
  * `message` / `thinking` row at flush time. Without coalescing, a multi-minute
  * agent turn would write tens of thousands of one-token lines into the file.
  *
- * Writes are queued through a per-workspace promise chain so concurrent
+ * Writes are queued through a per-session promise chain so concurrent
  * `publishAgentEvent` calls cannot interleave half-written JSON lines.
  */
 
@@ -18,7 +26,8 @@ import { AgentEventSchema, type AgentEvent } from '@crucible/types';
 import { workspaceHostPath } from './workspace-fs';
 
 const CHAT_DIR = '.crucible';
-const CHAT_FILE = 'chat.jsonl';
+const SESSIONS_DIR = 'sessions';
+const LEGACY_FILE = 'chat.jsonl';
 
 interface DeltaBuffer {
   streamId: AgentEvent['streamId'];
@@ -32,10 +41,18 @@ class ChatLog {
   private pendingMessage: DeltaBuffer | null = null;
   private pendingThinking: DeltaBuffer | null = null;
 
-  constructor(private readonly workspaceId: string) {}
+  constructor(
+    private readonly workspaceId: string,
+    private readonly sessionId: string,
+  ) {}
 
   private filePath(): string {
-    return path.join(workspaceHostPath(this.workspaceId), CHAT_DIR, CHAT_FILE);
+    return path.join(
+      workspaceHostPath(this.workspaceId),
+      CHAT_DIR,
+      SESSIONS_DIR,
+      `${this.sessionId}.jsonl`,
+    );
   }
 
   record(event: AgentEvent): void {
@@ -114,7 +131,7 @@ class ChatLog {
   }
 
   private append(event: AgentEvent): void {
-    const line = `${JSON.stringify(event)}\n`;
+    const line = `${JSON.stringify(event, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n`;
     this.writeChain = this.writeChain
       .then(async () => {
         const fp = this.filePath();
@@ -124,38 +141,53 @@ class ChatLog {
       .catch((err) => {
         // Persistence failures must never propagate into the agent bus.
         console.warn(
-          `[chat-log] append failed for workspace ${this.workspaceId}:`,
+          `[chat-log] append failed for workspace ${this.workspaceId} session ${this.sessionId}:`,
           err instanceof Error ? err.message : err,
         );
       });
   }
 }
 
+// In-memory map keyed by `${workspaceId}:${sessionId}`.
 const logs = new Map<string, ChatLog>();
 
-function getLog(workspaceId: string): ChatLog {
-  let log = logs.get(workspaceId);
+function logKey(workspaceId: string, sessionId: string): string {
+  return `${workspaceId}:${sessionId}`;
+}
+
+function getLog(workspaceId: string, sessionId: string): ChatLog {
+  const key = logKey(workspaceId, sessionId);
+  let log = logs.get(key);
   if (!log) {
-    log = new ChatLog(workspaceId);
-    logs.set(workspaceId, log);
+    log = new ChatLog(workspaceId, sessionId);
+    logs.set(key, log);
   }
   return log;
 }
 
-/** Append (or buffer) one `AgentEvent` for `workspaceId`. */
-export function recordChatEvent(workspaceId: string, event: AgentEvent): void {
-  getLog(workspaceId).record(event);
+/** Append (or buffer) one `AgentEvent` for the given workspace + session. */
+export function recordChatEvent(workspaceId: string, sessionId: string, event: AgentEvent): void {
+  getLog(workspaceId, sessionId).record(event);
 }
 
 /**
- * Read the persisted history for `workspaceId`. Flushes any in-memory buffer
- * before reading so callers see the most recent state. Lines that fail schema
- * validation (e.g. partial writes after a crash) are skipped silently.
+ * Read the persisted history for `workspaceId` + `sessionId`. Flushes any
+ * in-memory buffer before reading so callers see the most recent state. Lines
+ * that fail schema validation (e.g. partial writes after a crash) are skipped
+ * silently.
  */
-export async function readChatHistory(workspaceId: string): Promise<AgentEvent[]> {
-  await getLog(workspaceId).flush();
+export async function readChatHistory(
+  workspaceId: string,
+  sessionId: string,
+): Promise<AgentEvent[]> {
+  await getLog(workspaceId, sessionId).flush();
 
-  const fp = path.join(workspaceHostPath(workspaceId), CHAT_DIR, CHAT_FILE);
+  const fp = path.join(
+    workspaceHostPath(workspaceId),
+    CHAT_DIR,
+    SESSIONS_DIR,
+    `${sessionId}.jsonl`,
+  );
   let raw: string;
   try {
     raw = await fs.readFile(fp, 'utf8');
@@ -180,7 +212,36 @@ export async function readChatHistory(workspaceId: string): Promise<AgentEvent[]
   return events;
 }
 
-/** Drop the in-memory log handle for a workspace (e.g. after deletion). */
-export function disposeChatLog(workspaceId: string): void {
-  logs.delete(workspaceId);
+/**
+ * Migrate the legacy `chat.jsonl` file (pre-sessions) for a workspace into a
+ * dedicated session file. Returns `true` if migration happened, `false` if
+ * there was nothing to migrate.
+ */
+export async function migrateLegacyChatLog(
+  workspaceId: string,
+  targetSessionId: string,
+): Promise<boolean> {
+  const baseDir = path.join(workspaceHostPath(workspaceId), CHAT_DIR);
+  const legacyPath = path.join(baseDir, LEGACY_FILE);
+  const targetPath = path.join(baseDir, SESSIONS_DIR, `${targetSessionId}.jsonl`);
+  try {
+    await fs.mkdir(path.join(baseDir, SESSIONS_DIR), { recursive: true });
+    await fs.rename(legacyPath, targetPath);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/** Drop the in-memory log handle(s) for a workspace. Optionally scoped to one
+ *  session; omitting `sessionId` disposes all sessions for the workspace. */
+export function disposeChatLog(workspaceId: string, sessionId?: string): void {
+  if (sessionId !== undefined) {
+    logs.delete(logKey(workspaceId, sessionId));
+  } else {
+    for (const key of [...logs.keys()]) {
+      if (key.startsWith(`${workspaceId}:`)) logs.delete(key);
+    }
+  }
 }
