@@ -26,8 +26,6 @@ const TxToSignSchema = z.object({
   value: BigIntStringSchema.optional(),
   gas: BigIntStringSchema.optional(),
   nonce: z.number().int().nonnegative().optional(),
-  /** EIP-155 chain ID. Optional for local Hardhat txs — the node injects it automatically. */
-  chainId: z.number().int().positive().optional(),
 });
 export type TxToSign = z.infer<typeof TxToSignSchema>;
 

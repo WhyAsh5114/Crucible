@@ -7,7 +7,6 @@ import { createWalletService } from '../src/service.ts';
 const ADDRESS_1 = '0x1111111111111111111111111111111111111111';
 const ADDRESS_2 = '0x2222222222222222222222222222222222222222';
 const TX_HASH = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-const SIGNED_TX = '0x1234abcd';
 
 const originalFetch = globalThis.fetch;
 
@@ -67,9 +66,7 @@ describe('mcp-wallet service', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { method?: string };
 
       switch (body.method) {
-        case 'eth_signTransaction':
-          return jsonResponse({ jsonrpc: '2.0', id: 1, result: SIGNED_TX });
-        case 'eth_sendRawTransaction':
+        case 'eth_sendTransaction':
           return jsonResponse({ jsonrpc: '2.0', id: 1, result: TX_HASH });
         case 'eth_getTransactionReceipt':
           return jsonResponse({
@@ -91,7 +88,6 @@ describe('mcp-wallet service', () => {
         from: ADDRESS_1,
         to: ADDRESS_2,
         data: '0x',
-        chainId: 31337,
       },
     });
 
