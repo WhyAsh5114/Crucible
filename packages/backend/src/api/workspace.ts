@@ -12,11 +12,15 @@ import {
   WorkspaceCreateRequestSchema,
   WorkspaceCreateResponseSchema,
   WorkspaceListResponseSchema,
+  WorkspaceUpdateRequestSchema,
+  WorkspaceUpdateResponseSchema,
+  WorkspaceDeleteResponseSchema,
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ApiErrorSchema,
   StreamIdSchema,
   AgentEventSchema,
+  type TemplateState,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
 import { z } from 'zod';
@@ -24,15 +28,20 @@ import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
-import { startPreview, getPreviewUrl } from '../lib/preview-manager';
+import { startPreview, stopPreview, getPreviewUrl, getPreviewState } from '../lib/preview-manager';
 import {
   ensureWorkspaceContainer,
   getWorkspaceContainerPorts,
   runtimeServiceBaseUrl,
+  removeWorkspaceContainer,
 } from '../lib/runtime-docker';
-import { publishAgentEvent, nextAgentSeq } from '../lib/agent-bus';
+import { publishAgentEvent, nextAgentSeq, warmAgentSeq } from '../lib/agent-bus';
 import { readChatHistory } from '../lib/chat-log';
 import { requireSession } from '../lib/auth';
+import { cancelAgentTurn } from '../lib/agent-cancel';
+import { loopbackFetch } from '../lib/loopback-fetch';
+import { generateWorkspaceName } from '../lib/workspace-name';
+import { rm } from 'node:fs/promises';
 
 type ApiVariables = { userId: string };
 
@@ -112,6 +121,56 @@ const listWorkspacesRoute = createRoute({
   },
 });
 
+const updateWorkspaceRoute = createRoute({
+  method: 'patch',
+  path: '/workspace/{id}',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    body: {
+      content: { 'application/json': { schema: WorkspaceUpdateRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: WorkspaceUpdateResponseSchema } },
+      description: 'Workspace renamed',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+  },
+});
+
+const deleteWorkspaceRoute = createRoute({
+  method: 'delete',
+  path: '/workspace/{id}',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: WorkspaceDeleteResponseSchema } },
+      description: 'Workspace deleted',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    500: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Internal error',
+    },
+  },
+});
+
 const fileWriteRoute = createRoute({
   method: 'put',
   path: '/workspace/{id}/file',
@@ -150,6 +209,36 @@ const ChatHistoryResponseSchema = z.object({
   events: z.array(AgentEventSchema),
 });
 
+const CancelAgentResponseSchema = z.object({
+  cancelled: z.boolean(),
+});
+
+const cancelAgentRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/cancel',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: CancelAgentResponseSchema } },
+      description: 'Cancel signal delivered (or no active turn)',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Bad request',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+  },
+});
+
 const getChatHistoryRoute = createRoute({
   method: 'get',
   path: '/workspace/{id}/chat/history',
@@ -175,6 +264,173 @@ const getChatHistoryRoute = createRoute({
     },
   },
 });
+
+// ── Chain auto-boot ──────────────────────────────────────────────────────────
+
+/**
+ * Hit the workspace's mcp-chain HTTP `/start_node` to bring up Hardhat, then
+ * read `/state` and persist the result on `workspace_runtime.chainState`.
+ *
+ * Called eagerly from `spawnRuntimeForWorkspace` so a fresh workspace's
+ * preview iframe (and wagmi polls inside it) hit a live chain immediately
+ * rather than a 503 cascade until the agent gets around to calling
+ * `start_node` itself. The agent can still call `start_node` later — it's
+ * idempotent on the chain side.
+ *
+ * Failures are logged and swallowed; the runtime stays up so the user can
+ * recover via the agent or a manual retry.
+ */
+async function bootChain(workspaceId: string, chainPort: number): Promise<void> {
+  const base = `http://127.0.0.1:${chainPort}`;
+  const startRes = await loopbackFetch(`${base}/start_node`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!startRes.ok) {
+    throw new Error(`start_node returned HTTP ${startRes.status}`);
+  }
+
+  const stateRes = await loopbackFetch(`${base}/state`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!stateRes.ok) {
+    throw new Error(`/state returned HTTP ${stateRes.status}`);
+  }
+  const state = (await stateRes.json()) as Record<string, unknown>;
+
+  await prisma.workspaceRuntime.update({
+    where: { workspaceId },
+    data: { chainState: state as Prisma.InputJsonValue },
+  });
+}
+
+/**
+ * Compile + deploy `contracts/Counter.sol` (the workspace template) so the
+ * preview iframe lands on a live contract address from the very first frame.
+ * The address + ABI get written to `frontend/public/contracts.json`, which the
+ * scaffold App.tsx fetches at runtime and uses for `useReadContract` /
+ * `useWriteContract` calls.
+ *
+ * This makes the wallet approval flow testable out of the box: clicking
+ * Increment in the preview encodes the function selector, sends an
+ * eth_sendTransaction, the bridge routes it through the wallet pane, the user
+ * approves, mcp-chain mines, the count refetches.
+ *
+ * Idempotent across container restarts: Hardhat state is in-memory, so every
+ * boot needs a fresh deploy. Best-effort — failures are logged but don't
+ * block the runtime from coming up; the agent can still recover later.
+ */
+/**
+ * In-memory template-deploy state per workspace, surfaced via the GET
+ * workspace response so the boot overlay can show a "Compiling Counter…" /
+ * "Deploying Counter…" phase and only clear once contracts.json has been
+ * written. Volatile (resets on backend restart); the workspace re-deploys on
+ * next boot anyway because Hardhat state is in-memory.
+ */
+const templateStates = new Map<string, TemplateState>();
+
+function makeIdleTemplateState(): TemplateState {
+  return { phase: 'idle', contractAddress: null, message: null, updatedAt: Date.now() };
+}
+
+function setTemplateState(
+  workspaceId: string,
+  patch: Partial<TemplateState> & { phase: TemplateState['phase'] },
+): void {
+  const next: TemplateState = {
+    ...(templateStates.get(workspaceId) ?? makeIdleTemplateState()),
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  templateStates.set(workspaceId, next);
+}
+
+export function getTemplateState(workspaceId: string): TemplateState {
+  return templateStates.get(workspaceId) ?? makeIdleTemplateState();
+}
+
+async function deployCounterTemplate(
+  workspaceId: string,
+  workspaceDir: string,
+  compilerPort: number,
+  deployerPort: number,
+): Promise<void> {
+  const path = await import('node:path');
+  const { writeFile, stat } = await import('node:fs/promises');
+
+  // If the workspace's Counter.sol was removed (e.g. agent rewrote the
+  // contract layout), don't error out — mark template as unavailable so the
+  // boot overlay clears and the agent can take over.
+  try {
+    await stat(path.join(workspaceDir, 'contracts', 'Counter.sol'));
+  } catch {
+    setTemplateState(workspaceId, {
+      phase: 'unavailable',
+      message: 'contracts/Counter.sol not present',
+    });
+    return;
+  }
+
+  setTemplateState(workspaceId, { phase: 'compiling', message: 'Compiling Counter.sol…' });
+  const compileRes = await loopbackFetch(`http://127.0.0.1:${compilerPort}/compile`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sourcePath: 'contracts/Counter.sol' }),
+  });
+  if (!compileRes.ok) {
+    const message = `compile returned HTTP ${compileRes.status}`;
+    setTemplateState(workspaceId, { phase: 'failed', message });
+    throw new Error(message);
+  }
+  const compiled = (await compileRes.json()) as {
+    contracts: Array<{ name: string; abi: unknown }>;
+  };
+  const counter = compiled.contracts.find(
+    (c) => c.name === 'Counter' || c.name.endsWith(':Counter') || c.name.endsWith('/Counter'),
+  );
+  if (!counter) {
+    const message = `compile output missing "Counter" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
+    setTemplateState(workspaceId, { phase: 'failed', message });
+    throw new Error(message);
+  }
+
+  setTemplateState(workspaceId, { phase: 'deploying', message: 'Deploying Counter to chain…' });
+  const deployRes = await loopbackFetch(`http://127.0.0.1:${deployerPort}/deploy_local`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ contractName: 'Counter', constructorData: '0x' }),
+  });
+  if (!deployRes.ok) {
+    const message = `deploy_local returned HTTP ${deployRes.status}`;
+    setTemplateState(workspaceId, { phase: 'failed', message });
+    throw new Error(message);
+  }
+  const deployed = (await deployRes.json()) as { address: string; txHash: string };
+
+  // Write the manifest the preview's React app fetches at boot. Using
+  // `frontend/public/` means Vite serves it at the iframe origin without
+  // bundler involvement; the path is `/contracts.json`.
+  const manifest = {
+    counter: {
+      address: deployed.address,
+      abi: counter.abi,
+      deployTxHash: deployed.txHash,
+      deployedAt: Date.now(),
+    },
+  };
+  await writeFile(
+    path.join(workspaceDir, 'frontend', 'public', 'contracts.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
+  );
+  setTemplateState(workspaceId, {
+    phase: 'ready',
+    contractAddress: deployed.address,
+    message: `Counter deployed at ${deployed.address}`,
+  });
+  console.log(`[workspace ${workspaceId}] Counter deployed at ${deployed.address}`);
+}
 
 // ── Background runtime bootstrap ─────────────────────────────────────────────
 
@@ -214,6 +470,53 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
         terminalPort: container.ports.terminal,
       },
     });
+
+    // Auto-boot the Hardhat node now that the container is up — without this
+    // the chain stays down until the agent explicitly calls start_node, which
+    // means the preview iframe gets a flood of 503s on every wagmi poll and
+    // the wallet pane shows "no account connected" forever. Booting eagerly
+    // is the only way to make a fresh workspace land in a usable state.
+    // After the chain is up, also auto-compile + deploy the workspace's
+    // Counter.sol so the preview's scaffold has a live contract address to
+    // exercise the wallet approval flow against from the very first frame.
+    if (container.ports.chain !== null) {
+      const chainPort = container.ports.chain;
+      const compilerPort = container.ports.compiler;
+      const deployerPort = container.ports.deployer;
+      void bootChain(workspaceId, chainPort)
+        .then(async () => {
+          if (compilerPort === null || deployerPort === null) return;
+          // Hard cap the template deploy at 90s so a slow/failed solc download
+          // can never wedge the boot overlay forever. On timeout we mark the
+          // template as failed and let the workspace open — the agent can
+          // recover via tools later.
+          const timeout = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('counter deploy timed out after 90s')), 90_000),
+          );
+          try {
+            await Promise.race([
+              deployCounterTemplate(workspaceId, directoryPath, compilerPort, deployerPort),
+              timeout,
+            ]);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn(`[workspace ${workspaceId}] counter deploy failed:`, message);
+            // Make sure the state ends in a settled phase so the boot overlay
+            // doesn't spin indefinitely.
+            const state = getTemplateState(workspaceId);
+            if (
+              state.phase !== 'ready' &&
+              state.phase !== 'failed' &&
+              state.phase !== 'unavailable'
+            ) {
+              setTemplateState(workspaceId, { phase: 'failed', message });
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn(`[workspace ${workspaceId}] chain boot failed:`, err);
+        });
+    }
 
     // Start the per-workspace preview server in the background so
     // GET /api/workspace/:id eventually returns a non-null previewUrl.
@@ -258,13 +561,21 @@ export const workspaceApi = workspaceApiBase
     const { name } = c.req.valid('json');
     const userId = c.get('userId');
 
+    // Auto-generate a friendly name when the client sends the placeholder
+    // "Untitled workspace" — keeps the workspace list scannable instead of
+    // a wall of identical entries. Explicit user-provided names pass through.
+    const effectiveName =
+      name.trim() === '' || name.trim().toLowerCase() === 'untitled workspace'
+        ? generateWorkspaceName()
+        : name;
+
     let createdId: string | null = null;
 
     try {
       const created = await prisma.workspace.create({
         data: {
           deployments: [],
-          name,
+          name: effectiveName,
           directoryPath: `pending://${randomUUID()}`,
           userId,
         },
@@ -318,8 +629,16 @@ export const workspaceApi = workspaceApiBase
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    const chainState = ChainStateSchema.safeParse(row.runtime?.chainState);
-    const deployments = DeploymentRecordSchema.array().safeParse(row.deployments);
+    // Validate the DB-stored chainState/deployments to detect malformed rows,
+    // but pass the *raw wire form* (string-encoded bigints) to the response
+    // rather than the parsed runtime form. ChainStateSchema/DeploymentRecord
+    // use `BigIntStringSchema` which transforms wire string → runtime bigint;
+    // re-parsing the transformed output through WorkspaceGetResponseSchema
+    // fails ("expected string, received bigint"), and even if it didn't,
+    // c.json() can't serialize a bigint. The client-side schema parses the
+    // wire form back into the runtime form.
+    const chainStateValid = ChainStateSchema.safeParse(row.runtime?.chainState).success;
+    const deploymentsValid = DeploymentRecordSchema.array().safeParse(row.deployments).success;
     const files = await collectWorkspaceFiles(row.directoryPath || workspaceHostPath(row.id));
 
     // If the runtime is ready but no preview is running (e.g. backend restarted
@@ -331,18 +650,26 @@ export const workspaceApi = workspaceApiBase
       });
     }
 
-    const response = WorkspaceGetResponseSchema.parse({
+    // Cast through `unknown`: the route's response schema uses
+    // BigIntStringSchema whose *output* type is `bigint`, but JSON can't carry
+    // a bigint and the frontend re-parses the wire string into a bigint
+    // itself. So at runtime the body is wire-form, while Hono's typed
+    // signature expects the post-parse runtime form. The cast bridges that
+    // intentional asymmetry without changing the schema contract.
+    type WireResponse = z.input<typeof WorkspaceGetResponseSchema>;
+    const body: WireResponse = {
       files,
       id: row.id,
       name: row.name,
       createdAt: row.createdAt.getTime(),
       previewUrl: getPreviewUrl(id) ?? row.runtime?.previewUrl ?? null,
-      chainState: chainState.success ? chainState.data : null,
-      deployments: deployments.success ? deployments.data : [],
+      previewState: getPreviewState(id),
+      templateState: getTemplateState(id),
+      chainState: (chainStateValid ? row.runtime?.chainState : null) as WireResponse['chainState'],
+      deployments: (deploymentsValid ? row.deployments : []) as WireResponse['deployments'],
       terminalSessionId: row.runtime?.terminalSessionId ?? null,
-    });
-
-    return c.json(response, 200);
+    };
+    return c.json(body as unknown as z.infer<typeof WorkspaceGetResponseSchema>, 200);
   })
   .openapi(listWorkspacesRoute, async (c) => {
     const userId = c.get('userId');
@@ -363,6 +690,77 @@ export const workspaceApi = workspaceApiBase
     });
 
     return c.json(response, 200);
+  })
+  .openapi(updateWorkspaceRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { name } = c.req.valid('json');
+    const userId = c.get('userId');
+
+    const row = await prisma.workspace.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!row || row.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const updated = await prisma.workspace.update({
+      where: { id },
+      data: { name },
+      select: { id: true, name: true },
+    });
+    return c.json(WorkspaceUpdateResponseSchema.parse(updated), 200);
+  })
+  .openapi(deleteWorkspaceRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const row = await prisma.workspace.findUnique({
+      where: { id },
+      select: { userId: true, directoryPath: true },
+    });
+    if (!row || row.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    // Best-effort cleanup of runtime resources before dropping the row. We
+    // don't roll back the DB delete if a cleanup step fails (the container
+    // could be already gone, the directory could be missing) — the row going
+    // away is what the user actually asked for, and orphaned containers are
+    // recoverable via `docker rm`.
+    try {
+      await cancelAgentTurn(id);
+    } catch {
+      /* ignore */
+    }
+    try {
+      stopPreview(id);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await removeWorkspaceContainer(id);
+    } catch (err) {
+      console.warn(`[workspace ${id}] container cleanup failed:`, err);
+    }
+
+    // Cascade delete: workspace_runtime row goes via FK onDelete: Cascade.
+    try {
+      await prisma.workspace.delete({ where: { id } });
+    } catch (err) {
+      console.error(`[workspace ${id}] DB delete failed:`, err);
+      return c.json(createApiErrorBody('internal', 'Failed to delete workspace'), 500);
+    }
+
+    // Best-effort: remove the on-disk workspace directory. Failure here is
+    // not fatal — the DB row is already gone.
+    if (row.directoryPath && !row.directoryPath.startsWith('pending://')) {
+      void rm(row.directoryPath, { recursive: true, force: true }).catch((err) => {
+        console.warn(`[workspace ${id}] directory cleanup failed:`, err);
+      });
+    }
+
+    return c.json(WorkspaceDeleteResponseSchema.parse({ id, deleted: true }), 200);
   })
   .openapi(fileWriteRoute, async (c) => {
     const { id } = c.req.valid('param');
@@ -388,6 +786,10 @@ export const workspaceApi = workspaceApiBase
 
     try {
       const wf = await writeWorkspaceFile(row.id, filePath, content, workspaceDir);
+
+      // Lift seq counter past any persisted events from previous runs so we
+      // don't collide with seq numbers already on disk after a hot reload.
+      await warmAgentSeq(row.id);
 
       // Publish a file_write event so SSE subscribers (e.g. the editor)
       // see the change without polling.
@@ -433,6 +835,21 @@ export const workspaceApi = workspaceApiBase
       );
       return c.json(ChatHistoryResponseSchema.parse({ events: [] }), 200);
     }
+  })
+  .openapi(cancelAgentRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const cancelled = cancelAgentTurn(id);
+    return c.json(CancelAgentResponseSchema.parse({ cancelled }), 200);
   })
   .get('/workspace/:id/devtools/events', async (c) => {
     const id = c.req.param('id');
