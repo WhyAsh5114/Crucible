@@ -6,9 +6,15 @@
 	interface Props {
 		class?: string;
 		children?: import('svelte').Snippet;
+		/**
+		 * Forwarded to `Response`. When set, the inner content is parsed as
+		 * Markdown — preferred for live thinking/reasoning streams that contain
+		 * code fences and inline formatting.
+		 */
+		content?: string;
 	}
 
-	let { class: className = '', children, ...props }: Props = $props();
+	let { class: className = '', children, content, ...props }: Props = $props();
 </script>
 
 <CollapsibleContent
@@ -19,7 +25,11 @@
 	)}
 	{...props}
 >
-	<Response class="grid gap-2">
-		{@render children?.()}
-	</Response>
+	{#if content !== undefined}
+		<Response class="grid gap-2" {content} />
+	{:else}
+		<Response class="grid gap-2">
+			{@render children?.()}
+		</Response>
+	{/if}
 </CollapsibleContent>
