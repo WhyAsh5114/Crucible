@@ -19,6 +19,7 @@ import { WorkspaceIdSchema, AllowedRpcMethodSchema, ApiErrorSchema } from '@cruc
 import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
 import { requireSession } from '../lib/auth';
+import { loopbackFetch } from '../lib/loopback-fetch';
 
 type ApiVariables = { userId: string };
 
@@ -123,9 +124,9 @@ export const rpcApi = rpcApiBase.openapi(rpcRoute, async (c) => {
   const chainUrl = `http://127.0.0.1:${chainPort}/json-rpc`;
   let upstreamRes: Response;
   try {
-    upstreamRes = await fetch(chainUrl, {
+    upstreamRes = await loopbackFetch(chainUrl, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', Host: 'localhost' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ method, params }),
     });
   } catch (err) {
