@@ -111,6 +111,77 @@ function classifyRouterError(status: number, body: string): FallbackReason {
   return 'provider_unavailable';
 }
 
+/** Shape of the 0G Compute Router's trailing `x_0g_trace` SSE chunk. */
+type OgTrace = {
+  request_id?: string;
+  provider?: string;
+  billing?: { input_cost?: string; output_cost?: string; total_cost?: string };
+  tee_verified?: boolean;
+};
+
+/**
+ * Wrap a streaming response body to filter out 0G Router's proprietary
+ * `x_0g_trace`-only SSE chunks. The Vercel AI SDK's OpenAI parser rejects
+ * them (they have no `choices` / `error` field), causing a type validation
+ * crash. Filtered chunks are forwarded to `onTrace` so billing/attestation
+ * data can still be surfaced in the inference_receipt event.
+ */
+function filterOgTraceFromStream(
+  body: ReadableStream<Uint8Array>,
+  onTrace?: (t: OgTrace) => void,
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buf = '';
+
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        buf += decoder.decode(chunk, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+
+        const keep: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const parsed = JSON.parse(line.slice(6)) as Record<string, unknown>;
+              const keys = Object.keys(parsed);
+              if (keys.length === 1 && keys[0] === 'x_0g_trace') {
+                onTrace?.(parsed['x_0g_trace'] as OgTrace);
+                continue;
+              }
+            } catch {
+              // Non-JSON or partial — pass through.
+            }
+          }
+          keep.push(line);
+        }
+
+        if (keep.length > 0) {
+          controller.enqueue(encoder.encode(keep.join('\n') + '\n'));
+        }
+      },
+      flush(controller) {
+        if (!buf) return;
+        if (buf.startsWith('data: ') && buf !== 'data: [DONE]') {
+          try {
+            const parsed = JSON.parse(buf.slice(6)) as Record<string, unknown>;
+            const keys = Object.keys(parsed);
+            if (keys.length === 1 && keys[0] === 'x_0g_trace') {
+              onTrace?.(parsed['x_0g_trace'] as OgTrace);
+              return;
+            }
+          } catch {
+            // Pass through.
+          }
+        }
+        controller.enqueue(encoder.encode(buf));
+      },
+    }),
+  );
+}
+
 /**
  * Recursively unwrap an error to find an `OgRouterError`. AI SDK wraps fetch
  * errors in `APICallError` / cause chains, so direct `instanceof` checks miss.
@@ -135,11 +206,14 @@ function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
  *      receipt (surfaced in the `x_0g_trace` field of the response).
  *   2. Throws a typed `OgRouterError` on non-2xx responses so the agent loop
  *      can classify the fallback reason and tell the UI how to recover.
- *
- * Streaming response bodies are passed through untouched — capturing the
- * trailing `x_0g_trace` from a streamed completion is left for a follow-up.
+ *   3. Filters the trailing `x_0g_trace`-only SSE chunk from streaming
+ *      responses so the Vercel AI SDK parser never sees it (it has no `choices`
+ *      or `error` field and fails schema validation).
  */
-function makeOgRouterFetch(provider: AgentConfig['provider']): typeof globalThis.fetch | undefined {
+function makeOgRouterFetch(
+  provider: AgentConfig['provider'],
+  onOgTrace?: (t: OgTrace) => void,
+): typeof globalThis.fetch | undefined {
   if (provider !== '0g-compute') return undefined;
 
   const wrapped = async (
@@ -169,6 +243,22 @@ function makeOgRouterFetch(provider: AgentConfig['provider']): typeof globalThis
         classifyRouterError(response.status, text),
       );
     }
+
+    // Filter x_0g_trace-only SSE chunks out of streaming responses.
+    // We do NOT check content-type — the 0G Router omits or varies the header.
+    if (response.body) {
+      // Cast: response.body may be typed as ReadableStream<any> in some envs.
+      const filteredBody = filterOgTraceFromStream(
+        response.body as ReadableStream<Uint8Array>,
+        onOgTrace,
+      );
+      return new Response(filteredBody, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+
     return response;
   };
   return wrapped as typeof globalThis.fetch;
@@ -269,7 +359,9 @@ export async function runAgentTurn(
     // Proceed without file context.
   }
 
-  const ogFetch = makeOgRouterFetch(config.provider);
+  const ogFetch = makeOgRouterFetch(config.provider, (t) => {
+    ogTraceRef.value = t;
+  });
   const openai = createOpenAI({
     baseURL: config.baseUrl,
     apiKey: config.apiKey,
@@ -278,6 +370,9 @@ export async function runAgentTurn(
 
   let promptTokens = 0;
   let completionTokens = 0;
+  // Use a ref object so TypeScript doesn't narrow this to `never` via control
+  // flow analysis — the assignment happens inside a callback.
+  const ogTraceRef: { value: OgTrace | null } = { value: null };
 
   // ── MCP client setup ───────────────────────────────────────────────────────
   const mcpClients: MCPClient[] = [];
@@ -485,7 +580,7 @@ export async function runAgentTurn(
       id: InferenceReceiptIdSchema.parse(crypto.randomUUID()),
       provider: config.provider ?? 'openai-compatible',
       model: config.model,
-      attestation: null,
+      attestation: ogTraceRef.value?.request_id ?? null,
       fallbackReason:
         config.provider === '0g-compute' ? null : (config.fallbackReason ?? 'admin_override'),
       promptTokens,
