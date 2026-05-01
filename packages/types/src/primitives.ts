@@ -42,17 +42,16 @@ export const HexSchema = z
 
 const DECIMAL_UINT_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
 
+// Intentionally no `.transform()` — keeps the value as a `string` so it
+// remains JSON-serialisable.  Callers that need an actual `bigint` (e.g.
+// service code that passes the value to `toHexQuantity`) should call
+// `BigInt(value)` themselves.  The schema is used as the input/output type
+// for MCP tool schemas fed to the Vercel AI SDK; the SDK internally calls
+// `JSON.stringify` on parsed tool-call arguments, so `bigint` values would
+// throw "JSON.stringify cannot serialize BigInt".
 export const BigIntStringSchema = z
   .string()
-  .regex(DECIMAL_UINT_PATTERN, 'Expected a non-negative decimal integer string')
-  .transform((v, ctx) => {
-    try {
-      return BigInt(v);
-    } catch {
-      ctx.addIssue({ code: 'custom', message: 'Failed to parse as bigint' });
-      return z.NEVER;
-    }
-  });
+  .regex(DECIMAL_UINT_PATTERN, 'Expected a non-negative decimal integer string');
 
 /** Helper for producers — stringify a bigint for wire transport. */
 export function encodeBigInt(value: bigint): string {
