@@ -787,7 +787,7 @@ export async function runAgentTurn(
                     storageWrites: [],
                     events: [],
                     revertReason: text.slice(0, 500),
-                    gasUsed: 0n,
+                    gasUsed: '0',
                   };
                 }
                 emit({ ...baseEvent(), type: 'trace_captured', trace });
