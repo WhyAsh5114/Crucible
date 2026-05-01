@@ -54,7 +54,7 @@
 
 <DropdownMenu.DropdownMenu>
 	<DropdownMenu.DropdownMenuTrigger
-		class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-mono transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+		class="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 	>
 		{#if value.provider === '0g'}
 			<SparklesIcon class="size-3 text-amber-400" />
@@ -72,7 +72,9 @@
 					<DropdownMenu.DropdownMenuGroupHeading class="flex items-center gap-1.5 text-[10px]">
 						<SparklesIcon class="size-3 text-amber-400" />
 						0G Compute
-						<span class="ml-auto rounded px-1 py-px text-[9px] font-normal text-amber-400/80 ring-1 ring-amber-400/30">
+						<span
+							class="ml-auto rounded px-1 py-px text-[9px] font-normal text-amber-400/80 ring-1 ring-amber-400/30"
+						>
 							testnet
 						</span>
 					</DropdownMenu.DropdownMenuGroupHeading>
@@ -92,7 +94,7 @@
 								<CheckIcon class="ml-2 size-3 shrink-0 text-amber-400" />
 							{/if}
 						</DropdownMenu.DropdownMenuItem>
-						<p class="px-2 pb-1 pt-0.5 text-[10px] text-muted-foreground/60">
+						<p class="px-2 pt-0.5 pb-1 text-[10px] text-muted-foreground/60">
 							Testnet: good for simple tasks. Use OpenAI for complex work.
 						</p>
 					{/if}

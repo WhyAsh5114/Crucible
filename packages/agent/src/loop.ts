@@ -105,14 +105,14 @@ class OgRouterError extends Error {
  * See the Router error reference:
  * https://docs.0g.ai/developer-hub/building-on-0g/compute-network/router/errors
  */
-function classifyRouterError(status: number, body: string): FallbackReason {
+export function classifyRouterError(status: number, body: string): FallbackReason {
   if (status === 429) return 'rate_limited';
   if (status === 402 || /insufficient\s+balance/iu.test(body)) return 'balance_exhausted';
   return 'provider_unavailable';
 }
 
 /** Shape of the 0G Compute Router's trailing `x_0g_trace` SSE chunk. */
-type OgTrace = {
+export type OgTrace = {
   request_id?: string;
   provider?: string;
   billing?: { input_cost?: string; output_cost?: string; total_cost?: string };
@@ -126,7 +126,7 @@ type OgTrace = {
  * crash. Filtered chunks are forwarded to `onTrace` so billing/attestation
  * data can still be surfaced in the inference_receipt event.
  */
-function filterOgTraceFromStream(
+export function filterOgTraceFromStream(
   body: ReadableStream<Uint8Array>,
   onTrace?: (t: OgTrace) => void,
 ): ReadableStream<Uint8Array> {
@@ -186,7 +186,7 @@ function filterOgTraceFromStream(
  * Recursively unwrap an error to find an `OgRouterError`. AI SDK wraps fetch
  * errors in `APICallError` / cause chains, so direct `instanceof` checks miss.
  */
-function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
+export function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
   let current: unknown = err;
   for (let depth = 0; depth < 8 && current; depth++) {
     if (current instanceof OgRouterError) return current.fallbackReason;
@@ -583,6 +583,12 @@ export async function runAgentTurn(
   // (request_id, provider, billing, and tee_verified when supported) so the
   // UI has the full verifiable receipt — not just the request id.
   const isOg = config.provider === '0g-compute';
+  if (isOg && !ogTraceRef.value) {
+    console.warn(
+      '[agent] 0G Compute turn completed without an x_0g_trace receipt — ' +
+        'attestation will be null on this inference receipt.',
+    );
+  }
   emit({
     ...baseEvent(),
     type: 'inference_receipt',

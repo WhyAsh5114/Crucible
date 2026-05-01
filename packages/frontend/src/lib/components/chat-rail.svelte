@@ -102,10 +102,7 @@
 			</div>
 		</div>
 		<div class="mt-1.5">
-			<ModelPicker
-				value={selectedModel}
-				onchange={(sel) => (selectedModel = sel)}
-			/>
+			<ModelPicker value={selectedModel} onchange={(sel) => (selectedModel = sel)} />
 		</div>
 	</header>
 

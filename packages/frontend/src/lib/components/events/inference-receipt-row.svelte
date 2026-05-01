@@ -84,7 +84,7 @@
 			<button
 				type="button"
 				onclick={() => (expanded = !expanded)}
-				class="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted/40 focus:outline-none focus:ring-1 focus:ring-ring"
+				class="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-muted/40 focus:ring-1 focus:ring-ring focus:outline-none"
 				title="Click to {expanded ? 'hide' : 'show'} the full x_0g_trace"
 				aria-expanded={expanded}
 			>
@@ -97,7 +97,7 @@
 			class="mt-2 max-h-64 overflow-auto rounded border border-border bg-muted/30 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground">{JSON.stringify(
 				trace,
 				null,
-				2,
+				2
 			)}</pre>
 	{/if}
 </EventFrame>

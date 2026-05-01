@@ -243,7 +243,10 @@ function createKvService(cfg: KvConfig): MemoryService {
     const nodes = await getNodes();
     const flowAddress = await getFlowAddress();
     const flow = getFlowContract(flowAddress, signer);
-    const batcher = new Batcher(1, nodes, flow, cfg.rpcUrl);
+    // Use Date.now() as the batch version so each write is strictly greater
+    // than the previous one — the 0G KV indexer silently discards batches
+    // whose version is not strictly greater than the stream's current version.
+    const batcher = new Batcher(Date.now(), nodes, flow, cfg.rpcUrl);
     const streamId = streamIdForScope(cfg, pattern.scope);
     const key = encodeKey(pattern.id);
     const value = new Uint8Array(Buffer.from(JSON.stringify(pattern), 'utf-8'));
@@ -255,18 +258,51 @@ function createKvService(cfg: KvConfig): MemoryService {
   async function readAllPatterns(scope: 'local' | 'mesh'): Promise<StoredPattern[]> {
     const streamId = streamIdForScope(cfg, scope);
     const iterator = kvClient.newIterator(streamId);
-    const seekErr = await iterator.seekToFirst();
-    if (seekErr) throw new Error(`0G KV iterator seek failed: ${seekErr.message}`);
     const out: StoredPattern[] = [];
+
+    let seekErr: Error | null;
+    try {
+      seekErr = await iterator.seekToFirst();
+    } catch (err) {
+      // Network error or KV node unavailable — return empty rather than
+      // failing the whole recall.
+      console.warn(`[mcp-memory] KV seekToFirst threw for scope="${scope}": ${String(err)}`);
+      return out;
+    }
+
+    if (seekErr) {
+      // Stream is empty, not yet indexed by the KV node, or temporarily
+      // unavailable. Return empty so a single bad scope doesn't block the
+      // other scope's results from being returned.
+      console.warn(`[mcp-memory] KV seekToFirst error scope="${scope}": ${seekErr.message}`);
+      return out;
+    }
+
     while (iterator.valid()) {
       const pair = iterator.getCurrentPair();
       if (pair) {
-        const json = decodeBase64ToString(pair.data);
-        out.push(JSON.parse(json) as StoredPattern);
+        try {
+          const json = decodeBase64ToString(pair.data);
+          out.push(JSON.parse(json) as StoredPattern);
+        } catch {
+          // Malformed entry — skip and continue iteration.
+        }
       }
-      const nextErr = await iterator.next();
-      if (nextErr) throw new Error(`0G KV iterator next failed: ${nextErr.message}`);
+
+      let nextErr: Error | null;
+      try {
+        nextErr = await iterator.next();
+      } catch (err) {
+        console.warn(`[mcp-memory] KV iterator.next() threw for scope="${scope}": ${String(err)}`);
+        break;
+      }
+      if (nextErr) {
+        // Unexpected error during traversal — return what we have so far.
+        console.warn(`[mcp-memory] KV iterator error scope="${scope}": ${nextErr.message}`);
+        break;
+      }
     }
+
     return out;
   }
 
