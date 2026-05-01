@@ -20,6 +20,10 @@ import {
   ApiErrorSchema,
   StreamIdSchema,
   AgentEventSchema,
+  ChatSessionListResponseSchema,
+  ChatSessionCreateRequestSchema,
+  ChatSessionRenameRequestSchema,
+  ChatSessionDeleteResponseSchema,
   type TemplateState,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
@@ -36,7 +40,7 @@ import {
   removeWorkspaceContainer,
 } from '../lib/runtime-docker';
 import { publishAgentEvent, nextAgentSeq, warmAgentSeq } from '../lib/agent-bus';
-import { readChatHistory } from '../lib/chat-log';
+import { readChatHistory, migrateLegacyChatLog, disposeChatLog } from '../lib/chat-log';
 import { requireSession } from '../lib/auth';
 import { cancelAgentTurn } from '../lib/agent-cancel';
 import { loopbackFetch } from '../lib/loopback-fetch';
@@ -209,6 +213,95 @@ const ChatHistoryResponseSchema = z.object({
   events: z.array(AgentEventSchema),
 });
 
+// ── Session route definitions ────────────────────────────────────────────────
+
+const sessionParams = z.object({ id: WorkspaceIdSchema });
+const sessionItemParams = z.object({ id: WorkspaceIdSchema, sessionId: z.string() });
+
+const listSessionsRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/sessions',
+  request: { params: sessionParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ChatSessionListResponseSchema } },
+      description: 'List of chat sessions for the workspace',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+  },
+});
+
+const createSessionRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/sessions',
+  request: {
+    params: sessionParams,
+    body: {
+      content: { 'application/json': { schema: ChatSessionCreateRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { 'application/json': { schema: ChatSessionListResponseSchema } },
+      description: 'Session created; returns full updated session list',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+  },
+});
+
+const renameSessionRoute = createRoute({
+  method: 'patch',
+  path: '/workspace/{id}/sessions/{sessionId}',
+  request: {
+    params: sessionItemParams,
+    body: {
+      content: { 'application/json': { schema: ChatSessionRenameRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ChatSessionListResponseSchema } },
+      description: 'Session renamed; returns full updated session list',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+  },
+});
+
+const deleteSessionRoute = createRoute({
+  method: 'delete',
+  path: '/workspace/{id}/sessions/{sessionId}',
+  request: { params: sessionItemParams },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ChatSessionDeleteResponseSchema } },
+      description: 'Session deleted',
+    },
+    400: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Last session cannot be deleted',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+  },
+});
+
 const CancelAgentResponseSchema = z.object({
   cancelled: z.boolean(),
 });
@@ -244,11 +337,12 @@ const getChatHistoryRoute = createRoute({
   path: '/workspace/{id}/chat/history',
   request: {
     params: z.object({ id: WorkspaceIdSchema }),
+    query: z.object({ sessionId: z.string().optional() }),
   },
   responses: {
     200: {
       content: { 'application/json': { schema: ChatHistoryResponseSchema } },
-      description: 'Persisted agent event history for the workspace',
+      description: 'Persisted agent event history for the session',
     },
     400: {
       content: { 'application/json': { schema: ApiErrorSchema } },
@@ -784,23 +878,27 @@ export const workspaceApi = workspaceApiBase
     try {
       const wf = await writeWorkspaceFile(row.id, filePath, content, workspaceDir);
 
-      // Lift seq counter past any persisted events from previous runs so we
-      // don't collide with seq numbers already on disk after a hot reload.
-      await warmAgentSeq(row.id);
-
-      // Publish a file_write event so SSE subscribers (e.g. the editor)
-      // see the change without polling.
-      const streamId = StreamIdSchema.parse(row.id);
-      publishAgentEvent(row.id, {
-        streamId,
-        seq: nextAgentSeq(row.id),
-        emittedAt: Date.now(),
-        type: 'file_write',
-        path: wf.path,
-        lang: wf.lang,
-        hash: wf.hash,
-        content: wf.content,
+      // Publish a file_write event to the most-recently-active session so SSE
+      // subscribers (e.g. the editor pane) see the change without polling.
+      const activeSession = await prisma.chatSession.findFirst({
+        where: { workspaceId: row.id },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
       });
+      if (activeSession) {
+        await warmAgentSeq(row.id, activeSession.id);
+        const streamId = StreamIdSchema.parse(row.id);
+        publishAgentEvent(row.id, activeSession.id, {
+          streamId,
+          seq: nextAgentSeq(row.id, activeSession.id),
+          emittedAt: Date.now(),
+          type: 'file_write',
+          path: wf.path,
+          lang: wf.lang,
+          hash: wf.hash,
+          content: wf.content,
+        });
+      }
 
       return c.json(FileWriteResponseSchema.parse(wf), 200);
     } catch (error) {
@@ -812,6 +910,7 @@ export const workspaceApi = workspaceApiBase
   })
   .openapi(getChatHistoryRoute, async (c) => {
     const { id } = c.req.valid('param');
+    const { sessionId: rawSessionId } = c.req.valid('query');
     const userId = c.get('userId');
 
     const workspace = await prisma.workspace.findUnique({
@@ -822,8 +921,29 @@ export const workspaceApi = workspaceApiBase
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
+    // Resolve which session to read.
+    let sessionId: string | null = null;
+    if (rawSessionId) {
+      const sess = await prisma.chatSession.findUnique({
+        where: { id: rawSessionId },
+        select: { id: true, workspaceId: true },
+      });
+      if (sess && sess.workspaceId === id) sessionId = sess.id;
+    } else {
+      const latest = await prisma.chatSession.findFirst({
+        where: { workspaceId: id },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      });
+      sessionId = latest?.id ?? null;
+    }
+
+    if (!sessionId) {
+      return c.json(ChatHistoryResponseSchema.parse({ events: [] }), 200);
+    }
+
     try {
-      const events = await readChatHistory(id);
+      const events = await readChatHistory(id, sessionId);
       return c.json(ChatHistoryResponseSchema.parse({ events }), 200);
     } catch (err) {
       console.warn(
@@ -847,6 +967,139 @@ export const workspaceApi = workspaceApiBase
 
     const cancelled = cancelAgentTurn(id);
     return c.json(CancelAgentResponseSchema.parse({ cancelled }), 200);
+  })
+  // ── Session CRUD ──────────────────────────────────────────────────────────
+  .openapi(listSessionsRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    let sessions = await prisma.chatSession.findMany({
+      where: { workspaceId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Auto-migrate legacy chat.jsonl → first session on first load.
+    if (sessions.length === 0) {
+      const created = await prisma.chatSession.create({
+        data: { workspaceId: id, title: 'Chat 1' },
+      });
+      // Attempt to rename the legacy file; silently ok if not present.
+      await migrateLegacyChatLog(id, created.id);
+      sessions = [created];
+    }
+
+    return c.json(
+      ChatSessionListResponseSchema.parse({
+        sessions: sessions.map((s) => ({
+          ...s,
+          createdAt: s.createdAt.getTime(),
+          updatedAt: s.updatedAt.getTime(),
+        })),
+      }),
+      200,
+    );
+  })
+  .openapi(createSessionRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { title } = c.req.valid('json');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const count = await prisma.chatSession.count({ where: { workspaceId: id } });
+    const resolvedTitle = title ?? `Chat ${count + 1}`;
+    await prisma.chatSession.create({ data: { workspaceId: id, title: resolvedTitle } });
+
+    const sessions = await prisma.chatSession.findMany({
+      where: { workspaceId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    return c.json(
+      ChatSessionListResponseSchema.parse({
+        sessions: sessions.map((s) => ({
+          ...s,
+          createdAt: s.createdAt.getTime(),
+          updatedAt: s.updatedAt.getTime(),
+        })),
+      }),
+      201,
+    );
+  })
+  .openapi(renameSessionRoute, async (c) => {
+    const { id, sessionId } = c.req.valid('param');
+    const { title } = c.req.valid('json');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const session = await prisma.chatSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.workspaceId !== id) {
+      return c.json(createApiErrorBody('not_found', 'Session not found'), 404);
+    }
+
+    await prisma.chatSession.update({ where: { id: sessionId }, data: { title } });
+
+    const sessions = await prisma.chatSession.findMany({
+      where: { workspaceId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    return c.json(
+      ChatSessionListResponseSchema.parse({
+        sessions: sessions.map((s) => ({
+          ...s,
+          createdAt: s.createdAt.getTime(),
+          updatedAt: s.updatedAt.getTime(),
+        })),
+      }),
+      200,
+    );
+  })
+  .openapi(deleteSessionRoute, async (c) => {
+    const { id, sessionId } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const session = await prisma.chatSession.findUnique({ where: { id: sessionId } });
+    if (!session || session.workspaceId !== id) {
+      return c.json(createApiErrorBody('not_found', 'Session not found'), 404);
+    }
+
+    const count = await prisma.chatSession.count({ where: { workspaceId: id } });
+    if (count <= 1) {
+      return c.json(createApiErrorBody('bad_request', 'Cannot delete the last chat session'), 400);
+    }
+
+    await prisma.chatSession.delete({ where: { id: sessionId } });
+    disposeChatLog(id, sessionId);
+
+    return c.json(ChatSessionDeleteResponseSchema.parse({ id: sessionId, deleted: true }), 200);
   })
   .get('/workspace/:id/devtools/events', async (c) => {
     const id = c.req.param('id');
