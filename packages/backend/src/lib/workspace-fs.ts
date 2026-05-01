@@ -63,22 +63,8 @@ pragma solidity ^0.8.20;
 /// @title  DemoVault
 /// @notice Crucible workspace scaffold — accepts ETH deposits from anyone;
 ///         only the owner may withdraw.
-///
-/// SEEDED BUG
-///   The \`onlyOwner\` modifier checks \`pendingOwner\` instead of \`owner\`.
-///   Because \`pendingOwner\` is address(0) at deploy time, every call to
-///   \`withdraw()\` reverts with "DemoVault: caller is not owner" — even when
-///   the deployer calls it.
-///
-/// FIX
-///   Change \`pendingOwner\` to \`owner\` on the require line inside onlyOwner.
-///
-/// DEMO PROMPT
-///   "Deposit 1 ETH into the vault, then withdraw it to the owner.
-///    Fix any issues that come up."
 contract DemoVault {
     address public owner;
-    /// @dev Intentionally unset (address(0)) — see SEEDED BUG above.
     address public pendingOwner;
 
     uint64 public constant COOLDOWN = 60; // seconds between withdrawals
@@ -89,7 +75,6 @@ contract DemoVault {
     event Deposited(address indexed by, uint256 amount, uint256 vaultBalance);
     event Withdrawn(address indexed to, uint256 amount);
 
-    /// @dev BUG: checks \`pendingOwner\` (address(0)) instead of \`owner\`.
     modifier onlyOwner() {
         require(msg.sender == pendingOwner, "DemoVault: caller is not owner");
         _;
@@ -108,7 +93,6 @@ contract DemoVault {
     }
 
     /// @notice Withdraw ETH to the owner. Enforces a 60-second cooldown.
-    /// @dev    Will always revert at the onlyOwner check due to the bug above.
     function withdraw(uint256 amount) external onlyOwner {
         require(amount > 0, "DemoVault: zero amount");
         require(address(this).balance >= amount, "DemoVault: insufficient balance");
@@ -298,7 +282,6 @@ import {
   useConnect,
   useDisconnect,
   useBalance,
-  useReadContract,
   useWaitForTransactionReceipt,
   useWriteContract,
 } from 'wagmi';
@@ -457,18 +440,6 @@ export default function App() {
   const { manifest, error: manifestError } = useContractsManifest();
   const vault = manifest?.vault;
 
-  // Vault's total ETH balance.
-  const { data: vaultBalance, refetch: refetchVaultBalance } = useBalance({
-    address: vault?.address,
-  });
-
-  // User's recorded deposit balance inside the vault mapping.
-  const { data: userDeposit, refetch: refetchUserDeposit } = useReadContract(
-    vault && address
-      ? { address: vault.address, abi: vault.abi, functionName: 'balances', args: [address] }
-      : undefined,
-  );
-
   // Auto-connect to the Crucible bridge on first load. There's only ever one
   // connector configured (filtered by RDNS in config.ts), so the user never
   // sees a wallet picker.
@@ -492,11 +463,9 @@ export default function App() {
 
   useEffect(() => {
     if (isMined) {
-      void refetchVaultBalance();
       void refetchWalletBalance();
-      void refetchUserDeposit();
     }
-  }, [isMined, refetchVaultBalance, refetchWalletBalance, refetchUserDeposit]);
+  }, [isMined, refetchWalletBalance]);
 
   function handleDeposit() {
     if (!vault) return;
@@ -509,9 +478,6 @@ export default function App() {
     });
   }
 
-  // NOTE: withdraw will revert with "DemoVault: caller is not owner" due to
-  // the seeded bug in onlyOwner. That revert is the demo trigger for the
-  // agent self-healing loop.
   function handleWithdraw() {
     if (!vault) return;
     resetWrite();
@@ -529,11 +495,6 @@ export default function App() {
     <div style={styles.page}>
       <div style={styles.card}>
         <h1 style={styles.title}>DemoVault</h1>
-        <p style={styles.hint}>
-          Workspace scaffold. <strong>Deposit</strong> sends 0.1 ETH to the vault.{' '}
-          <strong>Withdraw</strong> (owner-only) will revert — that's the bug for the
-          self-healing agent to find and fix.
-        </p>
 
         {isConnected && address ? (
           <>
@@ -555,18 +516,6 @@ export default function App() {
             ) : null}
 
             <div style={styles.counterBox}>
-              <div>
-                <div style={styles.label}>Vault balance</div>
-                <div style={styles.counterValue}>
-                  {vaultBalance ? vaultBalance.formatted : vault ? '…' : '—'}
-                </div>
-                <div style={{ ...styles.label, marginTop: '0.6rem' }}>Your deposit</div>
-                <div style={{ fontSize: '0.85rem', marginTop: '0.15rem' }}>
-                  {userDeposit !== undefined
-                    ? \`\${(Number(userDeposit as bigint) / 1e18).toFixed(4)} ETH\`
-                    : '—'}
-                </div>
-              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <button
                   style={styles.button}
