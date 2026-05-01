@@ -119,51 +119,80 @@ export class AgentStream {
 	}
 
 	private async pump(workspaceId: string, token: number, signal: AbortSignal): Promise<void> {
-		try {
-			const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
-			const response = await this.fetchImpl(url.toString(), {
-				signal,
-				credentials: 'include',
-				headers: { Accept: 'text/event-stream' }
-			});
+		// Retry transient stream failures a few times before giving up. Browser
+		// `fetch` can throw vague "Error in input stream" / "network error"
+		// when a backend hot-reload momentarily kills the SSE connection — the
+		// agent isn't actually broken, the connection just needs reopening.
+		let attempt = 0;
+		const MAX_ATTEMPTS = 5;
 
-			if (token !== this.startToken) return;
-			if (!response.ok || !response.body) {
-				this.status = 'error';
-				this.error = `Agent stream HTTP ${response.status}`;
-				return;
-			}
+		while (true) {
+			attempt += 1;
+			try {
+				const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
+				const response = await this.fetchImpl(url.toString(), {
+					signal,
+					credentials: 'include',
+					headers: { Accept: 'text/event-stream' }
+				});
 
-			this.status = 'idle';
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
 				if (token !== this.startToken) return;
-				buffer += decoder.decode(value, { stream: true });
-
-				// SSE frames are separated by a blank line. Each frame is one or
-				// more `field: value` lines. We only care about `data:` payloads.
-				let sep: number;
-				while ((sep = buffer.indexOf('\n\n')) >= 0) {
-					const frame = buffer.slice(0, sep);
-					buffer = buffer.slice(sep + 2);
-					this.handleFrame(parseSseData(frame));
+				if (!response.ok || !response.body) {
+					// HTTP errors are usually permanent (401 unauthenticated, 404
+					// workspace gone). Don't retry those.
+					this.status = 'error';
+					this.error = `Agent stream HTTP ${response.status}`;
+					return;
 				}
-			}
 
-			// Server closed the stream cleanly.
-			if (token === this.startToken) this.status = 'closed';
-		} catch (err) {
-			// AbortError is the normal stop() path — not an error.
-			if (signal.aborted) return;
-			if (token !== this.startToken) return;
-			this.status = 'error';
-			this.error = err instanceof Error ? err.message : 'Failed to read agent stream';
+				this.status = 'idle';
+				attempt = 0; // reset retry budget once we have a healthy stream
+
+				const reader = response.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = '';
+
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					if (token !== this.startToken) return;
+					buffer += decoder.decode(value, { stream: true });
+
+					// SSE frames are separated by a blank line. Each frame is one or
+					// more `field: value` lines. We only care about `data:` payloads.
+					let sep: number;
+					while ((sep = buffer.indexOf('\n\n')) >= 0) {
+						const frame = buffer.slice(0, sep);
+						buffer = buffer.slice(sep + 2);
+						this.handleFrame(parseSseData(frame));
+					}
+				}
+
+				// Server closed the stream cleanly. Try to re-open — the bus is
+				// long-lived even if a single connection drops.
+				if (token !== this.startToken) return;
+				this.status = 'connecting';
+				await delay(500);
+				continue;
+			} catch (err) {
+				// AbortError is the normal stop() path — not an error.
+				if (signal.aborted) return;
+				if (token !== this.startToken) return;
+
+				const message = err instanceof Error ? err.message : 'Failed to read agent stream';
+				console.warn(`[agent-stream] connection failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
+
+				if (attempt >= MAX_ATTEMPTS) {
+					this.status = 'error';
+					this.error = message;
+					return;
+				}
+
+				// Backoff before retry — gives a hot-reloading backend time to
+				// come back up before we give up entirely.
+				this.status = 'connecting';
+				await delay(Math.min(500 * 2 ** (attempt - 1), 4000));
+			}
 		}
 	}
 
@@ -185,11 +214,14 @@ export class AgentStream {
 		}
 		const incoming = result.data;
 
-		// Drive the streaming/idle flag from event types. `inference_receipt`
-		// marks the end of a turn; anything else mid-turn means the agent is
-		// still producing.
+		// Drive the streaming/idle flag from event types. Both `inference_receipt`
+		// and `done` mark turn boundaries — `done` always lands last so it must
+		// also flip the status back to idle, otherwise the cancel button + the
+		// "streaming" status pill stay visible after the model has finished.
+		// Anything else mid-turn means the agent is still producing.
 		if (this.status !== 'error' && this.status !== 'closed') {
-			this.status = incoming.type === 'inference_receipt' ? 'idle' : 'streaming';
+			const isTerminal = incoming.type === 'inference_receipt' || incoming.type === 'done';
+			this.status = isTerminal ? 'idle' : 'streaming';
 		}
 
 		// Accumulate consecutive thinking deltas into a single event so the chat
@@ -240,6 +272,10 @@ export class AgentStream {
 		}
 		this.events.push(incoming);
 	}
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
