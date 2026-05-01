@@ -9,6 +9,8 @@ import { AddressSchema, BigIntStringSchema, HashSchema, HexSchema } from '../pri
 export const ListAccountsInputSchema = z.object({});
 export const ListAccountsOutputSchema = z.object({
   accounts: z.array(WalletAccountSchema),
+  /** Label of the currently-active account (from .crucible/state.json). Null if never set. */
+  activeAccountLabel: z.string().nullable(),
 });
 export type ListAccountsOutput = z.infer<typeof ListAccountsOutputSchema>;
 
@@ -24,7 +26,8 @@ const TxToSignSchema = z.object({
   value: BigIntStringSchema.optional(),
   gas: BigIntStringSchema.optional(),
   nonce: z.number().int().nonnegative().optional(),
-  chainId: z.number().int().positive(),
+  /** EIP-155 chain ID. Optional for local Hardhat txs — the node injects it automatically. */
+  chainId: z.number().int().positive().optional(),
 });
 export type TxToSign = z.infer<typeof TxToSignSchema>;
 
