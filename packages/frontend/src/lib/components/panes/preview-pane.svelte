@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import type { WorkspaceState } from '@crucible/types';
 	import { createEip1193Bridge } from '$lib/eip1193-bridge';
+	import { getWalletStore } from '$lib/state/wallet.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 
 	interface Props {
@@ -9,6 +10,7 @@
 	}
 
 	let { workspace }: Props = $props();
+	const wallet = getWalletStore();
 
 	let url = $derived(workspace?.previewUrl ?? null);
 	let iframeEl = $state<HTMLIFrameElement | null>(null);
@@ -35,7 +37,7 @@
 
 		if (!iframeEl || !workspaceId) return;
 
-		destroyBridge = createEip1193Bridge(workspaceId, iframeEl, hexChainId);
+		destroyBridge = createEip1193Bridge(workspaceId, iframeEl, hexChainId, wallet);
 	});
 
 	onDestroy(() => {
@@ -52,8 +54,8 @@
 	{:else if !url}
 		<EmptyState
 			variant="degraded"
-			title="Preview not ready"
-			description="The workspace runtime hasn't reported a ready preview URL yet. The dev server may still be booting."
+			title="Preview unavailable"
+			description="The preview dev server isn't running. Reload the workspace to retry."
 		/>
 	{:else}
 		<iframe

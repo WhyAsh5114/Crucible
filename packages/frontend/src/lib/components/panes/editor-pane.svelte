@@ -4,12 +4,15 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FileTree from '$lib/components/file-tree.svelte';
 	import * as Resizable from '$lib/components/ui/resizable';
+	import { getAgentStream } from '$lib/state/agent-stream.svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
 		workspace: WorkspaceState | null;
 	}
 
 	let { workspace }: Props = $props();
+	const stream = getAgentStream();
 
 	let host: HTMLDivElement | null = $state(null);
 	let editor = $state<{
@@ -17,7 +20,29 @@
 		setDoc(content: string, lang: WorkspaceFile['lang']): void;
 	} | null>(null);
 
-	let files = $derived<WorkspaceFile[]>(workspace?.files ?? []);
+	// Merge the workspace's initial snapshot with live `file_write` events from
+	// the agent stream so the editor + file tree update the moment the agent
+	// writes a file — without a manual refresh. The snapshot from
+	// `getWorkspace()` is only fresh on mount; everything after relies on SSE.
+	// `file_write.content` is omitted for very large files (per the schema);
+	// in that case we keep the snapshot version and bump `modifiedAt` so the
+	// file tree at least reflects that something changed.
+	let files = $derived.by<WorkspaceFile[]>(() => {
+		const map = new SvelteMap<string, WorkspaceFile>();
+		for (const f of workspace?.files ?? []) map.set(f.path, f);
+		for (const ev of stream.events) {
+			if (ev.type !== 'file_write') continue;
+			const existing = map.get(ev.path);
+			map.set(ev.path, {
+				path: ev.path,
+				content: ev.content ?? existing?.content ?? '',
+				lang: ev.lang,
+				hash: ev.hash,
+				modifiedAt: ev.emittedAt
+			});
+		}
+		return [...map.values()];
+	});
 	let activePath = $state<string | null>(null);
 	let activeFile = $derived<WorkspaceFile | null>(
 		files.find((f) => f.path === activePath) ?? files[0] ?? null
