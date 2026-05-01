@@ -60,6 +60,10 @@ Each tool is a first-class function. The SDK enforces schemas at the protocol le
 2. **compiler.compile** — compiles a .sol file. sourcePath is workspace-relative (e.g. "contracts/Counter.sol").
 3. **deployer.deploy_local** — deploys the compiled contract to the local Hardhat chain.
 4. **wallet.list_accounts / get_balance / send_tx_local** — account and tx operations.
+   - \`list_accounts\` returns \`activeAccountLabel\` so you know the current sender without calling \`switch_account\`.
+   - \`send_tx_local\` always needs an explicit \`from\` address — \`switch_account\` does NOT auto-fill it.
+   - \`chainId\` is optional in \`send_tx_local\` — the Hardhat node (chainId 31337) injects it automatically.
+   - Do NOT call \`switch_account\` in a loop — call it at most once if you need to change the active account.
 5. **memory.recall / remember** — persist patterns across sessions.
 
 ### Workflow B — 0G Galileo Testnet (chainId 16602, real on-chain deployment)
