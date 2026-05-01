@@ -6,6 +6,7 @@
 	import { CopyButton } from '$lib/components/ai-elements/copy-button';
 	import { cn } from '$lib/utils';
 	import type { DevtoolsEvent } from '@crucible/types';
+	import { SvelteMap } from 'svelte/reactivity';
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import XIcon from '@lucide/svelte/icons/x';
 	import RefreshCcwIcon from '@lucide/svelte/icons/refresh-ccw';
@@ -38,7 +39,7 @@
 		| { kind: 'container'; key: string; event: ContainerEvent };
 
 	let serverCounts = $derived.by(() => {
-		const counts = new Map<string, number>();
+		const counts = new SvelteMap<string, number>();
 		for (const event of stream.events) {
 			if (event.type === 'tool_call' || event.type === 'tool_result') {
 				counts.set(event.server, (counts.get(event.server) ?? 0) + 1);
@@ -93,20 +94,6 @@
 
 	function formatTime(ts: number): string {
 		return new Date(ts).toLocaleTimeString(undefined, { hour12: false });
-	}
-
-	function eventTone(
-		event: DevtoolsEvent
-	): 'neutral' | 'info' | 'success' | 'warn' | 'destructive' {
-		if (event.type === 'tool_result') return event.ok ? 'success' : 'destructive';
-		if (event.type === 'container') return 'info';
-		return 'info';
-	}
-
-	function eventLabel(event: DevtoolsEvent): string {
-		if (event.type === 'tool_call') return 'tool_call';
-		if (event.type === 'tool_result') return 'tool_result';
-		return 'container';
 	}
 
 	function groupEvents(events: DevtoolsEvent[]): DevtoolsItem[] {
@@ -285,7 +272,7 @@
 						<ServerIcon class="size-3" />
 						all
 					</Button>
-					{#each servers as server}
+					{#each servers as server (server)}
 						<Button
 							variant={selectedServer === server ? 'secondary' : 'outline'}
 							size="sm"
