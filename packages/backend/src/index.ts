@@ -10,6 +10,7 @@ import { workspaceApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
 import { modelsApi } from './api/models';
+import { shipApi } from './api/ship';
 
 export { upgradeWebSocket };
 
@@ -37,7 +38,7 @@ app.use(
       return null;
     },
     exposeHeaders: ['Content-Length'],
-    allowMethods: ['POST', 'GET', 'PUT', 'DELETE', 'OPTIONS'],
+    allowMethods: ['POST', 'GET', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
   }),
 );
@@ -58,6 +59,7 @@ const apiRoutes = app
   .route('/api', agentApi)
   .route('/api', inferenceApi)
   .route('/api', modelsApi)
+  .route('/api', shipApi)
   .route('/', terminalApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
