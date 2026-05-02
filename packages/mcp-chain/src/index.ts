@@ -350,13 +350,27 @@ app.openapi(revertRoute, async (c) => {
 
 app.openapi(mineRoute, async (c) => {
   try {
-    const { blocks } = c.req.valid('json');
+    const { blocks, seconds } = c.req.valid('json');
     const node = requireNode(WORKSPACE_ID);
-    await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
+    if (seconds !== undefined && seconds > 0) {
+      await rpc(node.rpcUrl, 'evm_increaseTime', [seconds]);
+      await rpc(node.rpcUrl, 'evm_mine', []);
+    }
+    if (blocks !== undefined && blocks > 0) {
+      await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
+    }
     const rawBlock = await rpc<string>(node.rpcUrl, 'eth_blockNumber');
     const newBlockNumber = parseInt(rawBlock, 16);
-    console.log(`[mcp-chain] mine ok  blocks=${blocks} newBlock=${newBlockNumber}`);
-    return c.json({ newBlockNumber }, 200);
+    const blockHeader = await rpc<{ timestamp: string } | null>(
+      node.rpcUrl,
+      'eth_getBlockByNumber',
+      ['latest', false],
+    );
+    const newTimestamp = blockHeader ? parseInt(blockHeader.timestamp, 16) : 0;
+    console.log(
+      `[mcp-chain] mine ok  blocks=${blocks ?? 0} seconds=${seconds ?? 0} newBlock=${newBlockNumber}`,
+    );
+    return c.json({ newBlockNumber, newTimestamp }, 200);
   } catch (err) {
     console.error(`[mcp-chain] mine error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
