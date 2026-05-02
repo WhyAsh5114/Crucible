@@ -38,7 +38,6 @@ import { createDeployerService } from './service.ts';
 import {
   SimulateBundleInputSchema,
   ExecuteTxInputSchema,
-  GetExecutionStatusInputSchema,
   SimulateBundleOutputSchema,
   ExecuteTxOutputSchema,
   ExecutionStatusOutputSchema,
