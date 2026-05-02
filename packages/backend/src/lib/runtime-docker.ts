@@ -47,6 +47,7 @@ const CONTAINER_COMPILER_PORT = 3101;
 const CONTAINER_DEPLOYER_PORT = 3102;
 const CONTAINER_WALLET_PORT = 3103;
 const CONTAINER_MEMORY_PORT = 3104;
+const CONTAINER_MESH_PORT = 3105;
 const CONTAINER_TERMINAL_PORT = 3106;
 const CONTAINER_DEVTOOLS_PORT = 3107;
 
@@ -355,6 +356,7 @@ export type WorkspaceRuntimePorts = {
   deployer: number | null;
   wallet: number | null;
   memory: number | null;
+  mesh: number | null;
   terminal: number | null;
   devtools: number | null;
 };
@@ -435,6 +437,7 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
     `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
     `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
+    `MESH_MCP_PORT=${CONTAINER_MESH_PORT}`,
     `TERMINAL_MCP_PORT=${CONTAINER_TERMINAL_PORT}`,
     `DEVTOOLS_MCP_PORT=${CONTAINER_DEVTOOLS_PORT}`,
     `WORKSPACE_ROOT=${workspaceDir}`,
@@ -493,6 +496,7 @@ export async function ensureWorkspaceContainer(
             [`${CONTAINER_DEPLOYER_PORT}/tcp`]: {},
             [`${CONTAINER_WALLET_PORT}/tcp`]: {},
             [`${CONTAINER_MEMORY_PORT}/tcp`]: {},
+            [`${CONTAINER_MESH_PORT}/tcp`]: {},
             [`${CONTAINER_TERMINAL_PORT}/tcp`]: {},
             [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: {},
           },
@@ -506,6 +510,7 @@ export async function ensureWorkspaceContainer(
               [`${CONTAINER_DEPLOYER_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_WALLET_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_MEMORY_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_MESH_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_TERMINAL_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: [{ HostPort: '' }],
             },
@@ -541,6 +546,7 @@ export async function ensureWorkspaceContainer(
     deployer: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEPLOYER_PORT) : null,
     wallet: freshInspect ? extractHostPort(freshInspect, CONTAINER_WALLET_PORT) : null,
     memory: freshInspect ? extractHostPort(freshInspect, CONTAINER_MEMORY_PORT) : null,
+    mesh: freshInspect ? extractHostPort(freshInspect, CONTAINER_MESH_PORT) : null,
     terminal: freshInspect ? extractHostPort(freshInspect, CONTAINER_TERMINAL_PORT) : null,
     devtools: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEVTOOLS_PORT) : null,
   };
@@ -568,6 +574,7 @@ export async function getWorkspaceContainerPorts(
     deployer: extractHostPort(inspect, CONTAINER_DEPLOYER_PORT),
     wallet: extractHostPort(inspect, CONTAINER_WALLET_PORT),
     memory: extractHostPort(inspect, CONTAINER_MEMORY_PORT),
+    mesh: extractHostPort(inspect, CONTAINER_MESH_PORT),
     terminal: extractHostPort(inspect, CONTAINER_TERMINAL_PORT),
     devtools: extractHostPort(inspect, CONTAINER_DEVTOOLS_PORT),
   };
