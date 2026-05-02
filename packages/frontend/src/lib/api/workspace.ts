@@ -20,7 +20,9 @@ import type {
 	ChatSessionListResponse,
 	ChatSessionCreateRequest,
 	ChatSessionRenameRequest,
-	ChatSessionDeleteResponse
+	ChatSessionDeleteResponse,
+	FileWriteRequest,
+	FileWriteResponse
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -126,6 +128,41 @@ export class WorkspaceClient {
 		}
 		const body = (await res.json()) as { cancelled: boolean };
 		return body.cancelled;
+	}
+
+	/**
+	 * Stop the workspace's preview Vite process (if any) and start a fresh
+	 * one. Returns 202 immediately; the new `previewUrl` is observable via
+	 * `getWorkspace(id)` once `previewState.phase === 'ready'`.
+	 *
+	 * Use this when the user explicitly asks for a refresh — it's the only
+	 * way to recover from a Vite that crashed silently or got into a stuck
+	 * HMR / file-watcher state.
+	 */
+	async restartPreview(workspaceId: string): Promise<{ restarted: boolean }> {
+		const res = await apiClient.api.workspace[':id'].preview.restart.$post({
+			param: { id: workspaceId }
+		});
+		if (!res.ok) {
+			throw new Error(`restartPreview failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as { restarted: boolean };
+	}
+
+	/**
+	 * Save a file in the workspace. Backend writes to disk, the file_write
+	 * SSE event flows back through the agent stream so other open tabs (and
+	 * the agent) see the change.
+	 */
+	async writeFile(workspaceId: string, req: FileWriteRequest): Promise<FileWriteResponse> {
+		const res = await apiClient.api.workspace[':id'].file.$put({
+			param: { id: workspaceId },
+			json: req
+		});
+		if (!res.ok) {
+			throw new Error(`writeFile failed: ${res.status} ${await res.text()}`);
+		}
+		return (await res.json()) as FileWriteResponse;
 	}
 
 	/** Fetch available inference providers and their models. */
