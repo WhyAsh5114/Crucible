@@ -65,7 +65,10 @@
 	</DropdownMenu.DropdownMenuTrigger>
 
 	<DropdownMenu.DropdownMenuPortal>
-		<DropdownMenu.DropdownMenuContent align="start" class="w-64 font-mono">
+		<DropdownMenu.DropdownMenuContent
+			align="start"
+			class="max-h-[60vh] w-64 overflow-y-auto font-mono"
+		>
 			<!-- 0G section -->
 			{#if loading || models?.og}
 				<DropdownMenu.DropdownMenuGroup>
