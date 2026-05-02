@@ -19,6 +19,7 @@ import { runAgentTurn, type AgentAdapter, type AgentConfig } from '@crucible/age
 import { prisma } from '../lib/prisma';
 import { createApiErrorBody } from '../lib/api-error';
 import { nextAgentSeq, publishAgentEvent, warmAgentSeq } from '../lib/agent-bus';
+import { readChatHistory } from '../lib/chat-log';
 import { collectWorkspaceFiles, workspaceHostPath, writeWorkspaceFile } from '../lib/workspace-fs';
 import { getWorkspaceContainerPorts, runtimeServiceBaseUrl } from '../lib/runtime-docker';
 import { buildOgAgentConfig } from '../lib/og-adapter';
@@ -85,6 +86,8 @@ function buildAdapter(sessionId: string): AgentAdapter {
 
     writeFile: async (workspaceId, filePath, content) =>
       writeWorkspaceFile(workspaceId, filePath, content),
+
+    getChatHistory: (workspaceId) => readChatHistory(workspaceId, sessionId),
 
     publishEvent: (workspaceId, event) => publishAgentEvent(workspaceId, sessionId, event),
 
