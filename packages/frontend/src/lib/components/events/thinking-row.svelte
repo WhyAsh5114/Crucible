@@ -10,7 +10,7 @@
 </script>
 
 <div class="px-2 py-1">
-	<Reasoning.Root class="!mb-0" defaultOpen={false}>
+	<Reasoning.Root class="!mb-0" defaultOpen={true}>
 		<Reasoning.Trigger />
 		<Reasoning.Content content={event.text} />
 	</Reasoning.Root>
