@@ -18,6 +18,7 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ApiErrorSchema,
+  MemoryPatternSchema,
   StreamIdSchema,
   AgentEventSchema,
   ChatSessionListResponseSchema,
@@ -360,6 +361,59 @@ const getChatHistoryRoute = createRoute({
 });
 
 const PurgeMemoryResponseSchema = z.object({ deleted: z.number().int().nonnegative() });
+
+const MemoryPatternsResponseSchema = z.object({
+  patterns: z.array(MemoryPatternSchema),
+});
+
+const listMemoryPatternsRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/memory/patterns',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    query: z.object({ scope: z.enum(['local', 'mesh']).optional() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MemoryPatternsResponseSchema } },
+      description: 'Memory patterns for this workspace',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready',
+    },
+  },
+});
+
+const EmbedMemoryResponseSchema = z.object({
+  embeddings: z.array(z.object({ id: z.string(), vector: z.array(z.number()) })),
+});
+
+const embedMemoryRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/memory/embed',
+  request: { params: z.object({ id: WorkspaceIdSchema }) },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: EmbedMemoryResponseSchema } },
+      description: 'Embedding vectors for all patterns',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready or embeddings unavailable',
+    },
+  },
+});
 
 const purgeMemoryRoute = createRoute({
   method: 'delete',
@@ -1150,10 +1204,137 @@ export const workspaceApi = workspaceApiBase
     const res = await loopbackFetch(url.toString(), { method: 'DELETE' });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      return c.json(createApiErrorBody('internal', `Memory purge failed: ${text}`), 500);
+      return c.json(createApiErrorBody('runtime_unavailable', `Memory purge failed: ${text}`), 503);
     }
     const body = (await res.json()) as { deleted: number };
     return c.json(PurgeMemoryResponseSchema.parse(body), 200);
+  })
+  .openapi(listMemoryPatternsRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { scope } = c.req.valid('query');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+    if (!ports?.memory) {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    }
+
+    const base = `http://127.0.0.1:${ports.memory}`;
+
+    type RawPage = { patterns: unknown[] };
+
+    if (scope) {
+      const res = await loopbackFetch(`${base}/patterns?scope=${scope}&limit=200`);
+      if (!res.ok)
+        return c.json(createApiErrorBody('runtime_unavailable', 'Memory fetch failed'), 503);
+      const body = (await res.json()) as RawPage;
+      return c.json(
+        { patterns: body.patterns } as unknown as {
+          patterns: z.infer<typeof MemoryPatternSchema>[];
+        },
+        200,
+      );
+    }
+
+    const [localRes, meshRes] = await Promise.all([
+      loopbackFetch(`${base}/patterns?scope=local&limit=200`),
+      loopbackFetch(`${base}/patterns?scope=mesh&limit=200`),
+    ]);
+    const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
+    const mesh = meshRes.ok ? ((await meshRes.json()) as RawPage).patterns : [];
+    return c.json(
+      { patterns: [...local, ...mesh] } as unknown as {
+        patterns: z.infer<typeof MemoryPatternSchema>[];
+      },
+      200,
+    );
+  })
+  .openapi(embedMemoryRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const baseUrl = process.env['OPENAI_BASE_URL']?.replace(/\/+$/u, '');
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!baseUrl || !apiKey) {
+      return c.json(
+        createApiErrorBody(
+          'runtime_unavailable',
+          'Embeddings unavailable: OPENAI_BASE_URL and OPENAI_API_KEY required',
+        ),
+        503,
+      );
+    }
+
+    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+    if (!ports?.memory) {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    }
+
+    const memBase = `http://127.0.0.1:${ports.memory}`;
+    type RawPattern = { id: string; revertSignature: string; patch: string };
+    type RawPage = { patterns: RawPattern[] };
+
+    const [localRes, meshRes] = await Promise.all([
+      loopbackFetch(`${memBase}/patterns?scope=local&limit=200`),
+      loopbackFetch(`${memBase}/patterns?scope=mesh&limit=200`),
+    ]);
+    const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
+    const mesh = meshRes.ok ? ((await meshRes.json()) as RawPage).patterns : [];
+    const allPatterns = [...local, ...mesh];
+
+    if (allPatterns.length === 0) {
+      return c.json({ embeddings: [] }, 200);
+    }
+
+    const texts = allPatterns.map((p) => `${p.revertSignature}\n${p.patch.slice(0, 500)}`);
+    const model = process.env['OPENAI_EMBED_MODEL'] ?? 'text-embedding-3-small';
+
+    let embedResponse: Response;
+    try {
+      embedResponse = await fetch(`${baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, input: texts }),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      console.warn('[workspace] embeddings request failed:', err);
+      return c.json(createApiErrorBody('runtime_unavailable', 'Embeddings request failed'), 503);
+    }
+
+    if (!embedResponse.ok) {
+      const text = await embedResponse.text().catch(() => '');
+      console.warn(`[workspace] embeddings API ${embedResponse.status}: ${text}`);
+      return c.json(
+        createApiErrorBody('runtime_unavailable', `Embeddings API error: ${embedResponse.status}`),
+        503,
+      );
+    }
+
+    const embedData = (await embedResponse.json()) as {
+      data: { index: number; embedding: number[] }[];
+    };
+    const embeddings = embedData.data.map((item) => ({
+      id: allPatterns[item.index]!.id,
+      vector: item.embedding,
+    }));
+    return c.json({ embeddings }, 200);
   })
   .get('/workspace/:id/devtools/events', async (c) => {
     const id = c.req.param('id');
