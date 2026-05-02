@@ -297,7 +297,14 @@ function createKvService(cfg: KvConfig): MemoryService {
       if (pair) {
         try {
           const json = decodeBase64ToString(pair.data);
-          out.push(JSON.parse(json) as StoredPattern);
+          const result = StoredPatternSchema.safeParse(JSON.parse(json));
+          if (result.success) {
+            out.push(result.data);
+          } else {
+            console.warn(
+              `[mcp-memory] KV entry failed schema validation for scope="${scope}", skipping`,
+            );
+          }
         } catch {
           // Malformed entry — skip and continue iteration.
         }
