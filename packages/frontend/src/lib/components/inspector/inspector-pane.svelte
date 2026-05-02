@@ -25,6 +25,7 @@
 	 * variant; for now it's effectively a no-op tag the page passes through.
 	 */
 	import { TxTraceSchema, type TxTrace, type AgentEvent } from '@crucible/types';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import { Badge } from '$lib/components/ui/badge';
@@ -80,14 +81,14 @@
 		const events = stream.events;
 		// Index tool_call by callId so we can look up the tool name when we
 		// hit a tool_result. Built lazily on the first tool_result we see.
-		let callIndex: Map<string, Extract<AgentEvent, { type: 'tool_call' }>> | null = null;
+		let callIndex: SvelteMap<string, Extract<AgentEvent, { type: 'tool_call' }>> | null = null;
 
 		for (let i = events.length - 1; i >= 0; i--) {
 			const ev = events[i]!;
 			if (ev.type === 'trace_captured') return ev.trace;
 			if (ev.type === 'tool_result' && ev.outcome.ok) {
 				if (callIndex === null) {
-					callIndex = new Map();
+					callIndex = new SvelteMap();
 					for (const e of events) {
 						if (e.type === 'tool_call') callIndex.set(e.callId, e);
 					}

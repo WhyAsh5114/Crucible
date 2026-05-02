@@ -89,7 +89,7 @@
 	let templatePickerOpen = $state(false);
 	let creating = $state(false);
 
-	function openPicker(_template?: WorkspaceTemplate): void {
+	function openPicker(): void {
 		templatePickerOpen = true;
 	}
 
@@ -221,7 +221,7 @@
 								{@const Icon = info.icon}
 								<button
 									type="button"
-									onclick={() => openPicker(info.id)}
+									onclick={() => openPicker()}
 									class="group flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 								>
 									<div class="flex items-start justify-between gap-2">
