@@ -250,7 +250,9 @@
 			selectedId = null;
 			await load();
 		} catch (err) {
-			toast.error('Purge failed', { description: err instanceof Error ? err.message : String(err) });
+			toast.error('Purge failed', {
+				description: err instanceof Error ? err.message : String(err)
+			});
 		} finally {
 			purging = false;
 		}
@@ -326,7 +328,9 @@
 		return id.slice(0, 12);
 	}
 
-	const tooltipNode = $derived(hoveredId ? (graphNodes.find((n) => n.id === hoveredId) ?? null) : null);
+	const tooltipNode = $derived(
+		hoveredId ? (graphNodes.find((n) => n.id === hoveredId) ?? null) : null
+	);
 </script>
 
 <section class="flex h-full min-h-0 flex-col bg-background">
@@ -472,9 +476,7 @@
 
 	<!-- ── Graph status bar ── -->
 	{#if view === 'graph'}
-		<div
-			class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/5 px-4 py-1"
-		>
+		<div class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/5 px-4 py-1">
 			{#if embedLoading}
 				<LoaderCircleIcon class="size-3 animate-spin text-muted-foreground/50" />
 				<span class="font-mono text-[10px] text-muted-foreground/60">computing embeddings…</span>
@@ -531,15 +533,14 @@
 						<li>
 							<div
 								class={cn(
-									'group flex flex-col gap-2 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/20 cursor-pointer',
+									'group flex cursor-pointer flex-col gap-2 border-b border-border/50 px-4 py-3 transition-colors hover:bg-muted/20',
 									selectedId === pattern.id && 'bg-muted/30'
 								)}
 								role="button"
 								tabindex="0"
 								onclick={() => (selectedId = selectedId === pattern.id ? null : pattern.id)}
 								onkeydown={(e) => {
-									if (e.key === 'Enter')
-										selectedId = selectedId === pattern.id ? null : pattern.id;
+									if (e.key === 'Enter') selectedId = selectedId === pattern.id ? null : pattern.id;
 								}}
 							>
 								<div class="flex items-center justify-between gap-2">
@@ -569,14 +570,13 @@
 									</span>
 								</div>
 
-								<p class="font-mono text-[11px] font-medium leading-snug text-foreground">
+								<p class="font-mono text-[11px] leading-snug font-medium text-foreground">
 									{truncate(pattern.revertSignature, 72)}
 								</p>
 
 								{#if patchLines(pattern.patch).length > 0}
 									<pre
-										class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed"
-									>{#each patchLines(pattern.patch) as line}<span
+										class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed">{#each patchLines(pattern.patch) as line}<span
 												class={cn(
 													'block',
 													line.startsWith('+') ? 'text-green-400' : 'text-red-400'
@@ -584,9 +584,7 @@
 											>{/each}</pre>
 								{/if}
 
-								<div
-									class="flex items-center gap-3 font-mono text-[10px] text-muted-foreground/40"
-								>
+								<div class="flex items-center gap-3 font-mono text-[10px] text-muted-foreground/40">
 									<span>◎ {truncate(pattern.provenance.authorNode, 24)}</span>
 									<span class="ml-auto truncate text-right"
 										>✓ {pattern.verificationReceipt.slice(0, 12)}…</span
@@ -622,7 +620,14 @@
 									<feMergeNode in="SourceGraphic" />
 								</feMerge>
 							</filter>
-							<pattern id="mem-grid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+							<pattern
+								id="mem-grid"
+								x="0"
+								y="0"
+								width="32"
+								height="32"
+								patternUnits="userSpaceOnUse"
+							>
 								<circle cx="1" cy="1" r="0.6" fill="rgba(255,255,255,0.05)" />
 							</pattern>
 						</defs>
@@ -686,9 +691,12 @@
 					{#if tooltipNode}
 						<div
 							class="pointer-events-none absolute z-20 max-w-56 rounded-lg border border-border/60 bg-popover/95 px-3 py-2 shadow-xl backdrop-blur-sm"
-							style="left: {Math.min(tooltipNode.x + 18, graphW - 230)}px; top: {Math.max(tooltipNode.y - 44, 4)}px"
+							style="left: {Math.min(tooltipNode.x + 18, graphW - 230)}px; top: {Math.max(
+								tooltipNode.y - 44,
+								4
+							)}px"
 						>
-							<p class="font-mono text-[10px] font-semibold leading-snug text-foreground">
+							<p class="font-mono text-[10px] leading-snug font-semibold text-foreground">
 								{truncate(tooltipNode.revertSignature, 52)}
 							</p>
 							<p class="mt-0.5 font-mono text-[9px] text-muted-foreground">
@@ -700,12 +708,13 @@
 					<!-- Selected detail panel -->
 					{#if selectedPattern}
 						<div
-							class="absolute right-0 top-0 flex h-full w-72 flex-col border-l border-border bg-background/95 backdrop-blur-sm"
+							class="absolute top-0 right-0 flex h-full w-72 flex-col border-l border-border bg-background/95 backdrop-blur-sm"
 						>
 							<div
 								class="flex shrink-0 items-center justify-between border-b border-border/60 px-3 py-2"
 							>
-								<span class="font-mono text-[11px] font-medium text-foreground">Pattern detail</span>
+								<span class="font-mono text-[11px] font-medium text-foreground">Pattern detail</span
+								>
 								<Button
 									variant="ghost"
 									size="icon-sm"
@@ -718,7 +727,7 @@
 							<div class="min-h-0 flex-1 overflow-auto px-3 py-3">
 								<dl class="flex flex-col gap-3.5 font-mono text-[11px]">
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
 											Scope
 										</dt>
 										<dd class="mt-1">
@@ -741,7 +750,7 @@
 										</dd>
 									</div>
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
 											Revert signature
 										</dt>
 										<dd class="mt-1 leading-snug text-foreground">
@@ -749,11 +758,12 @@
 										</dd>
 									</div>
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">Patch</dt>
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
+											Patch
+										</dt>
 										<dd class="mt-1">
 											<pre
-												class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 text-[10px] leading-relaxed"
-											>{#each patchLines(selectedPattern.patch, 10) as line}<span
+												class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 text-[10px] leading-relaxed">{#each patchLines(selectedPattern.patch, 10) as line}<span
 														class={cn(
 															'block',
 															line.startsWith('+') ? 'text-green-400' : 'text-red-400'
@@ -762,19 +772,21 @@
 										</dd>
 									</div>
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">Node</dt>
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
+											Node
+										</dt>
 										<dd class="mt-1 text-muted-foreground">
 											{selectedPattern.provenance.authorNode}
 										</dd>
 									</div>
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
 											Created
 										</dt>
 										<dd class="mt-1 text-muted-foreground">{timeAgo(selectedPattern.createdAt)}</dd>
 									</div>
 									<div>
-										<dt class="text-[9px] uppercase tracking-wide text-muted-foreground/50">
+										<dt class="text-[9px] tracking-wide text-muted-foreground/50 uppercase">
 											Receipt
 										</dt>
 										<dd class="mt-1 break-all text-muted-foreground/60">

@@ -336,8 +336,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-									activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'memory';
-									mainView = v as 'editor' | 'preview' | 'wallet' | 'memory';
+										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'memory';
+										mainView = v as 'editor' | 'preview' | 'wallet' | 'memory';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>

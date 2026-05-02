@@ -36,9 +36,7 @@
 					<li class="flex flex-col gap-0.5">
 						<div class="flex items-center gap-2">
 							<span class="font-mono text-[10px] text-muted-foreground">peer</span>
-							<code class="font-mono text-[10px] text-foreground"
-								>{resp.peerId.slice(0, 12)}…</code
-							>
+							<code class="font-mono text-[10px] text-foreground">{resp.peerId.slice(0, 12)}…</code>
 						</div>
 						{#if resp.patch}
 							<code
