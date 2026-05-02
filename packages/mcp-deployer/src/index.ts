@@ -32,6 +32,7 @@ import {
   TraceInputSchema,
   CallInputSchema,
   DeployOgChainInputSchema,
+  ListDeploymentsInputSchema,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerServer } from './server.ts';
 import { createDeployerService } from './service.ts';
@@ -79,6 +80,9 @@ const DeployLocalOutputWireSchema = z.object({
   address: z.string(),
   txHash: z.string(),
   gasUsed: z.string(),
+  contractName: z.string(),
+  abi: z.array(z.unknown()),
+  functions: z.array(z.string()),
 });
 
 const SimulateLocalOutputWireSchema = z.object({
@@ -146,6 +150,18 @@ const DeployOgChainOutputWireSchema = z.object({
 const SimulateBundleWireOutputSchema = SimulateBundleOutputSchema;
 const ExecuteTxWireOutputSchema = ExecuteTxOutputSchema;
 const ExecutionStatusWireOutputSchema = ExecutionStatusOutputSchema;
+
+const ListDeploymentsOutputWireSchema = z.object({
+  deployments: z.array(
+    z.object({
+      contractName: z.string(),
+      address: z.string(),
+      txHash: z.string(),
+      network: z.enum(['local', '0g-galileo']),
+      deployedAt: z.string(),
+    }),
+  ),
+});
 
 const deployLocalRoute = createRoute({
   method: 'post',
@@ -288,11 +304,26 @@ const getExecutionStatusRoute = createRoute({
   },
 });
 
+const listDeploymentsRoute = createRoute({
+  method: 'post',
+  path: '/list_deployments',
+  request: {
+    body: {
+      content: { 'application/json': { schema: ListDeploymentsInputSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: ListDeploymentsOutputWireSchema } },
+      description: 'Deployments in this session',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
 const mcpServer = createDeployerServer({
-  chainRpcUrl: CHAIN_RPC_URL,
-  workspaceRoot: WORKSPACE_ROOT,
-  compilerUrl: COMPILER_URL,
-  ...(OG_DEPLOY_PRIVATE_KEY ? { ogDeployPrivateKey: OG_DEPLOY_PRIVATE_KEY } : {}),
+  service,
   ...(KEEPERHUB_API_KEY
     ? { keeperHubApiKey: KEEPERHUB_API_KEY, keeperHubBaseUrl: KEEPERHUB_API_URL }
     : {}),
@@ -354,6 +385,7 @@ function deployerToolForPath(path: string): string | null {
   if (path === '/simulate_bundle') return 'simulate_bundle';
   if (path === '/execute_tx') return 'execute_tx';
   if (path.startsWith('/execution_status/')) return 'get_execution_status';
+  if (path === '/list_deployments') return 'list_deployments';
   return null;
 }
 
@@ -417,7 +449,9 @@ app.use('*', async (c, next) => {
 app.openapi(deployLocalRoute, async (c) => {
   try {
     const output = await service.deployLocal(c.req.valid('json'));
-    return c.json(output, 200);
+    // viem's Abi type is `readonly` but the wire schema is mutable JSONValue[].
+    // Spread to satisfy the OpenAPI handler's structural type.
+    return c.json({ ...output, abi: [...output.abi] }, 200);
   } catch (err) {
     console.error(`[mcp-deployer] deploy_local error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
@@ -502,6 +536,29 @@ app.openapi(getExecutionStatusRoute, async (c) => {
     console.error(`[mcp-deployer] get_execution_status error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
+});
+
+app.openapi(listDeploymentsRoute, async (c) => {
+  try {
+    const output = await service.listDeployments(c.req.valid('json'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-deployer] list_deployments error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+// Convenience GET endpoint used by other MCP services (e.g. mcp-wallet) to
+// resolve a contract address by name without going through the MCP transport.
+app.get('/deployments/:contractName', (c) => {
+  const contractName = c.req.param('contractName');
+  const network = c.req.query('network');
+  const validNetwork = network === 'local' || network === '0g-galileo' ? network : undefined;
+  const record = service.getDeployment(contractName, validNetwork);
+  if (!record) {
+    return c.json({ error: `No deployment found for "${contractName}"` }, 404);
+  }
+  return c.json(record, 200);
 });
 
 app.all('/mcp', (c) => transport.handleRequest(c.req.raw, { parsedBody: c.get('parsedBody') }));
