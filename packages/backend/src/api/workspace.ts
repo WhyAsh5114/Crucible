@@ -18,7 +18,6 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ApiErrorSchema,
-  StreamIdSchema,
   AgentEventSchema,
   ChatSessionListResponseSchema,
   ChatSessionCreateRequestSchema,
@@ -32,14 +31,19 @@ import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
-import { startPreview, stopPreview, getPreviewUrl, getPreviewState } from '../lib/preview-manager';
+import {
+  startPreview,
+  stopPreview,
+  getPreviewUrl,
+  getPreviewState,
+  setPreviewStarting,
+} from '../lib/preview-manager';
 import {
   ensureWorkspaceContainer,
   getWorkspaceContainerPorts,
   runtimeServiceBaseUrl,
   removeWorkspaceContainer,
 } from '../lib/runtime-docker';
-import { publishAgentEvent, nextAgentSeq, warmAgentSeq } from '../lib/agent-bus';
 import { readChatHistory, migrateLegacyChatLog, disposeChatLog } from '../lib/chat-log';
 import { requireSession } from '../lib/auth';
 import { cancelAgentTurn } from '../lib/agent-cancel';
@@ -211,6 +215,36 @@ const fileWriteRoute = createRoute({
 
 const ChatHistoryResponseSchema = z.object({
   events: z.array(AgentEventSchema),
+});
+
+// ── Preview restart route ────────────────────────────────────────────────────
+
+const PreviewRestartResponseSchema = z.object({
+  restarted: z.boolean(),
+});
+
+const restartPreviewRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/preview/restart',
+  request: { params: z.object({ id: WorkspaceIdSchema }) },
+  responses: {
+    202: {
+      content: { 'application/json': { schema: PreviewRestartResponseSchema } },
+      description: 'Preview restart accepted; poll GET /api/workspace/:id for state',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+    500: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Internal error',
+    },
+  },
 });
 
 // ── Session route definitions ────────────────────────────────────────────────
@@ -878,32 +912,73 @@ export const workspaceApi = workspaceApiBase
     try {
       const wf = await writeWorkspaceFile(row.id, filePath, content, workspaceDir);
 
-      // Publish a file_write event to the most-recently-active session so SSE
-      // subscribers (e.g. the editor pane) see the change without polling.
-      const activeSession = await prisma.chatSession.findFirst({
-        where: { workspaceId: row.id },
-        orderBy: { updatedAt: 'desc' },
-        select: { id: true },
-      });
-      if (activeSession) {
-        await warmAgentSeq(row.id, activeSession.id);
-        const streamId = StreamIdSchema.parse(row.id);
-        publishAgentEvent(row.id, activeSession.id, {
-          streamId,
-          seq: nextAgentSeq(row.id, activeSession.id),
-          emittedAt: Date.now(),
-          type: 'file_write',
-          path: wf.path,
-          lang: wf.lang,
-          hash: wf.hash,
-          content: wf.content,
-        });
-      }
-
+      // Intentionally NOT publishing a file_write AgentEvent here. The agent
+      // bus is for agent-driven activity — surfacing user keystrokes there
+      // would (a) pollute the chat timeline with rows the user didn't ask
+      // for, (b) flip the agent-stream status to `streaming` on every save,
+      // and (c) round-trip the user's own bytes back to the editor, where
+      // a stale echo would clobber whatever the user typed during the save's
+      // network flight. The agent learns about user edits the next time it
+      // reads the file through its MCP `read_file` tool.
       return c.json(FileWriteResponseSchema.parse(wf), 200);
     } catch (error) {
       return c.json(
         createApiErrorBody('internal', error instanceof Error ? error.message : 'Write failed'),
+        500,
+      );
+    }
+  })
+  .openapi(restartPreviewRoute, async (c) => {
+    // Explicit, user-initiated preview restart. Stops the existing Vite
+    // process (if any) and kicks off a fresh `startPreview` in the
+    // background. The frontend should poll `GET /api/workspace/:id` after
+    // this returns to pick up the new `previewUrl` once the Vite process
+    // is listening. We do NOT block on the new server being ready —
+    // `bun install` cold-boot can take ~30s, so this is fire-and-forget.
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const row = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true, directoryPath: true },
+    });
+    if (!row) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+    if (row.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    try {
+      stopPreview(id);
+      // Null the persisted URL so the frontend doesn't briefly render the
+      // stale URL between the restart firing and the new Vite listening.
+      await prisma.workspaceRuntime
+        .updateMany({ where: { workspaceId: id }, data: { previewUrl: null } })
+        .catch(() => undefined);
+
+      // Force the phase to `starting` *before* spawning so the next
+      // frontend poll sees a loading state — never `idle`. The old
+      // Vite's SIGTERM exit handler is now closure-guarded (see
+      // preview-manager.ts) and won't clobber this; startPreview will
+      // continue advancing the phase as it progresses.
+      setPreviewStarting(id);
+
+      const directoryPath = row.directoryPath?.startsWith('pending://')
+        ? workspaceHostPath(row.id)
+        : (row.directoryPath ?? workspaceHostPath(row.id));
+
+      void startPreview(row.id, directoryPath).catch((err) => {
+        console.warn(`[workspace ${row.id}] preview restart failed:`, err);
+      });
+
+      return c.json(PreviewRestartResponseSchema.parse({ restarted: true }), 202);
+    } catch (error) {
+      return c.json(
+        createApiErrorBody(
+          'internal',
+          error instanceof Error ? error.message : 'Preview restart failed',
+        ),
         500,
       );
     }
