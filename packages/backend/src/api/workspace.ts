@@ -822,6 +822,7 @@ export const workspaceApi = workspaceApiBase
       files,
       id: row.id,
       name: row.name,
+      template: row.template as 'counter' | 'uniswap-v3' | 'nft-mint',
       createdAt: row.createdAt.getTime(),
       previewUrl: getPreviewUrl(id) ?? row.runtime?.previewUrl ?? null,
       previewState: getPreviewState(id),
