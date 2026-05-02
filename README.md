@@ -171,6 +171,17 @@ When the user is satisfied with the local build, they click **Ship**. This is th
 
 ---
 
+## AI Tool Attribution
+
+We practiced **spec-driven development** for this project. Our human-authored architecture documents, planning files, and task lists served as the strict specifications. We then used AI as a general pair programmer throughout the entire codebase to implement those specs.
+
+Specific AI tool usage includes:
+
+- **GitHub Copilot** — Context-aware completion and scaffolding in `packages/agent/`, `packages/mcp-devtools/`, `packages/mcp-wallet/`, and `packages/mcp-chain/`.
+- **Zed** — Refactoring, doc updates, and small or low-level feature implementation in `packages/backend/`, `packages/frontend/`, `packages/mcp-deployer/`, and `docs/`.
+
+---
+
 ## Tech Stack
 
 | Layer                    | Choice                                            | Notes                                                                                             |

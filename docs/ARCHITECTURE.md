@@ -7,61 +7,76 @@
 ## System Overview
 
 ```mermaid
-graph TD
-    subgraph "Frontend (Browser - SvelteKit)"
-        U[User Prompt] --> A[Crucible Agent - OpenClaw extension]
-        A -->|writes code| E[Code Editor - CodeMirror]
-    S[Workspace Shell] -->|renders| P[Live dApp Preview]
+flowchart TD
+    %% 1. Frontend
+    subgraph Frontend ["Frontend (Browser - SvelteKit)"]
+        U([User Prompt]) --> UI[Workspace Shell]
+        UI -->|renders| P[Live dApp Preview]
         P --> T[Transaction Inspector]
-    A -->|logs + commands| TT[Terminal - xterm.js]
-    W[Embedded Dev Wallet] -->|approval state| S
+        UI -->|writes| E[Code Editor]
+        UI -->|logs| TT[Terminal]
+        W[Dev Wallet] -.->|approval state| UI
     end
 
-    subgraph "0G Network"
-        C0G[0G Compute - sealed inference]
-        S0G[0G Storage - KV memory + Log history]
+    %% 2. Control Plane & AI
+    subgraph ControlPlane ["Backend Control Plane (Node.js)"]
+        A{packages/agent <br> OpenClaw extension}
+        IR[Inference Router]
+        FS[(Workspace Filesystem)]
+        V[Preview Dev Server]
+        PTY[PTY Session Manager]
     end
 
-    OAI[OpenAI-compatible Fallback - OpenRouter or similar]
+    subgraph OGF ["0G Network"]
+        C0G[0G Compute <br> primary: qwen3.6-plus, GLM-5-FP8]
+        S0G[(0G Storage <br> KV recall + Log history)]
+    end
+    OAI[OpenAI Fallback <br> degraded mode only]
 
-    subgraph "Backend (Node.js Server)"
-      IR[Inference Router]
-      FS[Workspace Filesystem]
-      V[Preview Dev Server Manager]
-      PTY[PTY Session Manager]
-        N[Hardhat Node - local EVM, fork, snapshots]
-        M1[chain-mcp]
-        M2[compiler-mcp]
-        M3[deployer-mcp - incl. KeeperHub ship tools]
-        M4[wallet-mcp]
-        M5[memory-mcp - 0G Storage wrapper]
-        M6[mesh-mcp - AXL peer queries]
-      M7[terminal-mcp]
-        X[AXL Node - P2P knowledge mesh]
+    %% 3. Runner Container
+    subgraph Runner ["Workspace Runner Container"]
+        subgraph MCPS ["MCP Tool Boundary"]
+            M1[chain-mcp]
+            M2[compiler-mcp]
+            M3[deployer-mcp]
+            M4[wallet-mcp]
+            M5[memory-mcp]
+            M6[mesh-mcp]
+            M7[terminal-mcp]
+        end
+        N[Hardhat Node <br> local EVM]
+        X((AXL Node <br> P2P Mesh))
     end
 
-    A -->|inference| IR
-    IR -->|primary| C0G
-    IR -.->|fallback| OAI
-    A <-->|MCP over HTTP| M1
-    A <-->|MCP over HTTP| M2
-    A <-->|MCP over HTTP| M3
-    A <-->|MCP over HTTP| M4
-    A <-->|MCP over HTTP| M5
-    A <-->|MCP over HTTP| M6
-    A <-->|MCP over HTTP| M7
-    M3 -->|simulate, execute, audit via KeeperHub REST| EXT[Public Chains - Sepolia/Mainnet]
-    M5 <--> S0G
+    EXT((Public Chains <br> Sepolia/Mainnet))
+
+    %% Core UI to Agent
+    UI <==>|Control plane ↔ Runner container boundary| A
+
+    %% Inference Route
+    A -->|inference request| IR
+    IR ==>|primary path| C0G
+    IR -.->|fallback path| OAI
+
+    %% Agent to MCP Layer
+    A <==>|Agent ↔ MCP over HTTP| MCPS
+
+    %% Tool specific interactions
+    M3 -->|simulate & execute via KeeperHub| EXT
+    M5 <==>|memory read/write| S0G
     M6 <--> X
     X <-.->|peer Crucible nodes| X
-    FS --- M2
-    FS --- M3
-    FS --- V
-    FS --- PTY
-    P -->|EIP-1193 bridge postMessage| S
-    S -->|POST /workspace/:id/rpc via control plane| N
-    V -->|workspace preview URL| P
-    PTY -->|terminal WebSocket| TT
+
+    %% Background services / Wiring
+    FS -.-> M2
+    FS -.-> M3
+    FS -.-> V
+    FS -.-> PTY
+
+    P -.->|EIP-1193 bridge postMessage| UI
+    UI -.->|POST /rpc via backend| N
+    V -.->|preview URL| P
+    PTY -.->|websocket| TT
     N --- M1
     N --- M3
 ```
