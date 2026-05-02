@@ -40,7 +40,8 @@ export type RememberOutput = z.infer<typeof RememberOutputSchema>;
 
 export const ListPatternsInputSchema = z.object({
   scope: MemoryScopeSchema.optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  // coerce so query-string "200" → 200; the schema is shared between HTTP handlers and MCP tool calls
+  limit: z.coerce.number().int().positive().max(200).optional(),
   /** Opaque pagination cursor returned in the previous page. */
   cursor: z.string().min(1).optional(),
 });
