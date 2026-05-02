@@ -59,6 +59,8 @@ const ShipBodySchema = z.object({
   execute: z.boolean().optional().default(false),
   /** bundleId from a previous simulate call — skip simulation if supplied. */
   bundleId: z.string().optional(),
+  /** Chat session to publish ship events into. Falls back to most-recent session. */
+  sessionId: z.string().optional(),
 });
 
 const SimulatedResponseSchema = z.object({
@@ -270,7 +272,14 @@ const shipBase = new OpenAPIHono<ApiVars>({
 shipBase.use('*', requireSession);
 
 export const shipApi = shipBase.openapi(shipRoute, async (c) => {
-  const { workspaceId, artifactName, deployerAddress, execute, bundleId } = c.req.valid('json');
+  const {
+    workspaceId,
+    artifactName,
+    deployerAddress,
+    execute,
+    bundleId,
+    sessionId: rawSessionId,
+  } = c.req.valid('json');
   const userId = c.get('userId');
 
   // ── Auth: workspace ownership check ─────────────────────────────────────
@@ -298,7 +307,35 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
     return c.json(createApiErrorBody('runtime_unavailable', 'Compiler port not available'), 503);
   }
 
-  await warmAgentSeq(workspaceId);
+  // Resolve sessionId — use the provided one (validated) or fall back to most-recent / auto-create.
+  let sessionId: string;
+  if (rawSessionId) {
+    const existing = await prisma.chatSession.findUnique({
+      where: { id: rawSessionId },
+      select: { id: true, workspaceId: true },
+    });
+    if (!existing || existing.workspaceId !== workspaceId) {
+      return c.json(createApiErrorBody('not_found', 'Chat session not found'), 404);
+    }
+    sessionId = existing.id;
+  } else {
+    const latest = await prisma.chatSession.findFirst({
+      where: { workspaceId },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true },
+    });
+    if (latest) {
+      sessionId = latest.id;
+    } else {
+      const created = await prisma.chatSession.create({
+        data: { workspaceId, title: 'Ship' },
+        select: { id: true },
+      });
+      sessionId = created.id;
+    }
+  }
+
+  await warmAgentSeq(workspaceId, sessionId);
   const streamId = StreamIdSchema.parse(workspaceId);
 
   // ── Phase 1: simulate_bundle ─────────────────────────────────────────────
@@ -335,9 +372,9 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
     activeBundleId = simulateResult.bundleId;
 
     // Emit ship_simulated agent event
-    publishAgentEvent(workspaceId, {
+    publishAgentEvent(workspaceId, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspaceId),
+      seq: nextAgentSeq(workspaceId, sessionId),
       emittedAt: Date.now(),
       type: 'ship_simulated',
       bundleId: simulateResult.bundleId,
@@ -368,9 +405,9 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
   }
 
   // Emit ship_status
-  publishAgentEvent(workspaceId, {
+  publishAgentEvent(workspaceId, sessionId, {
     streamId,
-    seq: nextAgentSeq(workspaceId),
+    seq: nextAgentSeq(workspaceId, sessionId),
     emittedAt: Date.now(),
     type: 'ship_status',
     executionId: execStatus.executionId,
@@ -388,9 +425,9 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
   if (execStatus.status === 'confirmed' && execStatus.contractAddress) {
     await persistShipDeployment(workspaceId, execStatus, artifactName);
 
-    publishAgentEvent(workspaceId, {
+    publishAgentEvent(workspaceId, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspaceId),
+      seq: nextAgentSeq(workspaceId, sessionId),
       emittedAt: Date.now(),
       type: 'ship_confirmed',
       executionId: execStatus.executionId,
@@ -418,6 +455,7 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
   // Background: poll until confirmed, emitting events along the way.
   void pollUntilConfirmed(
     workspaceId,
+    sessionId,
     deployerPort,
     execStatus.executionId,
     artifactName,
@@ -444,6 +482,7 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
 
 async function pollUntilConfirmed(
   workspaceId: string,
+  sessionId: string,
   deployerPort: number,
   executionId: string,
   artifactName: string,
@@ -464,9 +503,9 @@ async function pollUntilConfirmed(
       continue;
     }
 
-    publishAgentEvent(workspaceId, {
+    publishAgentEvent(workspaceId, sessionId, {
       streamId,
-      seq: nextAgentSeq(workspaceId),
+      seq: nextAgentSeq(workspaceId, sessionId),
       emittedAt: Date.now(),
       type: 'ship_status',
       executionId: status.executionId,
@@ -485,9 +524,9 @@ async function pollUntilConfirmed(
         await persistShipDeployment(workspaceId, status, artifactName);
       }
 
-      publishAgentEvent(workspaceId, {
+      publishAgentEvent(workspaceId, sessionId, {
         streamId,
-        seq: nextAgentSeq(workspaceId),
+        seq: nextAgentSeq(workspaceId, sessionId),
         emittedAt: Date.now(),
         type: 'ship_confirmed',
         executionId: status.executionId,
