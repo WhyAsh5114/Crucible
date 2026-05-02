@@ -20,6 +20,7 @@
 	import TerminalPane from '$lib/components/panes/terminal-pane.svelte';
 	import WalletPane from '$lib/components/panes/wallet-pane.svelte';
 	import WorkspaceBootOverlay from '$lib/components/workspace-boot-overlay.svelte';
+	import WalletApprovalDialog from '$lib/components/wallet-approval-dialog.svelte';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
 	import MonitorIcon from '@lucide/svelte/icons/monitor';
 	import BotIcon from '@lucide/svelte/icons/bot';
@@ -47,47 +48,11 @@
 	// affected pane only.
 	let hasBootedOnce = $state(false);
 
-	// Auto-switch to the wallet tab when a new approval request lands so the
-	// user can act on it without hunting for the tab.
-	$effect(() => {
-		if (wallet.pending.length > 0 && activeMainTab !== 'wallet') {
-			activeMainTab = 'wallet';
-			if (mainView !== 'devtools') {
-				mainView = 'wallet';
-			}
-		}
-	});
-
-	// Fire a sonner toast whenever the pending queue grows so the user
-	// notices the approval request even if the wallet tab is already active
-	// (auto-switch above is a no-op in that case). Tracks the previous count
-	// rather than length alone so resolved requests don't re-toast.
-	let lastPendingCount = $state(0);
-	$effect(() => {
-		const next = wallet.pending.length;
-		if (next > lastPendingCount) {
-			const newest = wallet.pending[next - 1];
-			if (newest) {
-				const label =
-					newest.method === 'eth_sendTransaction'
-						? 'Transaction approval requested'
-						: newest.method === 'personal_sign'
-							? 'Message signature requested'
-							: 'Typed data signature requested';
-				toast(label, {
-					description: 'Open the wallet pane to review and approve.',
-					action: {
-						label: 'Review',
-						onClick: () => {
-							activeMainTab = 'wallet';
-							mainView = 'wallet';
-						}
-					}
-				});
-			}
-		}
-		lastPendingCount = next;
-	});
+	// Wallet approval requests no longer hijack the active tab: they surface
+	// as a centered Dialog (`WalletApprovalDialog` mounted below) so the user
+	// can stay on the preview/editor tab they were on, approve in place, and
+	// drop straight back into context. The previous auto-switch + toast
+	// pattern was disorienting once the dApp was driving multiple txs.
 
 	type Tone = 'idle' | 'live' | 'degraded';
 
@@ -392,6 +357,14 @@
 </script>
 
 <StatusBar {workspace} />
+
+<!--
+	Mounted at the IDE root so the approval dialog can overlay any pane
+	(editor / preview / wallet / terminal) when the dApp triggers a wallet
+	action via the bridge. Self-contained — pulls pending state from the
+	wallet store via `getWalletStore()`.
+-->
+<WalletApprovalDialog />
 
 <main class="relative min-h-0 flex-1">
 	{#if (!hasBootedOnce && !workspaceIsBooted(workspace)) || loadError}
