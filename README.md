@@ -171,6 +171,15 @@ When the user is satisfied with the local build, they click **Ship**. This is th
 
 ---
 
+## AI Tool Attribution
+
+The following AI tools were used during development to accelerate building the core infrastructure and agentic workflow:
+
+- **GitHub Copilot** — Context-aware completion and scaffolding in `packages/agent/`, `packages/mcp-devtools/`, `packages/mcp-wallet/`, and `packages/mcp-chain/`.
+- **Zed** — Refactoring, doc updates, and small or low-level feature implementation in `packages/backend/`, `packages/frontend/`, `packages/mcp-deployer/`, and `docs/`.
+
+---
+
 ## Tech Stack
 
 | Layer                    | Choice                                            | Notes                                                                                             |
