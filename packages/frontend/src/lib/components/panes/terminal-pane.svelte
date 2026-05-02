@@ -291,9 +291,7 @@
 				<XCircleIcon class="size-3 text-muted-foreground" weight="fill" />
 				<span class="text-muted-foreground">session ended</span>
 			{:else}
-				<span
-					class="size-1.5 rounded-full bg-live shadow-[0_0_6px_var(--live)]"
-					aria-hidden="true"
+				<span class="size-1.5 rounded-full bg-live shadow-[0_0_6px_var(--live)]" aria-hidden="true"
 				></span>
 				<PlugIcon class="size-3 text-live" weight="fill" />
 				<span class="text-live">connected</span>
