@@ -10,7 +10,7 @@ export const CompileInputSchema = z.object({
   /** Workspace-relative path of the source file to compile (e.g. "contracts/Counter.sol"). */
   sourcePath: z.string().min(1),
   /** Optional compiler settings override (Hardhat-subset: version, optimizer, evmVersion). */
-  settings: z.record(z.string(), z.unknown()).optional(),
+  settings: z.object({}).catchall(z.unknown()).optional(),
 });
 export const CompileOutputSchema = z.object({
   contracts: z.array(CompiledContractSchema),
