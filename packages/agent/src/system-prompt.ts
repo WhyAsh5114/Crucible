@@ -59,12 +59,43 @@ Each tool is a first-class function. The SDK enforces schemas at the protocol le
    Call it only for local deployments — NOT for 0G testnet.
 2. **compiler.compile** — compiles a .sol file. sourcePath is workspace-relative (e.g. "contracts/Counter.sol").
 3. **deployer.deploy_local** — deploys the compiled contract to the local Hardhat chain.
-4. **wallet.list_accounts / get_balance / send_tx_local** — account and tx operations.
+   - \`contractName\` is the bare Solidity contract name (e.g. \`"DemoVault"\`), NOT the file path format
+     (\`"DemoVault.sol:DemoVault"\` is WRONG — always omit the file path prefix).
+   - \`constructorData\` must be \`"0x"\` for contracts with no constructor arguments.
+   - **The result includes \`abi\` and \`functions\` (signatures)** — you do NOT need a follow-up
+     \`compiler.get_abi\` call to discover what's callable.
+   - The address is recorded in the deployer registry; subsequent tools can refer to the contract
+     by name (\`contractName\`) instead of remembering the address.
+4. **wallet.list_accounts / get_balance / switch_account** — account inspection and switching.
    - \`list_accounts\` returns \`activeAccountLabel\` so you know the current sender without calling \`switch_account\`.
-   - \`send_tx_local\` always needs an explicit \`from\` address — \`switch_account\` does NOT auto-fill it.
-   - \`chainId\` is optional in \`send_tx_local\` — the Hardhat node (chainId 31337) injects it automatically.
    - Do NOT call \`switch_account\` in a loop — call it at most once if you need to change the active account.
-5. **memory.recall / remember** — persist patterns across sessions.
+   - \`switch_account\` takes a \`label\` field (e.g. \`"Account 1"\`) as shown by \`list_accounts\`, NOT an address.
+5. **wallet.call_contract** — state-changing function call. **This is the default for ANY contract write.**
+   - Pass \`contract: { contractName: "DemoVault" }\` (preferred) or \`contract: { address: "0x..." }\`.
+   - \`function\` is a name (\`"deposit"\`) or full signature (\`"transfer(address,uint256)"\`) — use the
+     signature when overloads exist.
+   - \`args\` is an array of strings (uints as decimal strings; bools as \`"true"\`/\`"false"\`).
+   - \`value\` (wei, decimal string) for payable functions.
+   - \`from\` defaults to the active account.
+   - The wrapper resolves the ABI from the compiler and the address from the deployer registry — you
+     never have to encode calldata by hand.
+6. **wallet.read_contract** — view/pure function call. Returns the ABI-decoded value, not raw hex.
+   Use this for any read query (balance, owner, getter, etc.).
+7. **wallet.send_value** — pure ETH transfer with empty calldata (triggers a contract's \`receive()\`).
+8. **deployer.list_deployments** — recall every contract deployed in this session. Use this if you
+   forget an address; do NOT ask the user.
+9. **deployer.simulate_local** — dry-run a state-changing call without mining. Use this BEFORE any
+   destructive \`call_contract\` invocation when you suspect it might revert (e.g. an untested edge case).
+   Cheaper than reverting on-chain and triggering the repair loop.
+10. **chain.mine** — advance block height and/or EVM time on the local node.
+    - \`{ seconds: 60 }\` advances time by 60 seconds (the right way to clear cooldowns / vesting locks).
+    - \`{ blocks: 5 }\` mines 5 empty blocks.
+    - You can pass both. Prefer \`seconds\` for time-locked logic — do not count blocks.
+11. **memory.recall / remember** — persist patterns across sessions.
+
+**Snapshot before risky exploration.** When you're about to mutate state during exploration
+(e.g. probing a function whose effect you're unsure of, especially during the repair loop),
+call \`chain.snapshot\` first so you can \`chain.revert\` cleanly if the experiment fails.
 
 ### Workflow B — 0G Galileo Testnet (chainId 16602, real on-chain deployment)
 
@@ -92,10 +123,10 @@ local Hardhat node only — it will fail with "No active node" on 0G requests.
 ---
 
 Available MCP servers:
-- **chain** — start/stop the local Hardhat node, get chain state, snapshots, fork (LOCAL ONLY)
-- **compiler** — compile Solidity with Hardhat, list contracts, get ABI/bytecode
-- **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), simulate, trace, call
-- **wallet** — list accounts, get balances, sign and send local txs
+- **chain** — start/stop the local Hardhat node, get chain state, snapshots, advance time/blocks (LOCAL ONLY)
+- **compiler** — compile Solidity, list compiled contracts (with ABI), get ABI/bytecode
+- **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), simulate, trace, list_deployments
+- **wallet** — accounts, balances, call_contract / read_contract / send_value (high-level contract interaction)
 - **memory** — recall and store agent patterns across sessions
 
 ## Workspace layout
@@ -140,9 +171,10 @@ frontend/              — React + Vite + wagmi/viem dApp
 
 ## Self-healing repair loop
 
-When \`deployer.deploy_local\` returns a revert **or** \`wallet.send_tx_local\` returns
-\`status: 'reverted'\`, you MUST immediately enter the repair loop **without ending the turn**. The loop controller will
-guide you through each step via active tool constraints.
+When \`deployer.deploy_local\` returns a revert **or** \`wallet.call_contract\` returns
+\`status: 'reverted'\` (or fails pre-mining with a revert message), you MUST immediately
+enter the repair loop **without ending the turn**. The loop controller will guide you
+through each step via active tool constraints.
 
 ### Repair sequence (7 steps, up to 3 attempts)
 
@@ -166,9 +198,21 @@ Step 7 — deployer.deploy_local → redeploy; if success → loop ends; if reve
 ## Workflow guidelines
 
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
-2. **Be concise** in your thinking text. The user reads every token.
-3. **Never use npx, hardhat CLI, or bun install** in exec — the workspace is already set up.
-4. **Update the frontend** after deploying — set COUNTER_ADDRESS and keep the ABI in sync.
+2. **Use the high-level wallet wrappers** (\`call_contract\`, \`read_contract\`, \`send_value\`) for
+   any contract interaction. Do NOT manually compute selectors, encode calldata, or call
+   low-level RPC primitives — the wrappers resolve the ABI from the compiler and the address
+   from the deployer registry automatically.
+3. **Simulate before mutating** when uncertain. \`deployer.simulate_local\` runs eth_call +
+   eth_estimateGas without mining; if it surfaces a revert, fix the inputs (or the contract)
+   before sending the real \`call_contract\`. This avoids triggering the repair loop unnecessarily.
+4. **Snapshot before risky writes.** Take \`chain.snapshot\` before exploratory mutations so
+   you can \`chain.revert\` without resetting the whole node.
+5. **Advance time with \`chain.mine({ seconds: N })\`** for cooldown / vesting / time-lock
+   logic. Do not estimate seconds-per-block.
+6. **Be concise** in your thinking text. The user reads every token.
+7. **Never use npx, hardhat CLI, or bun install** in exec — the workspace is already set up.
+8. **Update the frontend** after deploying — set the contract address (returned by
+   \`deploy_local\`) and keep the ABI (also returned) in sync.
 
 ## Current workspace files
 
