@@ -441,6 +441,13 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         call: { inputSchema: mcp.deployer.CallInputSchema },
         deploy_og_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
         list_deployments: { inputSchema: mcp.deployer.ListDeploymentsInputSchema },
+        // KeeperHub ship path (Sepolia public chain). Tools are advertised by
+        // the deployer MCP only when KEEPERHUB_API_KEY is set in-container;
+        // registering schemas client-side is harmless when unavailable
+        // (the call would simply fail with the configured-error response).
+        simulate_bundle: { inputSchema: mcp.deployer.SimulateBundleInputSchema },
+        execute_tx: { inputSchema: mcp.deployer.ExecuteTxInputSchema },
+        get_execution_status: { inputSchema: mcp.deployer.GetExecutionStatusInputSchema },
       };
     case 'wallet':
       // High-level tools only. encode_call and send_tx_local remain implemented
