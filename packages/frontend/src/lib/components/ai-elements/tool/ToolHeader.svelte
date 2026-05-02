@@ -40,8 +40,7 @@
 			state === 'output-error' && 'bg-destructive'
 		)}
 	></span>
-	<span class="font-mono text-[11px] text-muted-foreground group-hover:text-foreground"
-		>{type}</span
+	<span class="font-mono text-[11px] text-muted-foreground group-hover:text-foreground">{type}</span
 	>
 	<ChevronDownIcon
 		class="ml-auto size-3 shrink-0 text-muted-foreground/40 transition-transform group-data-[state=open]:rotate-180"
