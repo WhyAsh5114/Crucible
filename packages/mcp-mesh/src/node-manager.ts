@@ -158,11 +158,29 @@ export class AXLNodeManager {
   async listPeers(): Promise<ListPeersOutput> {
     const topology = await this.axlClient.topology();
     const now = Date.now();
-    const peers: MeshPeer[] = topology.peers.map((p) => ({
-      nodeId: p.public_key as MeshPeer['nodeId'],
-      lastSeen: now as MeshPeer['lastSeen'],
-      reputation: 0.5,
-    }));
+
+    // topology.peers contains only the direct bootstrap/relay connections —
+    // useless for Crucible collaboration.  The spanning tree (topology.tree)
+    // contains every node the local AXL instance has learned about, including
+    // leaf nodes reachable only via relays.  We filter out:
+    //   • our own key            (it's us)
+    //   • direct bootstrap keys  (infrastructure, not Crucible workspaces)
+    //   • root nodes (parent === self) — relay infrastructure
+    const bootstrapKeys = new Set(topology.peers.map((p) => p.public_key));
+    bootstrapKeys.add(topology.our_public_key);
+    // Also exclude root nodes (their parent == themselves).
+    for (const entry of topology.tree) {
+      if (entry.parent === entry.public_key) bootstrapKeys.add(entry.public_key);
+    }
+
+    const peers: MeshPeer[] = topology.tree
+      .filter((entry) => !bootstrapKeys.has(entry.public_key))
+      .map((entry) => ({
+        nodeId: entry.public_key as MeshPeer['nodeId'],
+        lastSeen: now as MeshPeer['lastSeen'],
+        reputation: 0.5,
+      }));
+
     return { peers };
   }
 
@@ -181,7 +199,15 @@ export class AXLNodeManager {
     const topology = await this.axlClient.topology();
     const sendErrors: string[] = [];
 
-    for (const peer of topology.peers) {
+    // Use the same filter as listPeers: send to non-bootstrap tree entries only.
+    const bootstrapKeys = new Set(topology.peers.map((p) => p.public_key));
+    bootstrapKeys.add(topology.our_public_key);
+    for (const entry of topology.tree) {
+      if (entry.parent === entry.public_key) bootstrapKeys.add(entry.public_key);
+    }
+    const targets = topology.tree.filter((e) => !bootstrapKeys.has(e.public_key));
+
+    for (const peer of targets) {
       try {
         await this.axlClient.send(peer.public_key, payload);
       } catch (err) {

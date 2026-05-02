@@ -13,10 +13,20 @@ export interface AXLTopologyPeer {
   ipv6?: string;
 }
 
+/** Entry in the AXL spanning-tree gossip table.  Contains every node the
+ *  local node has learned about, including nodes reachable only via relays. */
+export interface AXLTreeEntry {
+  public_key: string;
+  parent: string;
+}
+
 export interface AXLTopology {
   our_public_key: string;
   our_ipv6: string;
+  /** Direct connections (bootstrap/relay nodes). */
   peers: AXLTopologyPeer[];
+  /** Full spanning-tree view — all reachable nodes including non-direct ones. */
+  tree: AXLTreeEntry[];
 }
 
 export interface AXLRecvMessage {
@@ -66,10 +76,31 @@ export class AXLClient {
       if (peersCandidates.length > 0) break;
     }
 
+    // Parse the spanning-tree gossip table ("tree" field in AXL >= 0.3).
+    const treeCandidates: AXLTreeEntry[] = [];
+    const rawTree = raw['tree'];
+    if (Array.isArray(rawTree)) {
+      for (const entry of rawTree) {
+        if (
+          typeof entry === 'object' &&
+          entry !== null &&
+          typeof (entry as Record<string, unknown>)['public_key'] === 'string' &&
+          typeof (entry as Record<string, unknown>)['parent'] === 'string'
+        ) {
+          const e = entry as Record<string, unknown>;
+          treeCandidates.push({
+            public_key: e['public_key'] as string,
+            parent: e['parent'] as string,
+          });
+        }
+      }
+    }
+
     return {
       our_public_key: String(raw['our_public_key'] ?? ''),
       our_ipv6: String(raw['our_ipv6'] ?? ''),
       peers: peersCandidates,
+      tree: treeCandidates,
     };
   }
 
