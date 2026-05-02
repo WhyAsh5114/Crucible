@@ -32,12 +32,11 @@ graph TD
         N[Hardhat Node - local EVM, fork, snapshots]
         M1[chain-mcp]
         M2[compiler-mcp]
-        M3[deployer-mcp]
+        M3[deployer-mcp - incl. KeeperHub ship tools]
         M4[wallet-mcp]
         M5[memory-mcp - 0G Storage wrapper]
         M6[mesh-mcp - AXL peer queries]
       M7[terminal-mcp]
-        K[KeeperHub MCP - ship to testnet/mainnet]
         X[AXL Node - P2P knowledge mesh]
     end
 
@@ -51,7 +50,7 @@ graph TD
     A <-->|MCP over HTTP| M5
     A <-->|MCP over HTTP| M6
     A <-->|MCP over HTTP| M7
-    A <-->|MCP over HTTP| K
+    M3 -->|simulate, execute, audit via KeeperHub REST| EXT[Public Chains - Sepolia/Mainnet]
     M5 <--> S0G
     M6 <--> X
     X <-.->|peer Crucible nodes| X
@@ -65,7 +64,6 @@ graph TD
     PTY -->|terminal WebSocket| TT
     N --- M1
     N --- M3
-    K -->|simulate, execute, audit| EXT[Public Chains - Sepolia/Base/Mainnet]
 ```
 
 ---
