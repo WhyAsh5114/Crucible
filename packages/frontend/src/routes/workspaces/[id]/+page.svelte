@@ -19,8 +19,10 @@
 	import PreviewPane from '$lib/components/panes/preview-pane.svelte';
 	import TerminalPane from '$lib/components/panes/terminal-pane.svelte';
 	import WalletPane from '$lib/components/panes/wallet-pane.svelte';
+	import MemoryPane from '$lib/components/panes/memory-pane.svelte';
 	import WorkspaceBootOverlay from '$lib/components/workspace-boot-overlay.svelte';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
+	import BrainIcon from '@lucide/svelte/icons/brain';
 	import MonitorIcon from '@lucide/svelte/icons/monitor';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import TerminalIcon from '@lucide/svelte/icons/terminal';
@@ -34,9 +36,9 @@
 	let workspace = $state<WorkspaceState | null>(null);
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
-	let activeMainTab = $state<'editor' | 'preview' | 'wallet'>('editor');
-	let mainView = $state<'editor' | 'preview' | 'wallet' | 'devtools'>('editor');
-	let previousMainTab = $state<'editor' | 'preview' | 'wallet'>('editor');
+	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'memory'>('editor');
+	let mainView = $state<'editor' | 'preview' | 'wallet' | 'memory' | 'devtools'>('editor');
+	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'memory'>('editor');
 	let loadedWorkspaceId = $state<string | null>(null);
 
 	// Auto-switch to the wallet tab when a new approval request lands so the
@@ -334,8 +336,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-										activeMainTab = v as 'editor' | 'preview' | 'wallet';
-										mainView = v as 'editor' | 'preview' | 'wallet';
+									activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'memory';
+									mainView = v as 'editor' | 'preview' | 'wallet' | 'memory';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>
@@ -369,6 +371,13 @@
 													</Badge>
 												{/if}
 											</Tabs.Trigger>
+											<Tabs.Trigger
+												value="memory"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+											>
+												<BrainIcon class="size-3 text-indigo-400" />
+												memory
+											</Tabs.Trigger>
 										</Tabs.List>
 									</div>
 									<Tabs.Content value="editor" class="m-0 min-h-0 flex-1 overflow-hidden">
@@ -379,6 +388,9 @@
 									</Tabs.Content>
 									<Tabs.Content value="wallet" class="m-0 min-h-0 flex-1 overflow-hidden">
 										<WalletPane {workspace} />
+									</Tabs.Content>
+									<Tabs.Content value="memory" class="m-0 min-h-0 flex-1 overflow-hidden">
+										<MemoryPane workspaceId={workspace.id} />
 									</Tabs.Content>
 								</Tabs.Root>
 							{/if}
