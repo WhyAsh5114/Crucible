@@ -7,69 +7,76 @@
 ## System Overview
 
 ```mermaid
-graph TD
-    subgraph "Frontend (Browser - SvelteKit)"
-        U[User Prompt] --> UI_Shell[Workspace Shell]
-        UI_Shell -->|writes code| E[Code Editor - CodeMirror]
-        UI_Shell -->|renders| P[Live dApp Preview]
+flowchart TD
+    %% 1. Frontend
+    subgraph Frontend ["Frontend (Browser - SvelteKit)"]
+        U([User Prompt]) --> UI[Workspace Shell]
+        UI -->|renders| P[Live dApp Preview]
         P --> T[Transaction Inspector]
-        UI_Shell -->|logs + commands| TT[Terminal - xterm.js]
-        W[Embedded Dev Wallet] -->|approval state| UI_Shell
+        UI -->|writes| E[Code Editor]
+        UI -->|logs| TT[Terminal]
+        W[Dev Wallet] -.->|approval state| UI
     end
 
-    subgraph "Backend Control Plane (Node.js)"
-        A[packages/agent - OpenClaw extension]
+    %% 2. Control Plane & AI
+    subgraph ControlPlane ["Backend Control Plane (Node.js)"]
+        A{packages/agent <br> OpenClaw extension}
         IR[Inference Router]
-        FS[Workspace Filesystem]
-        V[Preview Dev Server Manager]
+        FS[(Workspace Filesystem)]
+        V[Preview Dev Server]
         PTY[PTY Session Manager]
     end
 
-    subgraph "0G Network"
-        C0G[0G Compute - primary inference: qwen3.6-plus, GLM-5-FP8]
-        S0G[0G Storage - KV recall index + Log full history]
+    subgraph OGF ["0G Network"]
+        C0G[0G Compute <br> primary: qwen3.6-plus, GLM-5-FP8]
+        S0G[(0G Storage <br> KV recall + Log history)]
+    end
+    OAI[OpenAI Fallback <br> degraded mode only]
+
+    %% 3. Runner Container
+    subgraph Runner ["Workspace Runner Container"]
+        subgraph MCPS ["MCP Tool Boundary"]
+            M1[chain-mcp]
+            M2[compiler-mcp]
+            M3[deployer-mcp]
+            M4[wallet-mcp]
+            M5[memory-mcp]
+            M6[mesh-mcp]
+            M7[terminal-mcp]
+        end
+        N[Hardhat Node <br> local EVM]
+        X((AXL Node <br> P2P Mesh))
     end
 
-    OAI[OpenAI-compatible Fallback - degraded mode only]
+    EXT((Public Chains <br> Sepolia/Mainnet))
 
-    subgraph "Workspace Runner Container"
-        N[Hardhat Node - local EVM, fork, snapshots]
-        M1[chain-mcp]
-        M2[compiler-mcp]
-        M3[deployer-mcp - incl. KeeperHub ship tools]
-        M4[wallet-mcp]
-        M5[memory-mcp]
-        M6[mesh-mcp - AXL peer queries]
-        M7[terminal-mcp]
-        X[AXL Node - P2P knowledge mesh]
-    end
+    %% Core UI to Agent
+    UI <==>|Control plane ↔ Runner container boundary| A
 
-    UI_Shell <-->|Control plane ↔ Runner container boundary| A
-    A -->|inference| IR
-    IR -->|primary path| C0G
-    IR -.->|fallback| OAI
+    %% Inference Route
+    A -->|inference request| IR
+    IR ==>|primary path| C0G
+    IR -.->|fallback path| OAI
 
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M1
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M2
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M3
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M4
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M5
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M6
-    A <-->|Agent ↔ MCP tool boundary over HTTP| M7
+    %% Agent to MCP Layer
+    A <==>|Agent ↔ MCP over HTTP| MCPS
 
-    M3 -->|simulate, execute, audit via KeeperHub REST| EXT[Public Chains - Sepolia/Mainnet]
-    M5 <-->|memory read/write| S0G
+    %% Tool specific interactions
+    M3 -->|simulate & execute via KeeperHub| EXT
+    M5 <==>|memory read/write| S0G
     M6 <--> X
     X <-.->|peer Crucible nodes| X
 
-    FS --- M2
-    FS --- M3
-    FS --- V
-    FS --- PTY
-    P -->|EIP-1193 bridge postMessage| UI_Shell
-    UI_Shell -->|POST /workspace/:id/rpc via control plane| N
-    V -->|workspace preview URL| P
-    PTY -->|terminal WebSocket| TT
+    %% Background services / Wiring
+    FS -.-> M2
+    FS -.-> M3
+    FS -.-> V
+    FS -.-> PTY
+
+    P -.->|EIP-1193 bridge postMessage| UI
+    UI -.->|POST /rpc via backend| N
+    V -.->|preview URL| P
+    PTY -.->|websocket| TT
     N --- M1
     N --- M3
 ```
