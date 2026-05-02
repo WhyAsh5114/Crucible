@@ -104,7 +104,7 @@ Crucible as a **persistent autonomous developer agent** — a Digital Twin for s
 
 **Why this framing (not swarm):** `mcp-mesh` / AXL is not implemented. The swarm angle requires cross-node AXL communication, which is a hard Gensyn requirement and a Crucible stretch goal. The Digital Twin angle requires only what is already shipped: 0G Storage KV persistence + 0G Compute inference + 0G Chain deployment. No extra code needed to qualify.
 
-**⚠️ Model caveat:** The 0G Compute testnet serves qwen2.5 7b. The self-healing repair loop was designed and validated with qwen3.6 35b a3b. If qwen2.5 7b fails the repair reasoning in demo conditions, fall back to the local provider for the heal step and use 0G Chain only for deployment. Make the fallback receipt badge visible — do not hide it.
+**Model guidance:** The repair loop has been validated end-to-end on **glm-5**, **minimax-b2.5**, and **deepseek-v4-pro** via the OpenAI-compatible fallback path; these are marked as recommended in the model picker. The 0G Compute testnet serves qwen2.5 7b — if it fails repair reasoning in demo conditions, switch to one of the validated models and ensure the fallback receipt badge is visible.
 
 **How this maps to the Track 2 brief:**
 
