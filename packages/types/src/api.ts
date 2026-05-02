@@ -20,9 +20,28 @@ import { KeeperHubExecutionSchema } from './ship.ts';
 
 // --- POST /api/workspace -----------------------------------------------------
 
+/**
+ * Workspace template — picks the initial scaffold (contracts + frontend code)
+ * the workspace boots with. Catalogued in `@crucible/backend` `template-registry.ts`.
+ *
+ * - `counter` — the original DemoVault scaffold; seeds a deliberately broken
+ *   `onlyOwner` so the agent's self-heal demo has something to fix.
+ * - `uniswap-v3` — Hardhat-fork-of-mainnet template; frontend swaps WETH↔USDC
+ *   via Uniswap V3's SwapRouter on the forked chain.
+ * - `nft-mint` — minimal ERC-721 with a public mint button — the simplest
+ *   "real on-chain action" demo.
+ */
+export const WorkspaceTemplateSchema = z.enum(['counter', 'uniswap-v3', 'nft-mint']);
+export type WorkspaceTemplate = z.infer<typeof WorkspaceTemplateSchema>;
+
 export const WorkspaceCreateRequestSchema = z.object({
   /** Human display name. The slug-safe `WorkspaceId` is generated server-side. */
   name: z.string().min(1).max(100),
+  /**
+   * Initial scaffold to drop into the workspace. Defaults to `counter` so
+   * old clients that don't pass a template keep their existing behaviour.
+   */
+  template: WorkspaceTemplateSchema.optional(),
 });
 export type WorkspaceCreateRequest = z.infer<typeof WorkspaceCreateRequestSchema>;
 
@@ -66,6 +85,12 @@ export const WorkspaceSummarySchema = z.object({
   createdAt: z.number().int().nonnegative(),
   /** Most recent runtime status, or null if the workspace has never booted. */
   runtimeStatus: z.enum(['starting', 'ready', 'degraded', 'crashed', 'stopped']).nullable(),
+  /**
+   * Initial scaffold template the workspace was created with. Old rows
+   * predating the template column read back as `'counter'` via the DB
+   * default, so this is always populated for the list UI.
+   */
+  template: WorkspaceTemplateSchema.default('counter'),
 });
 export type WorkspaceSummary = z.infer<typeof WorkspaceSummarySchema>;
 
