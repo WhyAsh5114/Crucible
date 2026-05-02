@@ -1,7 +1,12 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
-import { WorkspaceFileLangSchema, type WorkspaceFile } from '@crucible/types';
+import {
+  WorkspaceFileLangSchema,
+  type WorkspaceFile,
+  type WorkspaceTemplate,
+} from '@crucible/types';
+import { resolveTemplate } from './template-registry';
 
 // Resolve to an absolute host path. An empty / unset env var must NOT be
 // allowed to fall through as a relative path — Docker bind mounts require
@@ -16,7 +21,10 @@ export function workspaceHostPath(workspaceId: string): string {
   return path.join(WORKSPACES_ROOT, workspaceId);
 }
 
-export async function provisionWorkspaceDirectory(workspaceId: string): Promise<string> {
+export async function provisionWorkspaceDirectory(
+  workspaceId: string,
+  template: WorkspaceTemplate = 'counter',
+): Promise<string> {
   const workspaceDir = workspaceHostPath(workspaceId);
   await mkdir(path.join(workspaceDir, 'contracts'), { recursive: true });
   await mkdir(path.join(workspaceDir, 'frontend', 'src'), { recursive: true });
@@ -38,85 +46,23 @@ export async function provisionWorkspaceDirectory(workspaceId: string): Promise<
     )}\n`,
   );
 
-  // Write the Counter.sol contract scaffold (the agent will replace it
-  // as the user builds — but the default workspace ships a working
-  // contract so the wallet approval flow is testable out of the box).
-  await scaffoldContracts(path.join(workspaceDir, 'contracts'));
+  // Template-specific contract source(s). The shared scaffold (frontend
+  // boilerplate) is template-agnostic and gets dropped below; only the
+  // contract files and the App.tsx vary by template.
+  const def = resolveTemplate(template);
+  for (const c of def.contracts) {
+    await writeIfAbsent(path.join(workspaceDir, 'contracts', c.path), c.source);
+  }
 
-  // Write the React + Vite + wagmi/viem template if the frontend has not yet
-  // been initialised (i.e. package.json does not exist).
-  await scaffoldFrontend(path.join(workspaceDir, 'frontend'));
+  // Common frontend scaffold (vite/tsconfig/index.html/main.tsx/config.ts/package.json),
+  // followed by the template-specific App.tsx.
+  await scaffoldFrontend(path.join(workspaceDir, 'frontend'), def.app);
 
   return workspaceDir;
 }
 
 // ---------------------------------------------------------------------------
-// Counter contract scaffold
-// ---------------------------------------------------------------------------
-
-async function scaffoldContracts(contractsDir: string): Promise<void> {
-  await writeIfAbsent(
-    path.join(contractsDir, 'DemoVault.sol'),
-    `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-/// @title  DemoVault
-/// @notice Crucible workspace scaffold — accepts ETH deposits from anyone;
-///         only the owner may withdraw.
-contract DemoVault {
-    address public owner;
-    address public pendingOwner;
-
-    uint64 public constant COOLDOWN = 60; // seconds between withdrawals
-    uint64 public lastWithdrawAt;
-
-    mapping(address => uint256) public balances;
-
-    event Deposited(address indexed by, uint256 amount, uint256 vaultBalance);
-    event Withdrawn(address indexed to, uint256 amount);
-
-    modifier onlyOwner() {
-        require(msg.sender == pendingOwner, "DemoVault: caller is not owner");
-        _;
-    }
-
-    constructor() {
-        owner = msg.sender;
-        lastWithdrawAt = uint64(block.timestamp);
-    }
-
-    /// @notice Deposit ETH into the vault. Open to all callers.
-    function deposit() external payable {
-        require(msg.value > 0, "DemoVault: zero deposit");
-        balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value, address(this).balance);
-    }
-
-    /// @notice Withdraw ETH to the owner. Enforces a 60-second cooldown.
-    function withdraw(uint256 amount) external onlyOwner {
-        require(amount > 0, "DemoVault: zero amount");
-        require(address(this).balance >= amount, "DemoVault: insufficient balance");
-        require(
-            uint64(block.timestamp) >= lastWithdrawAt + COOLDOWN,
-            "DemoVault: cooldown not elapsed"
-        );
-        lastWithdrawAt = uint64(block.timestamp);
-        (bool ok, ) = owner.call{ value: amount }("");
-        require(ok, "DemoVault: ETH transfer failed");
-        emit Withdrawn(owner, amount);
-    }
-
-    receive() external payable {
-        balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value, address(this).balance);
-    }
-}
-`,
-  );
-}
-
-// ---------------------------------------------------------------------------
-// React + Vite + wagmi/viem scaffold
+// React + Vite + wagmi/viem scaffold (template-agnostic boilerplate)
 // ---------------------------------------------------------------------------
 
 async function writeIfAbsent(filePath: string, content: string): Promise<void> {
@@ -127,7 +73,7 @@ async function writeIfAbsent(filePath: string, content: string): Promise<void> {
   }
 }
 
-async function scaffoldFrontend(frontendDir: string): Promise<void> {
+async function scaffoldFrontend(frontendDir: string, appSource: string): Promise<void> {
   const pkg = {
     name: 'crucible-preview',
     version: '0.0.0',
@@ -286,325 +232,7 @@ createRoot(document.getElementById('root')!).render(
 `,
   );
 
-  await writeIfAbsent(
-    path.join(frontendDir, 'src', 'App.tsx'),
-    `import { useEffect, useState } from 'react';
-import {
-  useAccount,
-  useConnect,
-  useDisconnect,
-  useBalance,
-  useWaitForTransactionReceipt,
-  useWriteContract,
-} from 'wagmi';
-import type { Abi, Address } from 'viem';
-
-const styles = {
-  page: {
-    fontFamily: 'ui-monospace, Menlo, Consolas, monospace',
-    background: '#ffffff',
-    color: '#0a0a0a',
-    minHeight: '100vh',
-    margin: 0,
-    padding: '2.5rem 2rem',
-  },
-  card: {
-    maxWidth: 520,
-    margin: '0 auto',
-    padding: '1.5rem',
-    border: '1px solid #e5e5e5',
-    borderRadius: 8,
-    background: '#fafafa',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-  },
-  title: { margin: 0, fontSize: '1.1rem', letterSpacing: '0.02em' },
-  hint: { color: '#525252', fontSize: '0.78rem', marginTop: '0.75rem', lineHeight: 1.55 },
-  label: {
-    color: '#737373',
-    fontSize: '0.68rem',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.08em',
-  },
-  value: { fontSize: '0.9rem', wordBreak: 'break-all' as const, marginTop: '0.15rem' },
-  row: { marginTop: '1.1rem' },
-  counterBox: {
-    marginTop: '1.25rem',
-    padding: '1rem',
-    border: '1px solid #e5e5e5',
-    borderRadius: 6,
-    background: '#ffffff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '1rem',
-  },
-  counterValue: { fontSize: '2rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' as const },
-  button: {
-    background: '#0a0a0a',
-    color: '#fafafa',
-    border: 'none',
-    borderRadius: 6,
-    padding: '0.55rem 1rem',
-    fontFamily: 'inherit',
-    fontSize: '0.85rem',
-    cursor: 'pointer',
-  },
-  buttonOutline: {
-    background: 'transparent',
-    color: '#0a0a0a',
-    border: '1px solid #d4d4d4',
-    borderRadius: 6,
-    padding: '0.5rem 0.9rem',
-    fontFamily: 'inherit',
-    fontSize: '0.8rem',
-    cursor: 'pointer',
-    marginRight: '0.5rem',
-  },
-  txStatus: {
-    marginTop: '0.75rem',
-    padding: '0.55rem 0.75rem',
-    background: '#f5f5f5',
-    border: '1px solid #e5e5e5',
-    borderRadius: 6,
-    fontSize: '0.75rem',
-    color: '#525252',
-    wordBreak: 'break-all' as const,
-  },
-  error: {
-    marginTop: '0.75rem',
-    padding: '0.55rem 0.75rem',
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
-    borderRadius: 6,
-    fontSize: '0.75rem',
-    color: '#b91c1c',
-    wordBreak: 'break-all' as const,
-  },
-};
-
-function shortAddress(addr: string): string {
-  return \`\${addr.slice(0, 6)}…\${addr.slice(-4)}\`;
-}
-
-interface ContractsManifest {
-  vault?: { address: Address; abi: Abi; deployedAt: number };
-}
-
-/**
- * Fetch /contracts.json (written by the backend after auto-deploy) with retry
- * so the React app keeps working even if it loads before the deploy completes.
- */
-function useContractsManifest(): {
-  manifest: ContractsManifest | null;
-  error: string | null;
-} {
-  const [manifest, setManifest] = useState<ContractsManifest | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    async function load(attempt: number): Promise<void> {
-      try {
-        const res = await fetch('/contracts.json', {
-          cache: 'no-store',
-          headers: { Accept: 'application/json' },
-        });
-        if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
-        // Vite's dev server serves index.html as a SPA fallback for any
-        // unknown path with status 200, so res.ok is true even when the
-        // file doesn't exist yet. Detect that by checking Content-Type
-        // before attempting JSON.parse.
-        const contentType = res.headers.get('content-type') ?? '';
-        if (!contentType.toLowerCase().includes('application/json')) {
-          throw new Error('not yet deployed');
-        }
-        const data = (await res.json()) as ContractsManifest;
-        if (cancelled) return;
-        setManifest(data);
-        setError(null);
-      } catch (err) {
-        if (cancelled) return;
-        if (attempt < 60) {
-          timer = setTimeout(() => load(attempt + 1), 1000);
-        } else {
-          setError(err instanceof Error ? err.message : 'failed to load contracts.json');
-        }
-      }
-    }
-
-    void load(0);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  return { manifest, error };
-}
-
-export default function App() {
-  const { address, isConnected, status } = useAccount();
-  const { connect, connectors, isPending: isConnecting, error: connectError } = useConnect();
-  const { disconnect } = useDisconnect();
-  const { data: walletBalance, refetch: refetchWalletBalance } = useBalance({ address });
-  const { manifest, error: manifestError } = useContractsManifest();
-  const vault = manifest?.vault;
-  const { data: vaultBalance, refetch: refetchVaultBalance } = useBalance({ address: vault?.address });
-
-  // Auto-connect to the Crucible bridge on first load. There's only ever one
-  // connector configured (filtered by RDNS in config.ts), so the user never
-  // sees a wallet picker.
-  useEffect(() => {
-    if (status === 'disconnected' && connectors.length > 0 && !isConnecting) {
-      connect({ connector: connectors[0] });
-    }
-  }, [status, connectors, isConnecting, connect]);
-
-  const {
-    writeContract,
-    data: txHash,
-    isPending: isSubmitting,
-    error: writeError,
-    reset: resetWrite,
-  } = useWriteContract();
-
-  const { isLoading: isMining, isSuccess: isMined } = useWaitForTransactionReceipt({
-    hash: txHash,
-  });
-
-  useEffect(() => {
-    if (isMined) {
-      void refetchWalletBalance();
-      void refetchVaultBalance();
-    }
-  }, [isMined, refetchWalletBalance, refetchVaultBalance]);
-
-  function handleDeposit() {
-    if (!vault) return;
-    resetWrite();
-    writeContract({
-      address: vault.address,
-      abi: vault.abi,
-      functionName: 'deposit',
-      value: BigInt('100000000000000000'), // 0.1 ETH
-    });
-  }
-
-  function handleWithdraw() {
-    if (!vault) return;
-    resetWrite();
-    writeContract({
-      address: vault.address,
-      abi: vault.abi,
-      functionName: 'withdraw',
-      args: [BigInt('100000000000000000')], // 0.1 ETH
-    });
-  }
-
-  const txLabel = isSubmitting ? 'Awaiting approval…' : isMining ? 'Mining…' : null;
-
-  return (
-    <div style={styles.page}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>DemoVault</h1>
-
-        {isConnected && address ? (
-          <>
-            <div style={styles.row}>
-              <div style={styles.label}>Connected account</div>
-              <div style={styles.value}>{shortAddress(address)}</div>
-            </div>
-            <div style={styles.row}>
-              <div style={styles.label}>Wallet balance</div>
-              <div style={styles.value}>
-                {walletBalance ? \`\${walletBalance.formatted} \${walletBalance.symbol}\` : '—'}
-              </div>
-            </div>
-            {vault ? (
-              <div style={styles.row}>
-                <div style={styles.label}>Vault contract</div>
-                <div style={styles.value}>{shortAddress(vault.address)}</div>
-              </div>
-            ) : null}
-
-            <div style={styles.counterBox}>
-              <div>
-                <div style={styles.label}>Vault balance</div>
-                <div style={styles.counterValue}>
-                  {vaultBalance ? vaultBalance.formatted : vault ? '\u2026' : '\u2014'}
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <button
-                  style={styles.button}
-                  onClick={handleDeposit}
-                  disabled={!vault || isSubmitting || isMining}
-                >
-                  {txLabel ?? 'Deposit 0.1 ETH'}
-                </button>
-                <button
-                  style={styles.buttonOutline}
-                  onClick={handleWithdraw}
-                  disabled={!vault || isSubmitting || isMining}
-                >
-                  Withdraw 0.1 ETH
-                </button>
-              </div>
-            </div>
-
-            {!vault && !manifestError ? (
-              <p style={styles.hint}>Waiting for backend to deploy DemoVault contract…</p>
-            ) : null}
-            {manifestError ? (
-              <div style={styles.error}>Couldn't load contracts.json: {manifestError}</div>
-            ) : null}
-
-            {txHash ? (
-              <div style={styles.txStatus}>
-                <div style={styles.label}>
-                  Last tx {isMining ? '(mining)' : isMined ? '(mined)' : ''}
-                </div>
-                <div>{txHash}</div>
-              </div>
-            ) : null}
-            {writeError ? <div style={styles.error}>{writeError.message}</div> : null}
-
-            <div style={styles.row}>
-              <button style={styles.buttonOutline} onClick={() => disconnect()}>
-                Disconnect
-              </button>
-            </div>
-          </>
-        ) : (
-          <div style={styles.row}>
-            {connectors.length === 0 ? (
-              <p style={styles.hint}>
-                No wallet provider detected. The Crucible bridge should auto-inject — reload the
-                preview if this persists.
-              </p>
-            ) : (
-              connectors.map((connector) => (
-                <button
-                  key={connector.id}
-                  style={styles.button}
-                  disabled={isConnecting}
-                  onClick={() => connect({ connector })}
-                >
-                  {isConnecting ? 'Connecting…' : \`Connect \${connector.name}\`}
-                </button>
-              ))
-            )}
-            {connectError ? <div style={styles.error}>{connectError.message}</div> : null}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-`,
-  );
+  await writeIfAbsent(path.join(frontendDir, 'src', 'App.tsx'), appSource);
 }
 
 function detectWorkspaceFileLang(filePath: string) {

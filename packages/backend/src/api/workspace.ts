@@ -477,33 +477,52 @@ export function getTemplateState(workspaceId: string): TemplateState {
   return templateStates.get(workspaceId) ?? makeIdleTemplateState();
 }
 
-async function deployCounterTemplate(
+async function deployTemplate(
   workspaceId: string,
   workspaceDir: string,
   compilerPort: number,
   deployerPort: number,
+  templateId: string,
 ): Promise<void> {
   const path = await import('node:path');
   const { writeFile, stat } = await import('node:fs/promises');
+  const { resolveTemplate } = await import('../lib/template-registry');
+  const def = resolveTemplate(templateId);
 
-  // If the workspace's DemoVault.sol was removed (e.g. agent rewrote the
-  // contract layout), don't error out — mark template as unavailable so the
-  // boot overlay clears and the agent can take over.
-  try {
-    await stat(path.join(workspaceDir, 'contracts', 'DemoVault.sol'));
-  } catch {
+  if (def.autoDeploy === null) {
+    // Template doesn't deploy anything on boot (e.g. uniswap-v3 expects a
+    // mainnet fork). Surface as `unavailable` so the boot overlay clears
+    // without showing a failure state.
     setTemplateState(workspaceId, {
       phase: 'unavailable',
-      message: 'contracts/DemoVault.sol not present',
+      message: 'Template has no auto-deploy step — interact via the agent',
     });
     return;
   }
 
-  setTemplateState(workspaceId, { phase: 'compiling', message: 'Compiling DemoVault.sol…' });
+  const auto = def.autoDeploy;
+
+  // If the workspace's contract source was removed (e.g. agent rewrote the
+  // layout), don't error out — mark template as unavailable so the boot
+  // overlay clears and the agent can take over.
+  try {
+    await stat(path.join(workspaceDir, auto.sourcePath));
+  } catch {
+    setTemplateState(workspaceId, {
+      phase: 'unavailable',
+      message: `${auto.sourcePath} not present`,
+    });
+    return;
+  }
+
+  setTemplateState(workspaceId, {
+    phase: 'compiling',
+    message: `Compiling ${auto.contractName}…`,
+  });
   const compileRes = await loopbackFetch(`http://127.0.0.1:${compilerPort}/compile`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sourcePath: 'contracts/DemoVault.sol' }),
+    body: JSON.stringify({ sourcePath: auto.sourcePath }),
   });
   if (!compileRes.ok) {
     const message = `compile returned HTTP ${compileRes.status}`;
@@ -513,20 +532,29 @@ async function deployCounterTemplate(
   const compiled = (await compileRes.json()) as {
     contracts: Array<{ name: string; abi: unknown }>;
   };
-  const vault = compiled.contracts.find(
-    (c) => c.name === 'DemoVault' || c.name.endsWith(':DemoVault') || c.name.endsWith('/DemoVault'),
+  const target = compiled.contracts.find(
+    (c) =>
+      c.name === auto.contractName ||
+      c.name.endsWith(`:${auto.contractName}`) ||
+      c.name.endsWith(`/${auto.contractName}`),
   );
-  if (!vault) {
-    const message = `compile output missing "DemoVault" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
+  if (!target) {
+    const message = `compile output missing "${auto.contractName}" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
     setTemplateState(workspaceId, { phase: 'failed', message });
     throw new Error(message);
   }
 
-  setTemplateState(workspaceId, { phase: 'deploying', message: 'Deploying DemoVault to chain…' });
+  setTemplateState(workspaceId, {
+    phase: 'deploying',
+    message: `Deploying ${auto.contractName} to chain…`,
+  });
   const deployRes = await loopbackFetch(`http://127.0.0.1:${deployerPort}/deploy_local`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ contractName: 'DemoVault', constructorData: '0x' }),
+    body: JSON.stringify({
+      contractName: auto.contractName,
+      constructorData: auto.constructorData,
+    }),
   });
   if (!deployRes.ok) {
     const message = `deploy_local returned HTTP ${deployRes.status}`;
@@ -535,13 +563,14 @@ async function deployCounterTemplate(
   }
   const deployed = (await deployRes.json()) as { address: string; txHash: string };
 
-  // Write the manifest the preview's React app fetches at boot. Using
-  // `frontend/public/` means Vite serves it at the iframe origin without
-  // bundler involvement; the path is `/contracts.json`.
+  // Write the manifest the preview's React app fetches at boot. The
+  // template-specific manifest key (`vault` for counter, `nft` for nft-mint,
+  // `swap` for uniswap-v3) lets each App.tsx wire up its own typed shape
+  // without needing a discriminator.
   const manifest = {
-    vault: {
+    [def.manifestKey]: {
       address: deployed.address,
-      abi: vault.abi,
+      abi: target.abi,
       deployTxHash: deployed.txHash,
       deployedAt: Date.now(),
     },
@@ -554,9 +583,9 @@ async function deployCounterTemplate(
   setTemplateState(workspaceId, {
     phase: 'ready',
     contractAddress: deployed.address,
-    message: `DemoVault deployed at ${deployed.address}`,
+    message: `${auto.contractName} deployed at ${deployed.address}`,
   });
-  console.log(`[workspace ${workspaceId}] DemoVault deployed at ${deployed.address}`);
+  console.log(`[workspace ${workspaceId}] ${auto.contractName} deployed at ${deployed.address}`);
 }
 
 // ── Background runtime bootstrap ─────────────────────────────────────────────
@@ -569,7 +598,11 @@ async function deployCounterTemplate(
  *
  * Status transitions: starting → ready | degraded | crashed.
  */
-async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: string): Promise<void> {
+async function spawnRuntimeForWorkspace(
+  workspaceId: string,
+  directoryPath: string,
+  template: string = 'counter',
+): Promise<void> {
   try {
     await prisma.workspaceRuntime.upsert({
       where: { workspaceId },
@@ -624,12 +657,12 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
           );
           try {
             await Promise.race([
-              deployCounterTemplate(workspaceId, directoryPath, compilerPort, deployerPort),
+              deployTemplate(workspaceId, directoryPath, compilerPort, deployerPort, template),
               timeout,
             ]);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            console.warn(`[workspace ${workspaceId}] counter deploy failed:`, message);
+            console.warn(`[workspace ${workspaceId}] template deploy failed:`, message);
             // Make sure the state ends in a settled phase so the boot overlay
             // doesn't spin indefinitely.
             const state = getTemplateState(workspaceId);
@@ -687,7 +720,7 @@ workspaceApiBase.use('*', requireSession);
 
 export const workspaceApi = workspaceApiBase
   .openapi(createWorkspaceRoute, async (c) => {
-    const { name } = c.req.valid('json');
+    const { name, template } = c.req.valid('json');
     const userId = c.get('userId');
 
     // Auto-generate a friendly name when the client sends the placeholder
@@ -698,6 +731,8 @@ export const workspaceApi = workspaceApiBase
         ? generateWorkspaceName()
         : name;
 
+    const effectiveTemplate = template ?? 'counter';
+
     let createdId: string | null = null;
 
     try {
@@ -707,12 +742,13 @@ export const workspaceApi = workspaceApiBase
           name: effectiveName,
           directoryPath: `pending://${randomUUID()}`,
           userId,
+          template: effectiveTemplate,
         },
         select: { id: true },
       });
       createdId = created.id;
 
-      const directoryPath = await provisionWorkspaceDirectory(created.id);
+      const directoryPath = await provisionWorkspaceDirectory(created.id, effectiveTemplate);
       await prisma.workspace.update({
         where: { id: created.id },
         data: { directoryPath },
@@ -723,7 +759,7 @@ export const workspaceApi = workspaceApiBase
       // background so the create response stays fast. Failures here are
       // surfaced via the runtime status (degraded/crashed) rather than
       // blocking the workspace from being created.
-      void spawnRuntimeForWorkspace(created.id, directoryPath);
+      void spawnRuntimeForWorkspace(created.id, directoryPath, effectiveTemplate);
 
       const response = WorkspaceCreateResponseSchema.parse({ id: created.id });
       return c.json(response, 201);
@@ -811,6 +847,7 @@ export const workspaceApi = workspaceApiBase
         name: row.name,
         createdAt: row.createdAt.getTime(),
         runtimeStatus: row.runtime?.status ?? null,
+        template: row.template,
       })),
     });
 
