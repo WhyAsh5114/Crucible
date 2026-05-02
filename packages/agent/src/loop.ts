@@ -413,7 +413,7 @@ function makeOgRouterFetch(
 
 // ── MCP schema registry ──────────────────────────────────────────────────────
 
-type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal';
+type McpServerKey = 'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal' | 'mesh';
 
 function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.ZodTypeAny }> {
   switch (server) {
@@ -475,6 +475,14 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         write: { inputSchema: mcp.terminal.WriteInputSchema },
         exec: { inputSchema: mcp.terminal.ExecInputSchema },
         resize: { inputSchema: mcp.terminal.ResizeInputSchema },
+      };
+    case 'mesh':
+      return {
+        list_peers: { inputSchema: mcp.mesh.ListPeersInputSchema },
+        broadcast_help: { inputSchema: mcp.mesh.BroadcastHelpInputSchema },
+        collect_responses: { inputSchema: mcp.mesh.CollectResponsesInputSchema },
+        respond: { inputSchema: mcp.mesh.RespondInputSchema },
+        verify_peer_patch: { inputSchema: mcp.mesh.VerifyPeerPatchInputSchema },
       };
   }
 }
