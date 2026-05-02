@@ -35,7 +35,7 @@
 - [x] `mcp-chain` — in-container port 3100, `start_node`, snapshot, revert, mine, fork
 - [x] `mcp-compiler` — in-container port 3101, compile, list artifacts, get bytecode
 - [x] `mcp-deployer` — package implemented (deploy_local, simulate_local, trace, call); Dockerfile + entrypoint wired on port 3102; tool-exec proxy wired
-- [x] `mcp-wallet` — package implemented (list_accounts, get_balance, sign_tx, send_tx_local, switch_account); Dockerfile + entrypoint wired on port 3103; tool-exec proxy wired
+- [x] `mcp-wallet` — package implemented (list_accounts, get_balance, switch_account, encode_call, sign_tx, send_tx_local, plus high-level `call_contract` / `read_contract` / `send_value` wrappers); Dockerfile + entrypoint wired on port 3103; tool-exec proxy wired
 - [x] `mcp-memory` — package implemented (recall, remember, list_patterns, provenance); Dockerfile + entrypoint wired on port 3104; tool-exec proxy wired
 
 ### Agent
