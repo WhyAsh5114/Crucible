@@ -5,13 +5,15 @@ import {
   TraceInputSchema,
   CallInputSchema,
   DeployOgChainInputSchema,
+  ListDeploymentsInputSchema,
   type DeployLocalInput,
   type SimulateLocalInput,
   type TraceInput,
   type CallInput,
   type DeployOgChainInput,
+  type ListDeploymentsInput,
 } from '@crucible/types/mcp/deployer';
-import { createDeployerService } from './service.ts';
+import { createDeployerService, type DeployerService } from './service.ts';
 
 const TAG = '[mcp-deployer]';
 const log = (msg: string) => console.log(`${TAG} ${msg}`);
@@ -31,13 +33,17 @@ function errorResult(message: string): CallToolResult {
   };
 }
 
-export function createDeployerServer(opts: {
-  chainRpcUrl: string;
-  workspaceRoot: string;
-  compilerUrl?: string;
-  ogDeployPrivateKey?: string;
-}): McpServer {
-  const service = createDeployerService(opts);
+export function createDeployerServer(
+  opts:
+    | {
+        chainRpcUrl: string;
+        workspaceRoot: string;
+        compilerUrl?: string;
+        ogDeployPrivateKey?: string;
+      }
+    | { service: DeployerService },
+): McpServer {
+  const service = 'service' in opts ? opts.service : createDeployerService(opts);
   const server = new McpServer({
     name: 'crucible-deployer',
     version: '0.0.0',
@@ -180,6 +186,34 @@ export function createDeployerServer(opts: {
       } catch (err) {
         logError(`tool:deploy_og_chain error: ${String(err)}`);
         return errorResult(`deploy_og_chain failed: ${String(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'list_deployments',
+    {
+      title: 'List Session Deployments',
+      description:
+        'List every contract deployed in the current deployer-process lifetime, with address, tx hash, network, and timestamp. ' +
+        'Use this instead of asking the user / yourself to remember addresses across turns. ' +
+        'Pass `network` to filter to "local" (Hardhat) or "0g-galileo" (testnet).',
+      inputSchema: ListDeploymentsInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (input: ListDeploymentsInput) => {
+      try {
+        log(`tool:list_deployments network=${input.network ?? 'all'}`);
+        const output = await service.listDeployments(input);
+        log(`tool:list_deployments ok  count=${output.deployments.length}`);
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:list_deployments error: ${String(err)}`);
+        return errorResult(`list_deployments failed: ${String(err)}`);
       }
     },
   );
