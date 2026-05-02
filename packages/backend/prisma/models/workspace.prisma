@@ -15,6 +15,12 @@ model Workspace {
     createdAt     DateTime          @default(now())
     updatedAt     DateTime          @updatedAt
     deployments   Json              @default("[]")
+    /// Initial scaffold template used to provision the workspace. Persisted
+    /// so the per-boot auto-deploy + scaffold-overlay re-runs against the
+    /// same template after backend restarts. Defaults to 'counter' so older
+    /// rows (created before this column existed) keep their existing
+    /// DemoVault scaffold behaviour unchanged.
+    template      String            @default("counter")
     runtime       WorkspaceRuntime?
     chatSessions  ChatSession[]
 
