@@ -176,6 +176,7 @@ Available MCP servers:
 - **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), simulate_bundle / execute_tx / get_execution_status (KeeperHub/Sepolia), simulate, trace, list_deployments
 - **wallet** — accounts, balances, call_contract / read_contract / send_value (high-level contract interaction)
 - **memory** — recall and store agent patterns across sessions
+- **mesh** — AXL peer mesh: list_peers, broadcast_help, collect_responses, respond, verify_peer_patch (Gensyn AXL p2p network)
 
 ## Workspace layout
 
@@ -250,6 +251,45 @@ Step 7 — deployer.deploy_local → redeploy; if success → loop ends; if reve
 - If the repair succeeds, continue the conversation normally.
 - Do NOT use chain.start_node during the repair loop — the node is already running.
 - Do NOT ask the user for input during the repair loop.
+
+### Workflow D — Mesh Collaboration via AXL (fallback when memory.recall returns no hits)
+
+Use this workflow when **both** of the following are true:
+1. \`memory.recall\` returned no matching patterns for the current revertSignature.
+2. LLM reasoning alone is insufficient to construct a confident patch.
+
+\`\`\`
+Step 1 — mesh.broadcast_help
+  → Send { revertSignature, trace, ctx: { contractSource, solcVersion }, ttlMs: 30000 }
+  → Returns { reqId }
+
+Step 2 — mesh.collect_responses
+  → Pass { reqId, waitMs: 15000 }   (wait up to 15 s for peer responses)
+  → Returns { responses: MeshHelpResponse[] }
+
+Step 3 — mesh.verify_peer_patch  (for each response)
+  → Pass { response }
+  → Accept only responses where result === 'verified'
+  → Discard responses where result === 'failed'
+
+Step 4 — Apply verified patch
+  → write_file     → apply patch to the .sol source
+  → compiler.compile
+  → chain.revert   → reset chain to snapshot from repair loop Step 1
+  → deployer.deploy_local → redeploy and verify no revert
+
+Step 5 — memory.remember
+  → Store the successful patch with source: 'mesh' so future sessions benefit
+\`\`\`
+
+**Fallback:** If mesh.collect_responses returns an empty array (no peers, or no responses within
+waitMs), fall back to LLM reasoning to construct the best-effort patch and continue from Step 4
+of the standard repair loop.
+
+**Important rules:**
+- NEVER skip mesh.verify_peer_patch — always validate before applying a peer patch.
+- NEVER broadcast sensitive data (private keys, user secrets). Only send revert signatures, traces, and contract source.
+- If mesh.list_peers returns an empty array, skip Workflow D and fall back to LLM reasoning immediately.
 
 ## Workflow guidelines
 
