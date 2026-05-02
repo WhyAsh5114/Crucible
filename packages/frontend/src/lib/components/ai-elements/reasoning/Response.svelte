@@ -16,7 +16,13 @@
 	let { class: className = '', children, content, ...props }: Props = $props();
 </script>
 
-<div class={cn('prose prose-xs max-w-none text-xs [&_*]:text-xs [&_code]:text-[10px] [&_pre]:text-[10px]', className)} {...props}>
+<div
+	class={cn(
+		'prose prose-xs max-w-none text-xs [&_*]:text-xs [&_code]:text-[10px] [&_pre]:text-[10px]',
+		className
+	)}
+	{...props}
+>
 	{#if content !== undefined}
 		<Markdown {content} />
 	{:else}

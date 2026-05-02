@@ -26,9 +26,7 @@
 			<code class="rounded bg-muted px-1.5 py-0 font-mono text-[10px] text-foreground"
 				>{event.source}</code
 			>
-			<span class="ml-auto font-mono text-[10px] text-muted-foreground/60"
-				>{lineCount} lines</span
-			>
+			<span class="ml-auto font-mono text-[10px] text-muted-foreground/60">{lineCount} lines</span>
 		</Collapsible.Trigger>
 		<Collapsible.Content
 			class="mt-1 overflow-hidden data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0"
