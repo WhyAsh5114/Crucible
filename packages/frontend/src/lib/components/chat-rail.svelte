@@ -18,6 +18,7 @@
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import XIcon from '@lucide/svelte/icons/x';
+	import ZapIcon from '@lucide/svelte/icons/zap';
 	import { setContext } from 'svelte';
 	import type { WorkspaceId } from '@crucible/types';
 
@@ -141,6 +142,38 @@
 		sending || stream.status === 'streaming' || stream.status === 'connecting'
 	);
 
+	// Autopilot: when enabled, auto-sends "continue" after each turn where the
+	// agent was actively calling tools — matching VS Code Copilot's Autopilot
+	// behaviour of running uninterrupted until the model returns a pure-text
+	// response with no tool calls (its natural stopping signal).
+	let autopilot = $state(false);
+
+	const lastTurnHadTools = $derived(
+		(() => {
+			const evs = stream.events;
+			let start = evs.length - 1;
+			while (start >= 0 && evs[start].type !== 'user_prompt') start--;
+			if (start < 0) return false;
+			return evs.slice(start + 1).some((e) => e.type === 'tool_call');
+		})()
+	);
+
+	let _prevStatus = stream.status;
+	$effect(() => {
+		const cur = stream.status;
+		if (
+			autopilot &&
+			(_prevStatus === 'streaming' || _prevStatus === 'connecting') &&
+			cur === 'idle' &&
+			!inFlight &&
+			!sendError &&
+			lastTurnHadTools
+		) {
+			void sendPrompt('continue', false);
+		}
+		_prevStatus = cur;
+	});
+
 	async function sendPrompt(text: string, forceFallback: boolean): Promise<void> {
 		sending = true;
 		sendError = null;
@@ -218,7 +251,20 @@
 					<span class="text-destructive">error</span>
 				{/if}
 			</div>
-			<div class="ml-auto">
+			<div class="ml-auto flex items-center gap-1">
+				<button
+					type="button"
+					onclick={() => (autopilot = !autopilot)}
+					class="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors {autopilot
+						? 'bg-amber-400/15 text-amber-400'
+						: 'text-muted-foreground hover:bg-muted'}"
+					title={autopilot
+						? 'Autopilot on — agent auto-continues when it pauses mid-task'
+						: 'Autopilot off — click to enable auto-continue'}
+				>
+					<ZapIcon class="size-3" />
+					auto
+				</button>
 				<ModelPicker value={selectedModel} onchange={(sel) => (selectedModel = sel)} />
 			</div>
 		</div>
