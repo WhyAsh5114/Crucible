@@ -140,6 +140,60 @@ const KeeperHubExecutionEvent = base.extend({
   execution: KeeperHubExecutionSchema,
 });
 
+// ── KeeperHub ship events ────────────────────────────────────────────────────────────────
+//
+// Emitted by POST /api/ship as the public-chain deployment progresses.
+// Dev C depends on these shapes for the frontend ship UI.
+
+/**
+ * Phase 1 complete: bundle has been simulated. Contains decoded per-tx gas
+ * estimates so the user can review before confirming execution.
+ */
+const ShipSimulated = base.extend({
+  type: z.literal('ship_simulated'),
+  bundleId: z.string().min(1),
+  gasEstimates: z.array(
+    z.object({
+      index: z.number().int().nonnegative(),
+      contractName: z.string(),
+      /** Estimated gas as a decimal string. */
+      gasEstimate: z.string(),
+      note: z.string().optional(),
+    }),
+  ),
+  willSucceed: z.boolean(),
+});
+
+/**
+ * Polling update: emitted each time get_execution_status returns a new status.
+ * Frontend should update its progress indicator on each event.
+ */
+const ShipStatus = base.extend({
+  type: z.literal('ship_status'),
+  executionId: z.string().min(1),
+  status: z.enum(['pending', 'mined', 'confirmed']),
+  txHash: z.string().optional(),
+  blockNumber: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * Terminal success: bundle confirmed on-chain. Carries the deployed contract
+ * address, the KeeperHub audit trail ID, and an explorer URL.
+ * auditTrailId is always non-null here — it is the required record for the
+ * KeeperHub Builder Feedback Bounty submission.
+ */
+const ShipConfirmed = base.extend({
+  type: z.literal('ship_confirmed'),
+  executionId: z.string().min(1),
+  /** Deployed Sepolia contract address. */
+  contractAddress: z.string(),
+  /** KeeperHub audit trail ID — non-null on every confirmed deployment. */
+  auditTrailId: z.string().min(1),
+  explorerUrl: z.string().url(),
+  /** Sepolia chain ID (11155111). */
+  chainId: z.literal(11155111),
+});
+
 const Done = base.extend({
   type: z.literal('done'),
 });
@@ -172,6 +226,9 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   PatchVerified,
   PatchCommitted,
   KeeperHubExecutionEvent,
+  ShipSimulated,
+  ShipStatus,
+  ShipConfirmed,
   Done,
   ErrorEvent,
 ]);

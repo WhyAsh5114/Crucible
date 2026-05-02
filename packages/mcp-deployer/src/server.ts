@@ -12,6 +12,16 @@ import {
   type DeployOgChainInput,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerService } from './service.ts';
+import {
+  SimulateBundleInputSchema,
+  ExecuteTxInputSchema,
+  GetExecutionStatusInputSchema,
+  type SimulateBundleInput,
+  type ExecuteTxInput,
+  type GetExecutionStatusInput,
+  createKeeperHubClient,
+  getKeeperHubConfig,
+} from './keeperhub-client.ts';
 
 const TAG = '[mcp-deployer]';
 const log = (msg: string) => console.log(`${TAG} ${msg}`);
@@ -36,12 +46,23 @@ export function createDeployerServer(opts: {
   workspaceRoot: string;
   compilerUrl?: string;
   ogDeployPrivateKey?: string;
+  keeperHubApiKey?: string;
+  keeperHubBaseUrl?: string;
 }): McpServer {
   const service = createDeployerService(opts);
   const server = new McpServer({
     name: 'crucible-deployer',
     version: '0.0.0',
   });
+
+  // KeeperHub client — only available when KEEPERHUB_API_KEY is configured.
+  const khConfig = opts.keeperHubApiKey
+    ? {
+        apiKey: opts.keeperHubApiKey,
+        baseUrl: opts.keeperHubBaseUrl ?? 'https://app.keeperhub.com/api',
+      }
+    : getKeeperHubConfig();
+  const khClient = khConfig ? createKeeperHubClient(khConfig) : null;
 
   server.registerTool(
     'deploy_local',
@@ -180,6 +201,121 @@ export function createDeployerServer(opts: {
       } catch (err) {
         logError(`tool:deploy_og_chain error: ${String(err)}`);
         return errorResult(`deploy_og_chain failed: ${String(err)}`);
+      }
+    },
+  );
+
+  // ── KeeperHub ship tools ──────────────────────────────────────────────────
+  //
+  // ship_* AgentEvent shapes emitted by the POST /api/ship backend endpoint:
+  //
+  //   ship_simulated  { bundleId, gasEstimates: [{index, contractName, gasEstimate}], willSucceed }
+  //   ship_status     { executionId, status: 'pending'|'mined'|'confirmed', txHash?, blockNumber? }
+  //   ship_confirmed  { executionId, contractAddress, auditTrailId, explorerUrl }
+  //
+  // Dev C depends on this comment as the source of truth for event shapes.
+
+  server.registerTool(
+    'simulate_bundle',
+    {
+      title: 'Simulate KeeperHub Deployment Bundle',
+      description:
+        'Pre-flight simulation of a contract deployment bundle through KeeperHub. ' +
+        'Accepts compiled artifacts and a deployer address; returns decoded per-tx gas estimates ' +
+        'and a bundleId to pass to execute_tx. ' +
+        'Requires KEEPERHUB_API_KEY to be configured. ' +
+        'This is the mandatory step before any public-chain deployment — no eth_sendRawTransaction ' +
+        'is ever called in this path.',
+      inputSchema: SimulateBundleInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input: SimulateBundleInput) => {
+      if (!khClient) {
+        return errorResult(
+          'simulate_bundle: KEEPERHUB_API_KEY is not configured. Set it on the deployer node to enable KeeperHub ship path.',
+        );
+      }
+      try {
+        log('tool:simulate_bundle');
+        const output = await khClient.simulateBundle(input);
+        log(
+          `tool:simulate_bundle ok  bundleId=${output.bundleId} willSucceed=${output.willSucceed}`,
+        );
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:simulate_bundle error: ${String(err)}`);
+        return errorResult(`simulate_bundle failed: ${String(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'execute_tx',
+    {
+      title: 'Execute KeeperHub Bundle',
+      description:
+        'Execute a previously simulated bundle (identified by bundleId) through KeeperHub ' +
+        'with automatic retry and private routing. ' +
+        'Returns { executionId, txHash, status } immediately. ' +
+        'Use get_execution_status to poll until confirmed. ' +
+        'NEVER calls eth_sendRawTransaction — all public-chain writes go through KeeperHub.',
+      inputSchema: ExecuteTxInputSchema,
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input: ExecuteTxInput) => {
+      if (!khClient) {
+        return errorResult(
+          'execute_tx: KEEPERHUB_API_KEY is not configured. Set it on the deployer node to enable KeeperHub ship path.',
+        );
+      }
+      try {
+        log(`tool:execute_tx bundleId=${input.bundleId}`);
+        const output = await khClient.executeTx(input);
+        log(`tool:execute_tx ok  executionId=${output.executionId} status=${output.status}`);
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:execute_tx error: ${String(err)}`);
+        return errorResult(`execute_tx failed: ${String(err)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_execution_status',
+    {
+      title: 'Poll KeeperHub Execution Status',
+      description:
+        'Poll the status of a KeeperHub execution by executionId. ' +
+        'Returns { executionId, status, txHash?, blockNumber?, auditTrailId?, contractAddress?, explorerUrl? }. ' +
+        'status progresses: pending → mined → confirmed (or failed). ' +
+        'auditTrailId is non-null on confirmed deployments — record it for the audit trail.',
+      inputSchema: GetExecutionStatusInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input: GetExecutionStatusInput) => {
+      if (!khClient) {
+        return errorResult('get_execution_status: KEEPERHUB_API_KEY is not configured.');
+      }
+      try {
+        log(`tool:get_execution_status executionId=${input.executionId}`);
+        const output = await khClient.getExecutionStatus(input);
+        log(`tool:get_execution_status ok  status=${output.status}`);
+        return toolResult(output);
+      } catch (err) {
+        logError(`tool:get_execution_status error: ${String(err)}`);
+        return errorResult(`get_execution_status failed: ${String(err)}`);
       }
     },
   );
