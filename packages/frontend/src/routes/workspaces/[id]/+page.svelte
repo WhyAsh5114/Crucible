@@ -25,6 +25,8 @@
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import TerminalIcon from '@lucide/svelte/icons/terminal';
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
+	import PenLineIcon from '@lucide/svelte/icons/pen-line';
+	import WalletIcon from '@lucide/svelte/icons/wallet';
 
 	const stream = getAgentStream();
 	const wallet = getWalletStore();
@@ -345,20 +347,23 @@
 										<Tabs.List class="bg-transparent p-0">
 											<Tabs.Trigger
 												value="editor"
-												class="rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<PenLineIcon class="size-3.5" />
 												editor
 											</Tabs.Trigger>
 											<Tabs.Trigger
 												value="preview"
-												class="rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<MonitorIcon class="size-3.5" />
 												preview
 											</Tabs.Trigger>
 											<Tabs.Trigger
 												value="wallet"
-												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<WalletIcon class="size-3.5" />
 												wallet
 												{#if wallet.pending.length > 0}
 													<Badge

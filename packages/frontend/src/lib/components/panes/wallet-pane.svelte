@@ -295,7 +295,7 @@
 							</p>
 						</div>
 						{#each wallet.pending as req (req.id)}
-							<Card.Root class="border-amber-500/40 bg-amber-500/5">
+							<Card.Root class="border-warning/40 bg-warning/5">
 								<Card.Header class="pb-3">
 									<div class="flex items-center justify-between gap-2">
 										<Card.Title class="font-mono text-xs">{methodLabel(req.method)}</Card.Title>

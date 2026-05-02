@@ -256,7 +256,7 @@
 					type="button"
 					onclick={() => (autopilot = !autopilot)}
 					class="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors {autopilot
-						? 'bg-amber-400/15 text-amber-400'
+						? 'bg-warning/15 text-warning'
 						: 'text-muted-foreground hover:bg-muted'}"
 					title={autopilot
 						? 'Autopilot on — agent auto-continues when it pauses mid-task'

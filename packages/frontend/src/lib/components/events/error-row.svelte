@@ -39,7 +39,7 @@
 		{#if event.ogFallbackReason}
 			<div class="flex flex-wrap items-center gap-2 text-xs">
 				<span
-					class="rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400"
+					class="rounded bg-warning/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-warning uppercase"
 				>
 					0G failed: {fallbackLabel(event.ogFallbackReason)}
 				</span>

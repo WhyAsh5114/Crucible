@@ -1,11 +1,28 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { mode } from 'mode-watcher';
 	import { TerminalFrameSchema, type TerminalFrame, type WorkspaceState } from '@crucible/types';
 	import type { Terminal as XTermTerminal, IDisposable } from '@xterm/xterm';
 	import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit';
 	import '@xterm/xterm/css/xterm.css';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import PlugIcon from 'phosphor-svelte/lib/PlugIcon';
+	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotchIcon';
+	import XCircleIcon from 'phosphor-svelte/lib/XCircleIcon';
+
+	// xterm.js renders into a canvas and won't natively read CSS variables,
+	// so we resolve the theme tokens (background / foreground) at runtime
+	// from the document root. Re-resolved when the user toggles light/dark.
+	function resolveTerminalTheme(): { background: string; foreground: string } {
+		if (typeof window === 'undefined') {
+			return { background: 'transparent', foreground: 'inherit' };
+		}
+		const styles = getComputedStyle(document.documentElement);
+		const background = styles.getPropertyValue('--background').trim() || 'transparent';
+		const foreground = styles.getPropertyValue('--foreground').trim() || 'inherit';
+		return { background, foreground };
+	}
 
 	interface Props {
 		workspace: WorkspaceState | null;
@@ -18,8 +35,41 @@
 	let errorReason: string | null = $state(null);
 	// nonce forces the connect effect to re-run on a manual reconnect
 	let reconnectNonce = $state(0);
+	// Live xterm instance — exposed so the mode-watcher effect can repaint
+	// the canvas theme when the user toggles between light and dark.
+	let liveTerm: XTermTerminal | null = $state(null);
 
 	const workspaceId = $derived(workspace?.id ?? null);
+
+	// Repaint the xterm canvas whenever the theme mode flips. The first run
+	// races the connect effect (terminal not yet created), in which case
+	// `liveTerm` is null and we no-op — the connect effect picks up the
+	// current theme at construction time.
+	//
+	// Two subtleties:
+	//   1. ModeWatcher flips `.dark` on <html> on the same tick that
+	//      `mode.current` updates, but the layout / `getComputedStyle`
+	//      values for our CSS vars are only guaranteed fresh after a
+	//      style flush. We defer the read with rAF so the resolved
+	//      theme matches what the rest of the UI just rendered.
+	//   2. Reassigning `term.options.theme` updates the renderer's color
+	//      tables but doesn't always invalidate the existing canvas
+	//      buffer (xterm repaints on next write, not retroactively),
+	//      so on a no-output toggle the previous frame's pixels stick.
+	//      `refresh(0, rows - 1)` forces a full repaint at the new
+	//      colors. Touching only the renderer — never the WebSocket
+	//      or the PTY — so terminal connectivity is unaffected.
+	$effect(() => {
+		void mode.current;
+		const term = liveTerm;
+		if (!term) return;
+		const handle = requestAnimationFrame(() => {
+			if (term !== liveTerm) return;
+			term.options.theme = resolveTerminalTheme();
+			term.refresh(0, term.rows - 1);
+		});
+		return () => cancelAnimationFrame(handle);
+	});
 
 	// xterm.js ships a CJS+ESM hybrid that Vite sometimes serves as CJS, in
 	// which case `import { Terminal } from '@xterm/xterm'` fails with "named
@@ -114,8 +164,9 @@
 				fontSize: 13,
 				scrollback: 5000,
 				allowProposedApi: true,
-				theme: { background: '#0b0b0e', foreground: '#e4e4e7' }
+				theme: resolveTerminalTheme()
 			});
+			liveTerm = term;
 			const fitAddon = new FitAddon();
 			term.loadAddon(fitAddon);
 			term.open(host);
@@ -196,6 +247,7 @@
 			onResizeDisp = null;
 			term?.dispose();
 			term = null;
+			liveTerm = null;
 			if (ws && ws.readyState !== WebSocket.CLOSED) {
 				try {
 					ws.close(1000, 'component teardown');
@@ -229,15 +281,24 @@
 			{/snippet}
 		</EmptyState>
 	{:else}
-		<div class="shrink-0 border-b border-border px-2 py-1 font-mono text-xs text-muted-foreground">
+		<div
+			class="flex shrink-0 items-center gap-1.5 border-b border-border bg-muted/20 px-2 py-1 font-mono text-xs"
+		>
 			{#if status === 'connecting'}
-				connecting…
+				<CircleNotchIcon class="size-3 animate-spin text-muted-foreground" weight="bold" />
+				<span class="text-muted-foreground">connecting…</span>
 			{:else if status === 'closed'}
-				session ended
+				<XCircleIcon class="size-3 text-muted-foreground" weight="fill" />
+				<span class="text-muted-foreground">session ended</span>
 			{:else}
-				connected
+				<span
+					class="size-1.5 rounded-full bg-live shadow-[0_0_6px_var(--live)]"
+					aria-hidden="true"
+				></span>
+				<PlugIcon class="size-3 text-live" weight="fill" />
+				<span class="text-live">connected</span>
 			{/if}
 		</div>
-		<div bind:this={host} class="size-full overflow-hidden bg-[#0b0b0e] p-2"></div>
+		<div bind:this={host} class="size-full overflow-hidden bg-background p-2"></div>
 	{/if}
 </section>

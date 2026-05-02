@@ -1,11 +1,37 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import type { Component } from 'svelte';
 	import type { WorkspaceFile, WorkspaceState } from '@crucible/types';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FileTree from '$lib/components/file-tree.svelte';
 	import * as Resizable from '$lib/components/ui/resizable';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
+	import FileTsIcon from 'phosphor-svelte/lib/FileTsIcon';
+	import FileJsIcon from 'phosphor-svelte/lib/FileJsIcon';
+	import FileCssIcon from 'phosphor-svelte/lib/FileCssIcon';
+	import FileHtmlIcon from 'phosphor-svelte/lib/FileHtmlIcon';
+	import FileMdIcon from 'phosphor-svelte/lib/FileMdIcon';
+	import FileCodeIcon from 'phosphor-svelte/lib/FileCodeIcon';
+	import FileTextIcon from 'phosphor-svelte/lib/FileTextIcon';
+	import BracketsCurlyIcon from 'phosphor-svelte/lib/BracketsCurlyIcon';
+	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
+
+	// Maps WorkspaceFile['lang'] → phosphor icon component. Solidity uses
+	// the Cube icon to lean into the smart-contract / EVM bytecode metaphor;
+	// everything else picks the closest dedicated phosphor file icon, falling
+	// back to FileCode / FileText for unspecific languages.
+	const LANG_ICONS: Record<WorkspaceFile['lang'], Component> = {
+		typescript: FileTsIcon,
+		javascript: FileJsIcon,
+		json: BracketsCurlyIcon,
+		css: FileCssIcon,
+		html: FileHtmlIcon,
+		markdown: FileMdIcon,
+		solidity: CubeIcon,
+		svelte: FileCodeIcon,
+		plaintext: FileTextIcon
+	};
 
 	interface Props {
 		workspace: WorkspaceState | null;
@@ -259,8 +285,21 @@
 						class="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5"
 					>
 						{#if activeFile}
-							<code class="font-mono text-xs text-foreground">{activeFile.path}</code>
-							<span class="ml-auto font-mono text-[10px] text-muted-foreground/70 uppercase">
+							{@const LangIcon = LANG_ICONS[activeFile.lang]}
+							{@const segments = activeFile.path.split('/').filter((s) => s.length > 0)}
+							{@const dirSegments = segments.slice(0, -1)}
+							{@const fileName = segments.at(-1) ?? activeFile.path}
+							<LangIcon class="size-4 shrink-0 text-primary" weight="fill" />
+							<div class="flex min-w-0 items-center gap-1 overflow-hidden font-mono text-xs">
+								{#each dirSegments as seg, i (i)}
+									<span class="truncate text-muted-foreground/70">{seg}</span>
+									<span class="text-muted-foreground/30">/</span>
+								{/each}
+								<span class="truncate font-medium text-foreground">{fileName}</span>
+							</div>
+							<span
+								class="ml-auto rounded-md bg-primary/10 px-2 py-0.5 font-mono text-[10px] tracking-wide text-primary uppercase"
+							>
 								{activeFile.lang}
 							</span>
 						{:else}
