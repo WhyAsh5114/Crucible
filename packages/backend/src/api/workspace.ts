@@ -359,6 +359,32 @@ const getChatHistoryRoute = createRoute({
   },
 });
 
+const PurgeMemoryResponseSchema = z.object({ deleted: z.number().int().nonnegative() });
+
+const purgeMemoryRoute = createRoute({
+  method: 'delete',
+  path: '/workspace/{id}/memory',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    query: z.object({ scope: z.enum(['local', 'mesh']).optional() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: PurgeMemoryResponseSchema } },
+      description: 'Patterns purged',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready',
+    },
+  },
+});
+
 // ── Chain auto-boot ──────────────────────────────────────────────────────────
 
 /**
@@ -1100,6 +1126,34 @@ export const workspaceApi = workspaceApiBase
     disposeChatLog(id, sessionId);
 
     return c.json(ChatSessionDeleteResponseSchema.parse({ id: sessionId, deleted: true }), 200);
+  })
+  .openapi(purgeMemoryRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { scope } = c.req.valid('query');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+    if (!ports?.memory) {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    }
+
+    const url = new URL(`http://127.0.0.1:${ports.memory}/patterns`);
+    if (scope) url.searchParams.set('scope', scope);
+    const res = await loopbackFetch(url.toString(), { method: 'DELETE' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return c.json(createApiErrorBody('internal', `Memory purge failed: ${text}`), 500);
+    }
+    const body = (await res.json()) as { deleted: number };
+    return c.json(PurgeMemoryResponseSchema.parse(body), 200);
   })
   .get('/workspace/:id/devtools/events', async (c) => {
     const id = c.req.param('id');
