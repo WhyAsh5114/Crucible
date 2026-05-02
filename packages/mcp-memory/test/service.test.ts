@@ -89,4 +89,55 @@ describe('mcp-memory service', () => {
     const second = await service.listPatterns({ limit: 1, cursor: first.nextCursor ?? undefined });
     expect(second.patterns).toHaveLength(1);
   });
+
+  it('purge with scope deletes only matching scope patterns', async () => {
+    const service = createMemoryService({ workspaceRoot });
+
+    await service.remember({
+      revertSignature: 'Local error',
+      patch: 'local patch',
+      traceRef: 'trace://local',
+      verificationReceipt: `0x${'aa'.repeat(32)}` as `0x${string}`,
+      scope: 'local',
+    });
+    await service.remember({
+      revertSignature: 'Mesh error',
+      patch: 'mesh patch',
+      traceRef: 'trace://mesh',
+      verificationReceipt: `0x${'bb'.repeat(32)}` as `0x${string}`,
+      scope: 'mesh',
+    });
+
+    const result = await service.purge({ scope: 'local' });
+    expect(result.deleted).toBe(1);
+
+    // listPatterns defaults scope to 'local' — verify local is gone
+    const localAfter = await service.listPatterns({ scope: 'local' });
+    expect(localAfter.patterns).toHaveLength(0);
+
+    // mesh pattern must survive
+    const meshAfter = await service.listPatterns({ scope: 'mesh' });
+    expect(meshAfter.patterns).toHaveLength(1);
+    expect(meshAfter.patterns[0]?.scope).toBe('mesh');
+  });
+
+  it('purge without scope deletes all patterns', async () => {
+    const service = createMemoryService({ workspaceRoot });
+
+    for (const scope of ['local', 'mesh', 'local'] as const) {
+      await service.remember({
+        revertSignature: `Error ${scope}`,
+        patch: `patch ${scope}`,
+        traceRef: `trace://${scope}`,
+        verificationReceipt: `0x${'cc'.repeat(32)}` as `0x${string}`,
+        scope,
+      });
+    }
+
+    const result = await service.purge({});
+    expect(result.deleted).toBe(3);
+
+    const remaining = await service.listPatterns({});
+    expect(remaining.patterns).toHaveLength(0);
+  });
 });

@@ -13,7 +13,7 @@
  */
 
 import { spawn, type Subprocess } from 'bun';
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
+import { mkdir, writeFile, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { randomUUID } from 'node:crypto';

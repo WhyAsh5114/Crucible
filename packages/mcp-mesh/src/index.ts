@@ -28,7 +28,6 @@ import {
   type McpResponseBody,
 } from '@crucible/types';
 import {
-  ListPeersInputSchema,
   BroadcastHelpInputSchema,
   CollectResponsesInputSchema,
   RespondInputSchema,
