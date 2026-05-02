@@ -102,3 +102,30 @@ Because KeeperHub lacks a standalone simulation endpoint, Crucible estimates gas
 - Alternatively, add a `dryRun: true` flag to `POST /api/workflow/{id}/execute` that simulates without broadcasting and returns estimated gas + predicted addresses.
 
 This would let agents display accurate cost estimates in a "ship preview" card before the user confirms, without an extra `eth_gasPrice` RPC round-trip or local nonce derivation.
+
+---
+
+## 5. Bug — Execution Logs Do Not Expose `txHash` or `contractAddress` After Confirmed Deployment
+
+**Category:** Bug
+**Severity:** high
+
+**What happened:**
+After a successful `contractWrite` workflow execution reaches `status: "confirmed"`, the execution logs endpoint (`GET /api/workflows/executions/{executionId}/logs`) returns node output objects that do **not** contain `transactionHash`, `txHash`, or `contractAddress` fields, even though the deployment landed on-chain. The `status` field confirms success, but the deployment artifact data is absent.
+
+**Reproduction steps:**
+
+1. `POST /api/workflows/create` — create a workflow with a `contractWrite` deployment node.
+2. `POST /api/workflow/{id}/execute` — get `executionId`.
+3. `GET /api/workflows/executions/{executionId}/status` → `status: "success"` (confirmed).
+4. `GET /api/workflows/executions/{executionId}/logs` → inspect `nodeLogs[*].output`.
+5. None of the expected keys (`transactionHash`, `txHash`, `contractAddress`, `deployedAddress`) are present in the output.
+
+**Impact:**
+
+- The deployed contract address is not recoverable through the API. Builders must query Etherscan or the chain directly using the deployer wallet's nonce to find it.
+- Audit pipelines that rely on `contractAddress` from the logs (e.g. for track submission) cannot be automated.
+- `auditTrailId` (`wrun_*`) is still recoverable via `logs.execution.runId`, so the compliance record exists — but the deployment artifact data is missing.
+
+**Concrete suggestion:**
+Populate `nodeLogs[n].output` with at least `{ transactionHash, contractAddress, blockNumber, gasUsed }` for `contractWrite` action nodes once the tx is confirmed. This is consistent with what EVM nodes return for a transaction receipt and is the minimum builders need to close the loop without an out-of-band chain query.

@@ -176,12 +176,12 @@ The agent falls back to LLM reasoning from the trace. The mesh is an accelerator
 
 **Depth of KeeperHub integration (target):**
 
-| Flow            | What happens                                                                                                                                                                        |
-| :-------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pre-flight**  | Agent calls `KeeperHub.simulate_bundle()` with the deployment + config txs. Inspector shows decoded simulation output + per-tx gas estimates.                                       |
-| **Execution**   | Agent calls `KeeperHub.execute_tx()` for each tx. KeeperHub handles retry logic, gas optimization, and private routing. Inspector shows live status: `pending → mined → confirmed`. |
-| **Audit**       | Every `execute_tx` returns an `auditTrailId`. Inspector displays it as a clickable link to the KeeperHub provenance record.                                                         |
-| **Post-deploy** | User clicks _Deposit_ on the live preview (pointed at the deployed Sepolia address). That interaction also routes through KeeperHub — not a one-shot deploy button.                 |
+| Flow            | What happens                                                                                                                                                                                                 |
+| :-------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pre-flight**  | Agent calls `simulate_bundle()` via the KeeperHub tools registered in `mcp-deployer`. Returns `bundleId` + per-tx gas estimates.                                                                             |
+| **Execution**   | Agent calls `execute_tx(bundleId)`. KeeperHub handles retry logic, gas optimization, and private routing. Backend polls `get_execution_status` until `confirmed`. Inspector shows live `ship_status` events. |
+| **Audit**       | `ship_confirmed` event carries `auditTrailId` + `explorerUrl`. Inspector should display as a clickable link to the KeeperHub provenance record (frontend UI pending).                                        |
+| **Post-deploy** | User clicks _Deposit_ on the live preview (pointed at the deployed Sepolia address). That interaction also routes through KeeperHub — not a one-shot deploy button.                                          |
 
 **How this maps to the judging criteria:**
 
@@ -194,7 +194,8 @@ The agent falls back to LLM reasoning from the trace. The mesh is an accelerator
 
 **Submission requirements checklist:**
 
-- [x] Working demo (live or recorded) — the 4-min demo video covers the Ship flow
+- [x] Working demo (backend ship flow implemented; frontend UI pending — demo will show `ship_*` SSE events)
+- [x] `FEEDBACK.md` in repo root with 4 specific items (qualifies for Builder Feedback Bounty)
 - [ ] Public GitHub repo with README covering setup + architecture
 - [ ] Brief write-up explaining approach + how KeeperHub is used (this doc + ARCHITECTURE.md)
 - [ ] Project name, team members, contact info
@@ -215,14 +216,14 @@ The free tier is sufficient for the demo (Sepolia testnet). For production use, 
 
 **Fit:** Very high. Free roll — same integration work, different deliverable.
 
-**What we'll file:** Integrating KeeperHub MCP into a non-LangChain agent framework (OpenClaw) will surface real friction. We'll document:
+**What we filed:** `FEEDBACK.md` in repo root documents 4 specific items encountered during the non-LangChain integration:
 
-- **UX/UI friction:** What was confusing about the MCP server setup when not using LangChain's built-in MCP client?
-- **Documentation gaps:** Where did the KeeperHub docs assume LangChain/LangGraph and leave us stuck?
-- **Missing endpoints:** What would have made the integration smoother for a non-Python, non-LangChain stack?
-- **Feature requests:** What's missing that would have made the build easier?
+1. **SDK gap (UX):** No official typed client — had to hand-roll HTTP client with status enum normalization (~4 hours of trial-and-error). Requested `@keeperhub/client` npm package.
+2. **Documentation gap:** No `POST /api/execute/deploy` endpoint; had to use the Workflow API with undocumented `contractWrite` node schema. The `contractAddress: "0x000..."` workaround was reverse-engineered.
+3. **Documentation gap:** No end-to-end "agentic ship" walkthrough — `execute` is non-idempotent and uses singular `/api/workflow/` vs plural `/api/workflows/`; `runId` as audit trail not documented.
+4. **Feature request:** No simulation endpoint — local gas estimate is off by 2-3x vs actual. Requested `dryRun: true` flag on workflow execute.
 
-**Key to qualifying:** Feedback must be specific and actionable. "Docs were confusing" won't qualify. "The MCP server setup guide assumes `langchain-mcp-adapters` — here's the exact 3-step workaround we needed for a raw `@modelcontextprotocol/sdk` client in TypeScript" will.
+**Key to qualifying:** Feedback is specific and actionable with repro steps — qualifies for the feedback bounty.
 
 ---
 
