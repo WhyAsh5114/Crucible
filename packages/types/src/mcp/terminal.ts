@@ -35,7 +35,7 @@ export const ExecInputSchema = z.object({
   command: z.string().min(1),
   cwd: z.string().min(1).optional(),
   /** Optional environment overlay applied just to this exec. */
-  env: z.record(z.string(), z.string()).optional(),
+  env: z.object({}).catchall(z.string()).optional(),
   timeoutMs: z.number().int().positive().max(300_000).optional(),
 });
 export const ExecOutputSchema = z.object({
