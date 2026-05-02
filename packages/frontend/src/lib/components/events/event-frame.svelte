@@ -28,15 +28,15 @@
 </script>
 
 <article
-	class="group flex flex-col gap-0.5 border-b border-border/40 px-3 py-1.5 transition-colors hover:bg-muted/20"
+	class="group flex flex-col gap-1 border-b border-border/20 px-3 py-2 transition-colors hover:bg-muted/10"
 >
 	<header
-		class="flex items-center gap-1.5 text-[9px] font-medium tracking-wide text-muted-foreground/70 uppercase"
+		class="flex items-center gap-1.5 text-[9px] font-medium tracking-widest text-muted-foreground/50 uppercase"
 	>
 		<span class={cn('font-mono', toneClass[tone])}>{label}</span>
-		<span class="ml-auto font-mono tabular-nums opacity-60">{fmt(emittedAt)}</span>
+		<span class="ml-auto font-mono tabular-nums opacity-40">{fmt(emittedAt)}</span>
 	</header>
-	<div class="text-xs leading-normal text-foreground">
+	<div class="text-xs leading-relaxed text-foreground">
 		{@render children()}
 	</div>
 </article>

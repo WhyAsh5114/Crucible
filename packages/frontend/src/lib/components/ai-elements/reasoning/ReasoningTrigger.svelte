@@ -37,10 +37,10 @@
 	{#if children}
 		{@render children()}
 	{:else}
-		<BrainIcon class="size-4" />
+		<BrainIcon class="size-3" />
 		<p>{getThinkingMessage}</p>
 		<ChevronDownIcon
-			class={cn('size-4 transition-transform', reasoningContext.isOpen ? 'rotate-180' : 'rotate-0')}
+			class={cn('size-3 transition-transform', reasoningContext.isOpen ? 'rotate-180' : 'rotate-0')}
 		/>
 	{/if}
 </CollapsibleTrigger>

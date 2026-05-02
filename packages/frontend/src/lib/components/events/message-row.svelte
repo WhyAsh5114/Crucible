@@ -9,6 +9,6 @@
 	let { event }: Props = $props();
 </script>
 
-<div class="px-3 py-1.5 text-xs leading-normal text-foreground">
+<div class="border-b border-border/20 px-3 py-2 text-xs leading-relaxed text-foreground">
 	<Markdown content={event.content} class="text-foreground" />
 </div>
