@@ -211,10 +211,24 @@ describe('extractSendTxRevert', () => {
     expect(result.revertSignature).toContain('transaction reverted');
   });
 
-  test('returns reverted:false when isError is true', () => {
+  test('returns reverted:true when isError is true with revert message (pre-mining rejection)', () => {
+    const result = extractSendTxRevert('call_contract', {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: 'call_contract reverted (withdraw(uint256) on 0xabc): VM Exception: revert Cooldown active',
+        },
+      ],
+    });
+    if (!result.reverted) throw new Error('Expected reverted:true');
+    expect(result.revertSignature.toLowerCase()).toContain('cooldown');
+  });
+
+  test('returns reverted:false when isError is true without a revert message', () => {
     const result = extractSendTxRevert('send_tx_local', {
       isError: true,
-      content: [{ type: 'text', text: '{"status":"reverted","txHash":"0xabc"}' }],
+      content: [{ type: 'text', text: 'connection refused' }],
     });
     expect(result.reverted).toBe(false);
   });
