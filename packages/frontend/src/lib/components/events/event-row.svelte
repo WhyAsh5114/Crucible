@@ -12,6 +12,9 @@
 	import InferenceReceiptRow from './inference-receipt-row.svelte';
 	import ErrorRow from './error-row.svelte';
 	import GenericRow from './generic-row.svelte';
+	import ShipSimulatedRow from './ship-simulated-row.svelte';
+	import ShipStatusRow from './ship-status-row.svelte';
+	import ShipConfirmedRow from './ship-confirmed-row.svelte';
 
 	interface Props {
 		event: ChatEvent;
@@ -39,6 +42,12 @@
 	<RepairFailedRow {event} />
 {:else if event.type === 'inference_receipt'}
 	<InferenceReceiptRow {event} />
+{:else if event.type === 'ship_simulated'}
+	<ShipSimulatedRow {event} />
+{:else if event.type === 'ship_status'}
+	<ShipStatusRow {event} />
+{:else if event.type === 'ship_confirmed'}
+	<ShipConfirmedRow {event} />
 {:else if event.type === 'error'}
 	<ErrorRow {event} />
 {:else if event.type === 'done'}
