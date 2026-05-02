@@ -11,7 +11,15 @@
  * frontend's SSE stream receives live updates.
  */
 
-import { streamText, tool, stepCountIs, type ToolSet } from 'ai';
+import {
+  streamText,
+  tool,
+  stepCountIs,
+  type ToolSet,
+  type ModelMessage,
+  type ToolCallPart,
+  type ToolResultPart,
+} from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createMCPClient, type MCPClient } from '@ai-sdk/mcp';
 import { z } from 'zod';
@@ -56,6 +64,14 @@ async function normalizingFetch(input: unknown, init?: unknown): Promise<Respons
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
 
+  // Track whether the current SSE response is in a reasoning_content block.
+  // Some OpenAI-compatible providers (Qwen3, DeepSeek-R1, etc.) stream thinking
+  // tokens as `delta.reasoning_content` rather than `delta.content`. The AI SDK
+  // chat adapter only reads `delta.content`, so we remap reasoning_content to
+  // <think>…</think>-tagged content here. The text-delta handler in the
+  // fullStream loop then routes those tags to thinking events.
+  let inReasoning = false;
+
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       const text = decoder.decode(chunk, { stream: true });
@@ -76,16 +92,45 @@ async function normalizingFetch(input: unknown, init?: unknown): Promise<Respons
             choices?: Array<{
               delta?: {
                 tool_calls?: Array<{ type?: string; function?: unknown }>;
+                reasoning_content?: string;
+                content?: string;
               };
             }>;
           };
-          const calls = parsed.choices?.[0]?.delta?.tool_calls;
+          let modified = false;
+          const delta = parsed.choices?.[0]?.delta;
+
+          // Fix 1: Some providers emit tool_calls[].type: "" instead of "function".
+          const calls = delta?.tool_calls;
           if (Array.isArray(calls)) {
             for (const call of calls) {
               if (call && typeof call === 'object' && (!call.type || call.type === '')) {
                 call.type = 'function';
+                modified = true;
               }
             }
+          }
+
+          // Fix 2: Map delta.reasoning_content → <think>…</think> in delta.content
+          // so the AI SDK chat adapter forwards it as a text-delta and the
+          // fullStream text-delta handler can route it to thinking events.
+          if (delta && typeof delta === 'object') {
+            const rc = delta.reasoning_content;
+            if (typeof rc === 'string' && rc.length > 0) {
+              // Open the <think> tag on the first reasoning chunk only.
+              delta.content = (inReasoning ? '' : '<think>') + rc + (delta.content ?? '');
+              delete delta.reasoning_content;
+              inReasoning = true;
+              modified = true;
+            } else if (inReasoning) {
+              // First non-reasoning delta: close the think block.
+              delta.content = '</think>' + (delta.content ?? '');
+              inReasoning = false;
+              modified = true;
+            }
+          }
+
+          if (modified) {
             out.push(`data: ${JSON.stringify(parsed)}`);
           } else {
             out.push(line);
@@ -157,6 +202,12 @@ export interface AgentConfig {
 export interface AgentAdapter {
   /** Return the current files in the workspace (used for context injection). */
   getWorkspaceFiles(workspaceId: string): Promise<WorkspaceFile[]>;
+
+  /**
+   * Return the persisted chat history for this workspace session so prior
+   * turns can be prepended to the model's `messages` array.
+   */
+  getChatHistory(workspaceId: string): Promise<AgentEvent[]>;
 
   /**
    * Write `content` to `filePath` (workspace-relative) and return the
@@ -389,14 +440,20 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         trace: { inputSchema: mcp.deployer.TraceInputSchema },
         call: { inputSchema: mcp.deployer.CallInputSchema },
         deploy_og_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
+        list_deployments: { inputSchema: mcp.deployer.ListDeploymentsInputSchema },
       };
     case 'wallet':
+      // High-level tools only. encode_call and send_tx_local remain implemented
+      // on the MCP server (so escape hatches exist via direct MCP usage), but
+      // are intentionally hidden from the agent — call_contract / read_contract
+      // / send_value cover all common cases without manual ABI-encoding.
       return {
         list_accounts: { inputSchema: mcp.wallet.ListAccountsInputSchema },
         get_balance: { inputSchema: mcp.wallet.GetBalanceInputSchema },
-        sign_tx: { inputSchema: mcp.wallet.SignTxInputSchema },
-        send_tx_local: { inputSchema: mcp.wallet.SendTxLocalInputSchema },
         switch_account: { inputSchema: mcp.wallet.SwitchAccountInputSchema },
+        call_contract: { inputSchema: mcp.wallet.CallContractInputSchema },
+        read_contract: { inputSchema: mcp.wallet.ReadContractInputSchema },
+        send_value: { inputSchema: mcp.wallet.SendValueInputSchema },
       };
     case 'memory':
       return {
@@ -533,38 +590,58 @@ export function extractSnapshotId(toolResult: unknown): string | null {
 }
 
 /**
- * Detect a reverted `send_tx_local` call.
+ * Detect a reverted contract call.
  *
- * `send_tx_local` succeeds at the MCP level (`isError: false`) but returns
- * `status: 'reverted'` in the JSON body when the EVM transaction reverted.
- * The `txHash` in the body is a REAL mined transaction — it can be passed to
- * `deployer.trace` to decode the revert reason.
+ * Two failure modes are possible:
+ *   1. Hardhat MINED a reverting tx \u2014 result is `isError:false` with body
+ *      `{ status: 'reverted', txHash }`. The txHash is real and traceable.
+ *   2. Hardhat REJECTED the tx pre-mining (eth_call simulation says it will
+ *      revert) \u2014 result is `isError:true` with the revert reason in the text.
+ *      No txHash is available. We synthesise a placeholder so the trace step
+ *      can still be skipped gracefully.
+ *
+ * Applies to `call_contract` (high-level) and `send_tx_local` (low-level).
  */
 export function extractSendTxRevert(
   toolName: string,
   toolResult: unknown,
 ): { reverted: false } | { reverted: true; txHash: string; revertSignature: string } {
-  if (toolName !== 'send_tx_local') return { reverted: false };
+  if (toolName !== 'call_contract' && toolName !== 'send_tx_local') {
+    return { reverted: false };
+  }
   const raw = toolResult as
     | { isError?: boolean; content?: Array<{ type: string; text?: string }> }
     | null
     | undefined;
-  if (!raw || raw.isError) return { reverted: false };
+  if (!raw) return { reverted: false };
   const text = raw.content?.find((c) => c.type === 'text')?.text ?? '';
+
+  // Case 1: pre-mining rejection (Hardhat refused to even try).
+  if (raw.isError) {
+    if (!/revert/i.test(text)) return { reverted: false };
+    const reasonMatch = /reverted with reason:?\s*"?([^"\n]+?)"?(?:\s|$)/i.exec(text);
+    const revertSignature = reasonMatch?.[1]?.trim() ?? text.slice(0, 200);
+    return {
+      reverted: true,
+      txHash: '0x' + '0'.repeat(64),
+      revertSignature,
+    };
+  }
+
+  // Case 2: mined-then-reverted.
   try {
-    const parsed = JSON.parse(text) as { status?: string; txHash?: string };
+    const parsed = JSON.parse(text) as { status?: string; txHash?: string; revertReason?: string };
     if (parsed.status === 'reverted') {
       const txHash = parsed.txHash ?? '0x' + '0'.repeat(64);
       return {
         reverted: true,
         txHash,
-        // Revert reason is not in send_tx_local output — the trace step will
-        // decode it from the mined transaction via debug_traceTransaction.
-        revertSignature: `transaction reverted (${txHash.slice(0, 10)}…)`,
+        revertSignature:
+          parsed.revertReason ?? `transaction reverted (${txHash.slice(0, 10)}\u2026)`,
       };
     }
   } catch {
-    // Not JSON — no revert detected.
+    // Not JSON \u2014 no revert detected.
   }
   return { reverted: false };
 }
@@ -585,6 +662,94 @@ export function extractDeployMeta(
     // sourcePath may not be in args; fall back to "contracts/<Name>.sol"
     sourcePath: args.sourcePath ?? `contracts/${args.contractName}.sol`,
   };
+}
+
+// ── Conversation history reconstruction ──────────────────────────────────────
+
+/**
+ * Convert persisted `AgentEvent[]` into AI SDK message arrays suitable for
+ * passing as prior conversation turns.
+ *
+ * Events are grouped into agent turns (separated by `inference_receipt` or
+ * `done` boundaries). Each turn is reconstructed as:
+ *   - An assistant message with optional text + tool-call parts
+ *   - A user message with tool-result parts (if any tool calls were made)
+ *
+ * `callId` from the persisted events is reused as `toolCallId`; it's a stable
+ * UUID per call so the assistant↔result pairing is consistent within each
+ * reconstructed turn.
+ */
+function buildHistoryMessages(events: AgentEvent[]): ModelMessage[] {
+  const messages: ModelMessage[] = [];
+
+  // Accumulator for the current in-progress agent turn.
+  let assistantText = '';
+  const toolCalls: Array<{ callId: string; tool: string; args: unknown }> = [];
+  const toolResults: Array<{ callId: string; result: string }> = [];
+
+  function flushTurn(): void {
+    if (!assistantText && toolCalls.length === 0) return;
+
+    if (toolCalls.length === 0) {
+      if (assistantText.trim()) messages.push({ role: 'assistant', content: assistantText });
+    } else {
+      const parts: Array<{ type: 'text'; text: string } | ToolCallPart> = [];
+      if (assistantText.trim()) parts.push({ type: 'text', text: assistantText });
+      for (const tc of toolCalls) {
+        parts.push({
+          type: 'tool-call',
+          toolCallId: tc.callId,
+          toolName: tc.tool.split('.').pop()!,
+          input: tc.args as Record<string, unknown>,
+        });
+      }
+      messages.push({ role: 'assistant', content: parts });
+
+      if (toolResults.length > 0) {
+        const resultParts: ToolResultPart[] = toolResults.map((tr, i) => ({
+          type: 'tool-result',
+          toolCallId: tr.callId,
+          toolName: toolCalls[i]?.tool.split('.').pop() ?? 'unknown',
+          output: { type: 'text', value: tr.result },
+        }));
+        messages.push({ role: 'tool', content: resultParts });
+      }
+    }
+
+    assistantText = '';
+    toolCalls.length = 0;
+    toolResults.length = 0;
+  }
+
+  for (const event of events) {
+    switch (event.type) {
+      case 'user_prompt':
+        flushTurn();
+        messages.push({ role: 'user', content: event.content });
+        break;
+      case 'message':
+        assistantText += event.content;
+        break;
+      case 'tool_call':
+        toolCalls.push({ callId: event.callId, tool: event.tool, args: event.args });
+        break;
+      case 'tool_result':
+        toolResults.push({
+          callId: event.callId,
+          result: event.outcome.ok
+            ? JSON.stringify(event.outcome.result)
+            : `Error: ${event.outcome.error}`,
+        });
+        break;
+      case 'inference_receipt':
+      case 'done':
+        flushTurn();
+        break;
+    }
+  }
+  flushTurn();
+
+  return messages;
 }
 
 // ── Main entry point ─────────────────────────────────────────────────────────
@@ -715,7 +880,10 @@ export async function runAgentTurn(
       // providers don't implement, causing "text part not found" errors.
       model: openai.chat(config.model),
       system: buildSystemPrompt(files),
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        ...buildHistoryMessages(await adapter.getChatHistory(workspaceId)),
+        { role: 'user', content: prompt },
+      ],
       // Allow 40 steps to accommodate up to 3 repair attempts (7 steps each)
       // on top of a normal turn. The `repairFailed` flag provides an early exit.
       stopWhen: [stepCountIs(40), () => repairFailed],
@@ -909,15 +1077,17 @@ export async function runAgentTurn(
             }
           }
 
-          // ── Revert detection (from send_tx_local calls) ───────────────
-          // deploy_local reverts surface as isError:true; send_tx_local
-          // reverts surface as isError:false with status:'reverted' in the
-          // JSON body because the tx is mined regardless of outcome.
-          if (tc.toolName === 'send_tx_local') {
-            const revertInfo = extractSendTxRevert('send_tx_local', rawResult);
+          // ── Revert detection (from contract calls) ─────────────────────
+          // deploy_local reverts surface as isError:true.
+          // call_contract / send_tx_local reverts can surface either as
+          //   - isError:false with status:'reverted' (mined-then-reverted), or
+          //   - isError:true with revert text (rejected pre-mining by Hardhat).
+          // extractSendTxRevert handles both branches.
+          if (tc.toolName === 'call_contract' || tc.toolName === 'send_tx_local') {
+            const revertInfo = extractSendTxRevert(tc.toolName, rawResult);
             if (revertInfo.reverted) {
               if (repairCtx === null) {
-                // First send_tx_local revert — start repair loop.
+                // First contract-call revert — start repair loop.
                 repairCtx = {
                   phase: 'snapshot',
                   attempts: 1,
@@ -1019,7 +1189,13 @@ export async function runAgentTurn(
       },
     });
 
+    // true while we're inside a <think>…</think> block in the text stream.
+    let inThinking = false;
     for await (const chunk of result.fullStream) {
+      // Scan text-delta chunks for <think>…</think> tags injected by
+      // normalizingFetch (from delta.reasoning_content) or emitted directly
+      // by the model. While inThinking is true, text fragments are routed to
+      // 'thinking' events instead of 'message_delta' events.
       switch (chunk.type) {
         case 'reasoning-delta':
           // Model's chain-of-thought / reasoning tokens — show as collapsible
@@ -1027,11 +1203,39 @@ export async function runAgentTurn(
           emit({ ...baseEvent(), type: 'thinking', text: chunk.text });
           break;
 
-        case 'text-delta':
-          // Stream each response token immediately so the chat rail updates
-          // in real time. Token counts come from the 'finish' chunk.
-          emit({ ...baseEvent(), type: 'message_delta', text: chunk.text });
+        case 'text-delta': {
+          // Scan for <think>…</think> tags injected by normalizingFetch when
+          // the provider uses delta.reasoning_content (Qwen3, DeepSeek-R1 etc.
+          // on OpenAI-compat endpoints). Route thinking segments to 'thinking'
+          // events and regular text to 'message_delta' events.
+          let remaining = chunk.text;
+          while (remaining.length > 0) {
+            if (inThinking) {
+              const endIdx = remaining.indexOf('</think>');
+              if (endIdx >= 0) {
+                const thinkPart = remaining.slice(0, endIdx);
+                if (thinkPart) emit({ ...baseEvent(), type: 'thinking', text: thinkPart });
+                inThinking = false;
+                remaining = remaining.slice(endIdx + '</think>'.length);
+              } else {
+                emit({ ...baseEvent(), type: 'thinking', text: remaining });
+                remaining = '';
+              }
+            } else {
+              const startIdx = remaining.indexOf('<think>');
+              if (startIdx >= 0) {
+                const beforeThink = remaining.slice(0, startIdx);
+                if (beforeThink) emit({ ...baseEvent(), type: 'message_delta', text: beforeThink });
+                inThinking = true;
+                remaining = remaining.slice(startIdx + '<think>'.length);
+              } else {
+                emit({ ...baseEvent(), type: 'message_delta', text: remaining });
+                remaining = '';
+              }
+            }
+          }
           break;
+        }
 
         case 'finish':
           promptTokens = chunk.totalUsage.inputTokens ?? 0;
