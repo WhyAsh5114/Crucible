@@ -9,57 +9,65 @@
 ```mermaid
 graph TD
     subgraph "Frontend (Browser - SvelteKit)"
-        U[User Prompt] --> A[Crucible Agent - OpenClaw extension]
-        A -->|writes code| E[Code Editor - CodeMirror]
-    S[Workspace Shell] -->|renders| P[Live dApp Preview]
+        U[User Prompt] --> UI_Shell[Workspace Shell]
+        UI_Shell -->|writes code| E[Code Editor - CodeMirror]
+        UI_Shell -->|renders| P[Live dApp Preview]
         P --> T[Transaction Inspector]
-    A -->|logs + commands| TT[Terminal - xterm.js]
-    W[Embedded Dev Wallet] -->|approval state| S
+        UI_Shell -->|logs + commands| TT[Terminal - xterm.js]
+        W[Embedded Dev Wallet] -->|approval state| UI_Shell
+    end
+
+    subgraph "Backend Control Plane (Node.js)"
+        A[packages/agent - OpenClaw extension]
+        IR[Inference Router]
+        FS[Workspace Filesystem]
+        V[Preview Dev Server Manager]
+        PTY[PTY Session Manager]
     end
 
     subgraph "0G Network"
-        C0G[0G Compute - sealed inference]
-        S0G[0G Storage - KV memory + Log history]
+        C0G[0G Compute - primary inference: qwen3.6-plus, GLM-5-FP8]
+        S0G[0G Storage - KV recall index + Log full history]
     end
 
-    OAI[OpenAI-compatible Fallback - OpenRouter or similar]
+    OAI[OpenAI-compatible Fallback - degraded mode only]
 
-    subgraph "Backend (Node.js Server)"
-      IR[Inference Router]
-      FS[Workspace Filesystem]
-      V[Preview Dev Server Manager]
-      PTY[PTY Session Manager]
+    subgraph "Workspace Runner Container"
         N[Hardhat Node - local EVM, fork, snapshots]
         M1[chain-mcp]
         M2[compiler-mcp]
         M3[deployer-mcp - incl. KeeperHub ship tools]
         M4[wallet-mcp]
-        M5[memory-mcp - 0G Storage wrapper]
+        M5[memory-mcp]
         M6[mesh-mcp - AXL peer queries]
-      M7[terminal-mcp]
+        M7[terminal-mcp]
         X[AXL Node - P2P knowledge mesh]
     end
 
+    UI_Shell <-->|Control plane ↔ Runner container boundary| A
     A -->|inference| IR
-    IR -->|primary| C0G
+    IR -->|primary path| C0G
     IR -.->|fallback| OAI
-    A <-->|MCP over HTTP| M1
-    A <-->|MCP over HTTP| M2
-    A <-->|MCP over HTTP| M3
-    A <-->|MCP over HTTP| M4
-    A <-->|MCP over HTTP| M5
-    A <-->|MCP over HTTP| M6
-    A <-->|MCP over HTTP| M7
+
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M1
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M2
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M3
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M4
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M5
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M6
+    A <-->|Agent ↔ MCP tool boundary over HTTP| M7
+
     M3 -->|simulate, execute, audit via KeeperHub REST| EXT[Public Chains - Sepolia/Mainnet]
-    M5 <--> S0G
+    M5 <-->|memory read/write| S0G
     M6 <--> X
     X <-.->|peer Crucible nodes| X
+
     FS --- M2
     FS --- M3
     FS --- V
     FS --- PTY
-    P -->|EIP-1193 bridge postMessage| S
-    S -->|POST /workspace/:id/rpc via control plane| N
+    P -->|EIP-1193 bridge postMessage| UI_Shell
+    UI_Shell -->|POST /workspace/:id/rpc via control plane| N
     V -->|workspace preview URL| P
     PTY -->|terminal WebSocket| TT
     N --- M1
