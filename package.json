@@ -13,7 +13,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev --filter=@crucible/backend --filter=@crucible/frontend",
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "lint": "turbo run lint",
