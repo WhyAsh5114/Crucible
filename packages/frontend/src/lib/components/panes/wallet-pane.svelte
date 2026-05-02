@@ -4,24 +4,21 @@
 	 *
 	 * Crucible IS the wallet for the preview iframe: the bridge installs
 	 * `window.ethereum` so the dApp talks to us, not MetaMask. This pane
-	 * displays the auto-connected Hardhat dev account, its current balance,
-	 * and the queue of pending approval requests intercepted by the bridge.
-	 * The user clicks Approve / Reject on each request; the bridge resolves
-	 * the corresponding promise and either forwards the call to `/rpc` or
-	 * returns a `4001 user rejected` error to the dApp.
+	 * displays the auto-connected Hardhat dev account and its current
+	 * balance.
 	 *
-	 * Rendering rules:
-	 *  - `eth_sendTransaction` shows from / to / value / data fields decoded
-	 *    from `params[0]` (a JSON-RPC tx object).
-	 *  - `personal_sign` shows the message string (UTF-8 decoded when the
-	 *    payload is hex, otherwise raw).
-	 *  - `eth_signTypedData_v4` shows the typed-data JSON.
+	 * Pending approval requests (eth_sendTransaction / personal_sign /
+	 * eth_signTypedData_v4) are NOT rendered here — they surface as a
+	 * centered Dialog via `wallet-approval-dialog.svelte` mounted at the
+	 * IDE layout level so the user can approve in place without leaving
+	 * whatever pane they were on.
 	 */
 	import { onDestroy, onMount } from 'svelte';
-	import { formatEther, getAddress, hexToString, isHex } from 'viem';
+	import { getAddress } from 'viem';
 	import type { WorkspaceState } from '@crucible/types';
-	import { getWalletStore, type PendingRequest } from '$lib/state/wallet.svelte';
+	import { getWalletStore } from '$lib/state/wallet.svelte';
 	import * as Card from '$lib/components/ui/card';
+	import * as Avatar from '$lib/components/ui/avatar';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Separator } from '$lib/components/ui/separator';
@@ -31,6 +28,10 @@
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import WalletIcon from '@lucide/svelte/icons/wallet';
 	import Loader2 from '@lucide/svelte/icons/loader-2';
+	import LinkIcon from '@lucide/svelte/icons/link';
+	import LayersIcon from '@lucide/svelte/icons/layers';
+	import HashIcon from '@lucide/svelte/icons/hash';
+	import ZapIcon from '@lucide/svelte/icons/zap';
 
 	interface Props {
 		workspace: WorkspaceState | null;
@@ -98,71 +99,6 @@
 		}
 	}
 
-	interface DecodedTx {
-		from?: string;
-		to?: string;
-		value?: string;
-		data?: string;
-		gas?: string;
-	}
-
-	function decodeTx(req: PendingRequest): DecodedTx {
-		const raw = req.params[0] as Record<string, unknown> | undefined;
-		if (!raw || typeof raw !== 'object') return {};
-		const out: DecodedTx = {};
-		if (typeof raw.from === 'string') out.from = raw.from;
-		if (typeof raw.to === 'string') out.to = raw.to;
-		if (typeof raw.value === 'string') {
-			try {
-				out.value = `${formatEther(BigInt(raw.value))} ETH`;
-			} catch {
-				out.value = raw.value;
-			}
-		}
-		if (typeof raw.data === 'string' && raw.data !== '0x') out.data = raw.data;
-		if (typeof raw.gas === 'string') out.gas = raw.gas;
-		return out;
-	}
-
-	function decodePersonalSign(req: PendingRequest): string {
-		const candidate = req.params[0];
-		if (typeof candidate !== 'string') return '(invalid payload)';
-		// personal_sign accepts either a hex-encoded string or a plain string.
-		if (isHex(candidate)) {
-			try {
-				return hexToString(candidate);
-			} catch {
-				return candidate;
-			}
-		}
-		return candidate;
-	}
-
-	function decodeTypedData(req: PendingRequest): string {
-		const candidate = req.params[1];
-		if (typeof candidate === 'string') {
-			try {
-				return JSON.stringify(JSON.parse(candidate), null, 2);
-			} catch {
-				return candidate;
-			}
-		}
-		if (candidate && typeof candidate === 'object') {
-			return JSON.stringify(candidate, null, 2);
-		}
-		return '(invalid payload)';
-	}
-
-	function methodLabel(method: PendingRequest['method']): string {
-		switch (method) {
-			case 'eth_sendTransaction':
-				return 'Send transaction';
-			case 'personal_sign':
-				return 'Sign message';
-			case 'eth_signTypedData_v4':
-				return 'Sign typed data';
-		}
-	}
 </script>
 
 <section class="flex h-full min-h-0 flex-col bg-background">
@@ -199,24 +135,55 @@
 				description="Open a workspace to connect to its local dev wallet."
 			/>
 		{:else}
-			<!-- Account card ────────────────────────────────────────────────── -->
-			<div class="space-y-3 p-3">
-				<Card.Root>
-					<Card.Header class="pb-3">
-						<Card.Description class="font-mono text-[10px] tracking-wider uppercase">
-							Connected account
-						</Card.Description>
-						<div class="flex items-center justify-between gap-2">
-							{#if wallet.account}
-								<Card.Title class="font-mono text-sm">
-									{shortAddress(getAddress(wallet.account))}
-								</Card.Title>
+			<div class="flex flex-col gap-3 p-3">
+				<!-- ── Hero account card ─────────────────────────────────────── -->
+				<Card.Root class="overflow-hidden">
+					{#if wallet.account}
+						{@const addr = getAddress(wallet.account)}
+						<!--
+							Decorative gradient strip uses --primary and --live so it
+							adapts to the current theme. Sits above the avatar to give
+							the card identity without raw colors.
+						-->
+						<div class="h-12 w-full bg-gradient-to-r from-primary/40 via-primary/10 to-live/30"></div>
+						<Card.Header class="-mt-6 pb-3">
+							<div class="flex items-end justify-between gap-3">
+								<Avatar.Root class="size-12 ring-2 ring-background">
+									<!--
+										Vercel's avatar service generates a deterministic
+										geometric pattern from any seed. Same pattern the
+										workspace sidebar uses for users — consistent treatment
+										across the IDE.
+									-->
+									<Avatar.Image
+										src="https://avatar.vercel.sh/{encodeURIComponent(addr)}"
+										alt="Account avatar"
+									/>
+									<Avatar.Fallback class="font-mono text-[10px]">
+										{addr.slice(2, 4).toUpperCase()}
+									</Avatar.Fallback>
+								</Avatar.Root>
+								<Badge variant="outline" class="gap-1.5 border-live/40 font-mono text-[10px] text-live">
+									<span
+										class="size-1.5 rounded-full bg-live shadow-[0_0_6px_var(--live)]"
+										aria-hidden="true"
+									></span>
+									ACTIVE
+								</Badge>
+							</div>
+							<div class="mt-2 flex items-center justify-between gap-2">
+								<div class="flex flex-col gap-0.5">
+									<Card.Description class="font-mono text-[10px] tracking-wider uppercase">
+										Dev account
+									</Card.Description>
+									<Card.Title class="font-mono text-sm">{shortAddress(addr)}</Card.Title>
+								</div>
 								<Button
 									size="icon"
 									variant="ghost"
 									onclick={handleCopy}
 									aria-label="Copy address"
-									class="size-7"
+									class="size-8"
 								>
 									{#if copied}
 										<CheckIcon class="size-3.5 text-live" />
@@ -224,167 +191,112 @@
 										<CopyIcon class="size-3.5" />
 									{/if}
 								</Button>
-							{:else if !chainReady || wallet.refreshing || wallet.failedAttempts < 3}
-								<!-- Stay in "Connecting…" while the page-level retry loop is still
-								     working through its budget (configured to ~6 attempts with
-								     backoff). Showing the destructive error UI on the first failed
-								     refresh causes a visible flicker during the chain warmup window
-								     where the rpc proxy briefly 503s. -->
-								<Card.Title class="flex items-center gap-2 font-mono text-sm text-muted-foreground">
-									<Loader2 class="size-3.5 animate-spin" />
-									{chainReady ? 'Connecting…' : 'Booting chain…'}
-								</Card.Title>
-							{:else}
-								<div class="space-y-2">
-									<Card.Title class="font-mono text-sm text-destructive">
-										Couldn't load dev account
-									</Card.Title>
-									<p class="text-xs text-muted-foreground">
-										{wallet.lastError ??
-											'The chain reported ready but eth_accounts returned nothing.'}
-									</p>
-									<Button
-										size="sm"
-										variant="outline"
-										onclick={() => void wallet.refresh()}
-										class="mt-1"
-									>
-										Retry
-									</Button>
+							</div>
+						</Card.Header>
+						<Separator />
+						<Card.Content class="pt-3">
+							<div class="flex flex-col gap-1">
+								<div class="font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
+									Balance
 								</div>
-							{/if}
-						</div>
-					</Card.Header>
-					<Card.Content class="pt-0">
-						<div class="space-y-1">
-							<div class="font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
-								Balance
+								<div class="font-mono text-2xl font-semibold text-foreground tabular-nums">
+									{#if wallet.balanceEth !== null}
+										{wallet.balanceEth}
+										<span class="text-base text-muted-foreground">ETH</span>
+									{:else if wallet.loadingBalance}
+										<Loader2 class="inline size-5 animate-spin text-muted-foreground" />
+									{:else}
+										<span class="text-muted-foreground">—</span>
+									{/if}
+								</div>
+								<p class="font-mono text-[10px] text-muted-foreground/70">
+									Pre-funded by Hardhat · 10000 ETH at genesis
+								</p>
 							</div>
-							<div class="font-mono text-2xl font-semibold text-foreground tabular-nums">
-								{#if wallet.balanceEth !== null}
-									{wallet.balanceEth} <span class="text-base text-muted-foreground">ETH</span>
-								{:else}
-									<span class="text-muted-foreground">—</span>
-								{/if}
-							</div>
-							<div class="font-mono text-[10px] text-muted-foreground">
-								{chainIdLabel(wallet.chainId)}
-							</div>
-						</div>
-					</Card.Content>
+						</Card.Content>
+					{:else if !chainReady || wallet.refreshing || wallet.failedAttempts < 3}
+						<!-- Stay in "Connecting…" while the page-level retry loop is
+						     still working through its budget. -->
+						<Card.Header>
+							<Card.Title class="flex items-center gap-2 font-mono text-sm text-muted-foreground">
+								<Loader2 class="size-3.5 animate-spin" />
+								{chainReady ? 'Connecting to chain…' : 'Booting Hardhat node…'}
+							</Card.Title>
+							<Card.Description>
+								The dev wallet auto-attaches to the workspace's local chain on first boot.
+							</Card.Description>
+						</Card.Header>
+					{:else}
+						<Card.Header>
+							<Card.Title class="font-mono text-sm text-destructive">
+								Couldn't load dev account
+							</Card.Title>
+							<Card.Description>
+								{wallet.lastError ?? 'The chain reported ready but eth_accounts returned nothing.'}
+							</Card.Description>
+						</Card.Header>
+						<Card.Content>
+							<Button size="sm" variant="outline" onclick={() => void wallet.refresh()}>
+								<RefreshIcon class="size-3.5" data-icon="inline-start" />
+								Retry
+							</Button>
+						</Card.Content>
+					{/if}
 				</Card.Root>
 
-				<!-- Pending request queue ──────────────────────────────────── -->
-				{#if wallet.pending.length === 0}
-					<div class="flex flex-col items-center gap-2 px-2 py-8 text-center">
-						<div class="font-mono text-[10px] tracking-wider text-muted-foreground/60 uppercase">
-							No pending requests
-						</div>
-						<p class="text-xs text-muted-foreground/80">
-							Sign and transaction requests from the preview will appear here.
-						</p>
-					</div>
-				{:else}
-					<div class="space-y-2">
-						<div class="space-y-1 px-1">
-							<div class="font-mono text-[10px] tracking-wider text-muted-foreground uppercase">
-								Pending ({wallet.pending.length})
+				<!-- ── Network card ──────────────────────────────────────────── -->
+				{#if wallet.account}
+					<Card.Root>
+						<Card.Header class="pb-2">
+							<Card.Description
+								class="flex items-center gap-1.5 font-mono text-[10px] tracking-wider uppercase"
+							>
+								<LinkIcon class="size-3" />
+								Network
+							</Card.Description>
+						</Card.Header>
+						<Card.Content class="flex flex-col gap-2 pt-0">
+							<div class="flex items-center justify-between gap-2 font-mono text-xs">
+								<span class="flex items-center gap-1.5 text-muted-foreground">
+									<LayersIcon class="size-3" />
+									Chain
+								</span>
+								<span class="text-foreground">{chainIdLabel(wallet.chainId)}</span>
 							</div>
-							<p class="text-xs text-muted-foreground">
-								Approve to forward the request to the local Hardhat node.
-							</p>
-						</div>
-						{#each wallet.pending as req (req.id)}
-							<Card.Root class="border-warning/40 bg-warning/5">
-								<Card.Header class="pb-3">
-									<div class="flex items-center justify-between gap-2">
-										<Card.Title class="font-mono text-xs">{methodLabel(req.method)}</Card.Title>
-										<Badge variant="outline" class="font-mono text-[10px]">
-											{new URL(req.origin).host}
-										</Badge>
-									</div>
-								</Card.Header>
-								<Card.Content class="space-y-3 pt-0">
-									{#if req.method === 'eth_sendTransaction'}
-										{@const tx = decodeTx(req)}
-										<dl class="space-y-2 font-mono text-[11px]">
-											{#if tx.from}
-												<div class="flex items-center justify-between gap-2">
-													<dt class="text-muted-foreground">From</dt>
-													<dd class="break-all text-foreground">{shortAddress(tx.from)}</dd>
-												</div>
-											{/if}
-											{#if tx.to}
-												<div class="flex items-center justify-between gap-2">
-													<dt class="text-muted-foreground">To</dt>
-													<dd class="break-all text-foreground">{shortAddress(tx.to)}</dd>
-												</div>
-											{/if}
-											<div class="flex items-center justify-between gap-2">
-												<dt class="text-muted-foreground">Value</dt>
-												<dd class="text-foreground">{tx.value ?? '0 ETH'}</dd>
-											</div>
-											{#if tx.gas}
-												<div class="flex items-center justify-between gap-2">
-													<dt class="text-muted-foreground">Gas limit</dt>
-													<dd class="text-foreground">
-														{Number.parseInt(tx.gas, 16).toLocaleString()}
-													</dd>
-												</div>
-											{/if}
-											{#if tx.data}
-												<Separator />
-												<div class="space-y-1">
-													<dt class="text-muted-foreground">Data</dt>
-													<dd
-														class="max-h-24 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 break-all"
-													>
-														{tx.data}
-													</dd>
-												</div>
-											{/if}
-										</dl>
-									{:else if req.method === 'personal_sign'}
-										<div class="space-y-1 font-mono text-[11px]">
-											<div class="text-muted-foreground">Message</div>
-											<pre
-												class="max-h-32 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 whitespace-pre-wrap text-foreground">{decodePersonalSign(
-													req
-												)}</pre>
-										</div>
+							<div class="flex items-center justify-between gap-2 font-mono text-xs">
+								<span class="flex items-center gap-1.5 text-muted-foreground">
+									<HashIcon class="size-3" />
+									Block height
+								</span>
+								<span class="text-foreground tabular-nums">
+									{#if workspace.chainState}
+										{workspace.chainState.blockNumber.toLocaleString()}
 									{:else}
-										<div class="space-y-1 font-mono text-[11px]">
-											<div class="text-muted-foreground">Typed data</div>
-											<pre
-												class="max-h-48 overflow-y-auto rounded-md border border-border bg-muted/30 p-2 whitespace-pre-wrap text-foreground">{decodeTypedData(
-													req
-												)}</pre>
-										</div>
+										<span class="text-muted-foreground">—</span>
 									{/if}
-
-									<div class="flex items-center gap-2 pt-1">
-										<Button
-											variant="default"
-											size="sm"
-											class="flex-1"
-											onclick={() => wallet.approve(req.id)}
-										>
-											Approve
-										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											class="flex-1"
-											onclick={() => wallet.reject(req.id)}
-										>
-											Reject
-										</Button>
-									</div>
-								</Card.Content>
-							</Card.Root>
-						{/each}
-					</div>
+								</span>
+							</div>
+							<div class="flex items-center justify-between gap-2 font-mono text-xs">
+								<span class="flex items-center gap-1.5 text-muted-foreground">
+									<ZapIcon class="size-3" />
+									RPC
+								</span>
+								<span class="truncate text-foreground/80">via Crucible bridge</span>
+							</div>
+						</Card.Content>
+					</Card.Root>
 				{/if}
+
+				<!-- ── Approval-flow note ────────────────────────────────────── -->
+				<div
+					class="flex items-start gap-2 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground"
+				>
+					<WalletIcon class="size-3.5 shrink-0 text-primary" />
+					<p class="leading-relaxed">
+						Sign and transaction requests from the preview appear as a popup so you can review and
+						approve them in place — no need to switch tabs.
+					</p>
+				</div>
 			</div>
 		{/if}
 	</div>
