@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { TxTraceSchema } from '../deployer.ts';
+import { AbiSchema } from '../compiler.ts';
 import { AddressSchema, BigIntStringSchema, HashSchema, HexSchema } from '../primitives.ts';
 
 const TxRequestSchema = z.object({
@@ -35,6 +36,12 @@ export const DeployLocalOutputSchema = z.object({
   address: AddressSchema,
   txHash: HashSchema,
   gasUsed: BigIntStringSchema,
+  /** Bare contract name as resolved by the deployer (e.g. "DemoVault"). */
+  contractName: z.string().min(1),
+  /** Full ABI for the deployed contract — use directly with wallet.call_contract. */
+  abi: AbiSchema,
+  /** Function signatures discovered in the ABI (e.g. ["deposit()", "withdraw(uint256)"]). */
+  functions: z.array(z.string()),
 });
 export type DeployLocalInput = z.infer<typeof DeployLocalInputSchema>;
 export type DeployLocalOutput = z.infer<typeof DeployLocalOutputSchema>;
@@ -100,10 +107,37 @@ export const DeployOgChainOutputSchema = z.object({
 export type DeployOgChainInput = z.infer<typeof DeployOgChainInputSchema>;
 export type DeployOgChainOutput = z.infer<typeof DeployOgChainOutputSchema>;
 
+// ── Deployment registry ─────────────────────────────────────────────────────
+//
+// The deployer keeps an in-memory registry of every contract deployed in the
+// current session. The agent uses this to look up addresses by name without
+// having to remember them across turns.
+
+export const DeploymentRecordSchema = z.object({
+  /** Bare contract name (e.g. "DemoVault"). */
+  contractName: z.string().min(1),
+  address: AddressSchema,
+  txHash: HashSchema,
+  /** Network this deployment lives on. "local" = Hardhat (chainId 31337). */
+  network: z.enum(['local', '0g-galileo']),
+  deployedAt: z.string().datetime(),
+});
+export type DeploymentRecord = z.infer<typeof DeploymentRecordSchema>;
+
+export const ListDeploymentsInputSchema = z.object({
+  network: z.enum(['local', '0g-galileo']).optional(),
+});
+export const ListDeploymentsOutputSchema = z.object({
+  deployments: z.array(DeploymentRecordSchema),
+});
+export type ListDeploymentsInput = z.infer<typeof ListDeploymentsInputSchema>;
+export type ListDeploymentsOutput = z.infer<typeof ListDeploymentsOutputSchema>;
+
 export const tools = {
   deploy_local: { input: DeployLocalInputSchema, output: DeployLocalOutputSchema },
   simulate_local: { input: SimulateLocalInputSchema, output: SimulateLocalOutputSchema },
   trace: { input: TraceInputSchema, output: TraceOutputSchema },
   call: { input: CallInputSchema, output: CallOutputSchema },
   deploy_og_chain: { input: DeployOgChainInputSchema, output: DeployOgChainOutputSchema },
+  list_deployments: { input: ListDeploymentsInputSchema, output: ListDeploymentsOutputSchema },
 } as const;

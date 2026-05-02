@@ -34,8 +34,30 @@ export const RevertOutputSchema = z.object({ success: z.boolean() });
 export type RevertInput = z.infer<typeof RevertInputSchema>;
 export type RevertOutput = z.infer<typeof RevertOutputSchema>;
 
-export const MineInputSchema = z.object({ blocks: z.number().int().positive() });
-export const MineOutputSchema = z.object({ newBlockNumber: BlockNumberSchema });
+/**
+ * Mine blocks and/or advance time on the local chain.
+ *
+ * - `blocks`: mine N empty blocks (each ~1s of timestamp progress on Hardhat by default).
+ * - `seconds`: advance EVM time by N seconds via `evm_increaseTime`, then mine one block
+ *   so the new timestamp is observable. Use this for time-locked logic (cooldowns, vesting,
+ *   etc.) — it's far more reliable than counting blocks.
+ *
+ * At least one of `blocks` or `seconds` must be provided. If both are given,
+ * `seconds` is applied first, then `blocks` empty blocks are mined.
+ */
+export const MineInputSchema = z
+  .object({
+    blocks: z.number().int().positive().optional(),
+    seconds: z.number().int().positive().optional(),
+  })
+  .refine((v) => v.blocks !== undefined || v.seconds !== undefined, {
+    message: 'Provide blocks, seconds, or both',
+  });
+export const MineOutputSchema = z.object({
+  newBlockNumber: BlockNumberSchema,
+  /** New block timestamp after mining (Unix seconds). */
+  newTimestamp: z.number().int().nonnegative(),
+});
 export type MineInput = z.infer<typeof MineInputSchema>;
 export type MineOutput = z.infer<typeof MineOutputSchema>;
 

@@ -34,8 +34,27 @@ export type GetBytecodeInput = z.infer<typeof GetBytecodeInputSchema>;
 export type GetBytecodeOutput = z.infer<typeof GetBytecodeOutputSchema>;
 
 export const ListContractsInputSchema = z.object({});
+
+export const ContractSummarySchema = z.object({
+  /** Fully-qualified name (e.g. "contracts/DemoVault.sol:DemoVault"). */
+  name: z.string().min(1),
+  /** Bare contract name (e.g. "DemoVault") — use this in deploy_local / call_contract. */
+  shortName: z.string().min(1),
+  /** ABI for the contract — use this directly with wallet.call_contract. */
+  abi: AbiSchema,
+  /**
+   * All callable function signatures, canonicalised (e.g. ["deposit()", "withdraw(uint256)"]).
+   * Convenience for the agent so it doesn't need to walk the ABI itself.
+   */
+  functions: z.array(z.string()),
+});
+export type ContractSummary = z.infer<typeof ContractSummarySchema>;
+
 export const ListContractsOutputSchema = z.object({
+  /** Bare contract names — kept for backwards compatibility. */
   contracts: z.array(z.string().min(1)),
+  /** Rich per-contract metadata including ABI and function signatures. */
+  summaries: z.array(ContractSummarySchema),
 });
 export type ListContractsOutput = z.infer<typeof ListContractsOutputSchema>;
 
