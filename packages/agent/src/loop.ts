@@ -489,6 +489,8 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
  *   compile    — compiler.compile
  *   revert     — chain.revert   (reset to snapshot)
  *   deploy     — deployer.deploy_local (verify the fix)
+ *   resume     — one forced step of call_contract/read_contract/send_value so
+ *                the model continues the ORIGINAL task rather than re-deploying
  */
 type RepairPhase =
   | 'idle'
@@ -498,7 +500,8 @@ type RepairPhase =
   | 'patch'
   | 'compile'
   | 'revert'
-  | 'deploy';
+  | 'deploy'
+  | 'resume';
 
 /** Mutable repair-loop state threaded through experimental_context. */
 interface RepairContext {
@@ -519,7 +522,7 @@ interface RepairContext {
 
 /** Per-phase tool restriction tables. */
 const REPAIR_PHASE_TOOLS: Record<
-  Exclude<RepairPhase, 'idle'>,
+  Exclude<RepairPhase, 'idle' | 'resume'>,
   { activeTools: string[]; toolName: string }
 > = {
   snapshot: { activeTools: ['snapshot'], toolName: 'snapshot' },
@@ -530,6 +533,16 @@ const REPAIR_PHASE_TOOLS: Record<
   revert: { activeTools: ['revert'], toolName: 'revert' },
   deploy: { activeTools: ['deploy_local'], toolName: 'deploy_local' },
 };
+
+/** Tools permitted during the post-repair resume step. */
+const RESUME_TOOLS = [
+  'call_contract',
+  'read_contract',
+  'send_value',
+  'mine',
+  'list_accounts',
+  'get_balance',
+];
 
 // ── Repair loop helpers ───────────────────────────────────────────────────────
 
@@ -903,6 +916,15 @@ export async function runAgentTurn(
           return {};
         }
 
+        if (repairCtx.phase === 'resume') {
+          // One step after a successful repair: limit to contract-interaction
+          // tools so the model continues the original task, not a re-deploy.
+          return {
+            activeTools: RESUME_TOOLS as unknown as Array<'read_file' | 'write_file'>,
+            experimental_context: repairCtx,
+          };
+        }
+
         const phaseConfig = REPAIR_PHASE_TOOLS[repairCtx.phase];
         // Double-cast: TypeScript infers TOOLS from the statically-declared
         // tools only (read_file/write_file) because the ToolSet spread from
@@ -928,79 +950,85 @@ export async function runAgentTurn(
 
           // ── Phase transitions (inside repair loop) ──────────────────────
           if (repairCtx !== null) {
-            switch (tc.toolName) {
-              case 'snapshot': {
-                const snapshotId = extractSnapshotId(rawResult);
-                repairCtx.snapshotId = snapshotId;
-                repairCtx.phase = 'trace';
-                break;
-              }
-              case 'trace': {
-                // Parse trace from MCP output if possible; emit raw text otherwise.
-                const raw = rawResult as
-                  | {
-                      isError?: boolean;
-                      content?: Array<{ type: string; text?: string }>;
-                    }
-                  | undefined;
-                const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
-                let trace: import('@crucible/types').TxTrace;
-                try {
-                  trace = JSON.parse(text) as import('@crucible/types').TxTrace;
-                } catch {
-                  trace = {
-                    txHash: repairCtx.revertTxHash as import('@crucible/types').Hash,
-                    decodedCalls: [],
-                    storageReads: [],
-                    storageWrites: [],
-                    events: [],
-                    revertReason: text.slice(0, 500),
-                    gasUsed: '0',
-                  };
+            // In the resume phase, any contract-interaction tool call means the
+            // original task is back on track. Clear repairCtx to return to idle.
+            if (repairCtx.phase === 'resume') {
+              repairCtx = null;
+              // Don't break — still run the normal revert-detection below.
+            } else
+              switch (tc.toolName) {
+                case 'snapshot': {
+                  const snapshotId = extractSnapshotId(rawResult);
+                  repairCtx.snapshotId = snapshotId;
+                  repairCtx.phase = 'trace';
+                  break;
                 }
-                emit({ ...baseEvent(), type: 'trace_captured', trace });
-                repairCtx.phase = 'recall';
-                break;
-              }
-              case 'recall': {
-                const raw = rawResult as
-                  | {
-                      isError?: boolean;
-                      content?: Array<{ type: string; text?: string }>;
-                    }
-                  | undefined;
-                const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
-                let hits: import('@crucible/types').MemoryRecallHit[];
-                try {
-                  const parsed = JSON.parse(text) as { hits?: unknown[] };
-                  hits = (parsed.hits ?? []) as import('@crucible/types').MemoryRecallHit[];
-                } catch {
-                  hits = [];
+                case 'trace': {
+                  // Parse trace from MCP output if possible; emit raw text otherwise.
+                  const raw = rawResult as
+                    | {
+                        isError?: boolean;
+                        content?: Array<{ type: string; text?: string }>;
+                      }
+                    | undefined;
+                  const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
+                  let trace: import('@crucible/types').TxTrace;
+                  try {
+                    trace = JSON.parse(text) as import('@crucible/types').TxTrace;
+                  } catch {
+                    trace = {
+                      txHash: repairCtx.revertTxHash as import('@crucible/types').Hash,
+                      decodedCalls: [],
+                      storageReads: [],
+                      storageWrites: [],
+                      events: [],
+                      revertReason: text.slice(0, 500),
+                      gasUsed: '0',
+                    };
+                  }
+                  emit({ ...baseEvent(), type: 'trace_captured', trace });
+                  repairCtx.phase = 'recall';
+                  break;
                 }
-                emit({ ...baseEvent(), type: 'memory_recall', hits });
-                repairCtx.phase = 'patch';
-                break;
+                case 'recall': {
+                  const raw = rawResult as
+                    | {
+                        isError?: boolean;
+                        content?: Array<{ type: string; text?: string }>;
+                      }
+                    | undefined;
+                  const text = raw?.content?.find((c) => c.type === 'text')?.text ?? '{}';
+                  let hits: import('@crucible/types').MemoryRecallHit[];
+                  try {
+                    const parsed = JSON.parse(text) as { hits?: unknown[] };
+                    hits = (parsed.hits ?? []) as import('@crucible/types').MemoryRecallHit[];
+                  } catch {
+                    hits = [];
+                  }
+                  emit({ ...baseEvent(), type: 'memory_recall', hits });
+                  repairCtx.phase = 'patch';
+                  break;
+                }
+                case 'write_file': {
+                  const args = tc.input as { path?: string; content?: string };
+                  emit({
+                    ...baseEvent(),
+                    type: 'patch_proposed',
+                    source: 'reasoning',
+                    patch: args.content ?? '',
+                  });
+                  repairCtx.phase = 'compile';
+                  break;
+                }
+                case 'compile': {
+                  repairCtx.phase = 'revert';
+                  break;
+                }
+                case 'revert': {
+                  repairCtx.phase = 'deploy';
+                  break;
+                }
               }
-              case 'write_file': {
-                const args = tc.input as { path?: string; content?: string };
-                emit({
-                  ...baseEvent(),
-                  type: 'patch_proposed',
-                  source: 'reasoning',
-                  patch: args.content ?? '',
-                });
-                repairCtx.phase = 'compile';
-                break;
-              }
-              case 'compile': {
-                repairCtx.phase = 'revert';
-                break;
-              }
-              case 'revert': {
-                repairCtx.phase = 'deploy';
-                break;
-              }
-            }
           }
 
           // ── Revert detection (from any deploy_local call) ─────────────
@@ -1066,8 +1094,10 @@ export async function runAgentTurn(
                 type: 'patch_verified',
                 localReceipt: localReceipt as import('@crucible/types').Hash,
               });
-              // Clear repair state — loop will continue normally.
-              repairCtx = null;
+              // Transition to 'resume' for one step so the model continues
+              // the original task (call_contract etc.) instead of re-deploying.
+              // The resume step's onStepFinish clears repairCtx.
+              repairCtx.phase = 'resume';
             } else {
               // Normal successful deploy (no active repair context) — remember
               // which contract was just deployed in case a following
