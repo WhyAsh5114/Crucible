@@ -201,7 +201,7 @@
 						: 'border-border text-foreground'
 				)}
 			>
-				{#if stream.status === 'connecting'}
+				{#if stream.status === 'connecting' || stream.status === 'reconnecting'}
 					<LoaderCircleIcon class="mr-1 size-3 animate-spin text-muted-foreground" />
 				{:else if stream.status === 'connected'}
 					<CircleDashedIcon class="mr-1 size-3 text-live" />
@@ -214,7 +214,7 @@
 				{/if}
 				{stream.status === 'cutoff' ? 'stream cutoff' : stream.status}
 			</Badge>
-			{#if stream.status === 'error' || stream.status === 'cutoff' || stream.status === 'closed'}
+			{#if stream.status === 'error' || stream.status === 'cutoff' || stream.status === 'closed' || stream.status === 'reconnecting'}
 				<Button
 					variant="outline"
 					size="sm"
@@ -330,7 +330,7 @@
 			>
 				{#snippet icon()}
 					<div class="flex items-center justify-center">
-						{#if stream.status === 'connecting'}
+						{#if stream.status === 'connecting' || stream.status === 'reconnecting'}
 							<LoaderCircleIcon class="size-8 animate-spin text-live" />
 						{:else}
 							<CodeXmlIcon class="size-8 text-muted-foreground/60" />

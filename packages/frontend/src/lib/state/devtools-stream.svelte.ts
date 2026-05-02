@@ -9,7 +9,8 @@ export type DevtoolsStreamStatus =
 	| 'connected'
 	| 'cutoff'
 	| 'error'
-	| 'closed';
+	| 'closed'
+	| 'reconnecting';
 
 export class DevtoolsStream {
 	events = $state<DevtoolsEvent[]>([]);
@@ -68,50 +69,63 @@ export class DevtoolsStream {
 	}
 
 	private async pump(workspaceId: string, token: number, signal: AbortSignal): Promise<void> {
-		try {
-			const url = apiClient.api.workspace[':id'].devtools.events.$url({
-				param: { id: workspaceId }
-			});
-			const response = await this.fetchImpl(url.toString(), {
-				signal,
-				credentials: 'include',
-				headers: { Accept: 'text/event-stream' }
-			});
+		let retryCount = 0;
 
-			if (token !== this.startToken) return;
-			if (!response.ok || !response.body) {
-				this.status = 'error';
-				this.error = `Devtools stream HTTP ${response.status}`;
-				return;
-			}
+		while (token === this.startToken && !signal.aborted) {
+			try {
+				const url = apiClient.api.workspace[':id'].devtools.events.$url({
+					param: { id: workspaceId }
+				});
+				const response = await this.fetchImpl(url.toString(), {
+					signal,
+					credentials: 'include',
+					headers: { Accept: 'text/event-stream' }
+				});
 
-			this.status = 'connected';
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
 				if (token !== this.startToken) return;
-				buffer += decoder.decode(value, { stream: true });
+				if (!response.ok || !response.body) {
+					this.status = 'error';
+					this.error = `Devtools stream HTTP ${response.status}`;
+				} else {
+					this.status = 'connected';
+					retryCount = 0;
 
-				let separator: number;
-				while ((separator = buffer.indexOf('\n\n')) >= 0) {
-					const frame = buffer.slice(0, separator);
-					buffer = buffer.slice(separator + 2);
-					this.handleFrame(parseSseData(frame));
+					const reader = response.body.getReader();
+					const decoder = new TextDecoder();
+					let buffer = '';
+
+					while (true) {
+						const { value, done } = await reader.read();
+						if (done) break;
+						if (token !== this.startToken) return;
+						buffer += decoder.decode(value, { stream: true });
+
+						let separator: number;
+						while ((separator = buffer.indexOf('\n\n')) >= 0) {
+							const frame = buffer.slice(0, separator);
+							buffer = buffer.slice(separator + 2);
+							this.handleFrame(parseSseData(frame));
+						}
+					}
+
+					if (token === this.startToken && !signal.aborted) {
+						this.status = this.sawEvent ? 'cutoff' : 'closed';
+					}
 				}
+			} catch (err) {
+				if (signal.aborted || token !== this.startToken) return;
+				this.status = 'error';
+				this.error = err instanceof Error ? err.message : 'Failed to read devtools stream';
 			}
 
 			if (token === this.startToken && !signal.aborted) {
-				this.status = this.sawEvent ? 'cutoff' : 'closed';
+				retryCount++;
+				const delay = Math.min(1000 * Math.pow(1.5, retryCount), 10000);
+
+				this.status = 'reconnecting';
+
+				await new Promise((r) => setTimeout(r, delay));
 			}
-		} catch (err) {
-			if (signal.aborted || token !== this.startToken) return;
-			this.status = 'error';
-			this.error = err instanceof Error ? err.message : 'Failed to read devtools stream';
 		}
 	}
 
