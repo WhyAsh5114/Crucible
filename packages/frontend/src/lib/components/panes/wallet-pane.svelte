@@ -98,7 +98,6 @@
 			// clipboard API may be unavailable on some origins; fail silently.
 		}
 	}
-
 </script>
 
 <section class="flex h-full min-h-0 flex-col bg-background">
@@ -145,7 +144,9 @@
 							adapts to the current theme. Sits above the avatar to give
 							the card identity without raw colors.
 						-->
-						<div class="h-12 w-full bg-gradient-to-r from-primary/40 via-primary/10 to-live/30"></div>
+						<div
+							class="h-12 w-full bg-gradient-to-r from-primary/40 via-primary/10 to-live/30"
+						></div>
 						<Card.Header class="-mt-6 pb-3">
 							<div class="flex items-end justify-between gap-3">
 								<Avatar.Root class="size-12 ring-2 ring-background">
@@ -163,7 +164,10 @@
 										{addr.slice(2, 4).toUpperCase()}
 									</Avatar.Fallback>
 								</Avatar.Root>
-								<Badge variant="outline" class="gap-1.5 border-live/40 font-mono text-[10px] text-live">
+								<Badge
+									variant="outline"
+									class="gap-1.5 border-live/40 font-mono text-[10px] text-live"
+								>
 									<span
 										class="size-1.5 rounded-full bg-live shadow-[0_0_6px_var(--live)]"
 										aria-hidden="true"

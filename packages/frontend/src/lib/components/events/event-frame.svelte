@@ -34,7 +34,7 @@
 		class="flex items-center gap-1.5 text-[9px] font-medium tracking-widest text-muted-foreground/50 uppercase"
 	>
 		<span class={cn('font-mono', toneClass[tone])}>{label}</span>
-		<span class="ml-auto font-mono tabular-nums text-muted-foreground/70">{fmt(emittedAt)}</span>
+		<span class="ml-auto font-mono text-muted-foreground/70 tabular-nums">{fmt(emittedAt)}</span>
 	</header>
 	<div class="text-xs leading-relaxed text-foreground">
 		{@render children()}
