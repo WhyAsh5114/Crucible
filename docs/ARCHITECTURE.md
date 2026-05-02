@@ -867,38 +867,83 @@ crucible/
 
 ## Self-Healing Revert Loop
 
-This is Crucible's signature capability. The full flow:
+This is Crucible's signature capability. The agent loop in `packages/agent/src/loop.ts`
+detects reverts on `deploy_local`, `call_contract`, and `send_tx_local`, then
+walks a forced 7-phase repair sequence. The `prepareStep` callback restricts
+`activeTools` and forces `toolChoice` per phase so the LLM cannot stray.
 
 ```
-User action triggers revert
+deploy_local / call_contract / send_tx_local returns revert
         │
-        ▼
-Agent detects revert (tool_result.error)
+        ▼  (revert_detected event emitted)
+Phase 1 — chain.snapshot           save state for clean redeploy
+Phase 2 — deployer.trace           full EVM trace → trace_captured event
+Phase 3 — memory.recall            lookup by revert signature → memory_recall event
+Phase 4 — write_file               apply patch → patch_proposed event
+Phase 5 — compiler.compile         recompile patched source
+Phase 6 — chain.revert             rewind chain to snapshot
+Phase 7 — deployer.deploy_local    redeploy fixed contract
         │
-        ▼
-deployer-mcp.trace(txHash) → full EVM execution trace
+        ├── SUCCESS → patch_verified event → 'resume' phase
+        │             (one step constrained to call_contract / read_contract /
+        │              send_value / mine / list_accounts / get_balance so the
+        │              model continues the original task instead of redeploying)
         │
-        ▼
-memory-mcp.recall({ revert_signature }) → query 0G Storage KV
-        │
-        ├── HIT → apply known patch → verify → done
-        │
-        └── MISS → mesh-mcp.broadcast_help() over AXL
-                │
-                ├── PEER RESPONDS → verify_peer_patch() in snapshot
-                │       │
-                │       ├── VERIFIED → apply patch → remember() → done
-                │       └── FAILED → discard → fall through
-                │
-                └── NO RESPONSE / ALL FAILED → LLM reasoning from trace
-                        │
-                        └── Generate patch → deploy to snapshot → verify
-                                │
-                                ├── SUCCESS → remember() → done
-                                └── FAILED → report to user, ask for guidance
+        └── REVERT AGAIN → restart from Phase 1 (max 3 attempts)
+                          → on cap exhaustion: repair_failed event,
+                            stopWhen(repairFailed) terminates the turn
 ```
 
-Every successful fix is written back to 0G Storage via `memory-mcp.remember()` with `scope: 'mesh'`, making it available to all Crucible nodes.
+**Phase events** (typed in `packages/types/src/agent-events.ts`):
+
+- `revert_detected` — `{ txHash, revertSignature }`
+- `trace_captured` — `{ trace: TxTrace }`
+- `memory_recall` — `{ hits: MemoryRecallHit[] }`
+- `patch_proposed` — `{ source: 'reasoning' | 'memory' | 'mesh', patch: string }`
+- `patch_verified` — `{ localReceipt: Hash }`
+- `repair_failed` — `{ attempts, lastRevertSignature }`
+
+**Memory back-end:** when `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` are set,
+`memory-mcp` writes to 0G Storage KV; otherwise it falls back to a local JSONL
+file in `${workspaceDir}/.crucible/memory.jsonl`. The peer-mesh fallback shown
+in earlier drafts of this doc is wired through `mesh-mcp` _(planned, not yet
+implemented)_; in the current shipped loop, `recall` returns hits or `[]` and
+the LLM falls back to reasoning from the trace + source code.
+
+**Cleanup contract:** if the turn is cancelled or errors mid-repair, the
+`finally` block opens a one-shot MCP client to `chain.revert(snapshotId)` so
+the local Hardhat node always lands on a known state.
+
+---
+
+## Chat Sessions
+
+Each workspace owns one or more `ChatSession` rows (`backend/prisma/models/workspace.prisma`).
+A session corresponds to one persisted JSONL log on the host:
+
+```
+${workspaceDir}/.crucible/sessions/${sessionId}.jsonl
+```
+
+The agent bus (`packages/backend/src/lib/agent-bus.ts`) and chat log
+(`packages/backend/src/lib/chat-log.ts`) are keyed by `${workspaceId}:${sessionId}`,
+so events from one session never bleed into another. `message_delta` and
+`thinking` token-deltas are coalesced into single `message` / `thinking` rows
+on flush so a multi-minute turn doesn't write tens of thousands of one-token
+lines.
+
+REST surface (all under `/api/workspace/:id/sessions`):
+
+- `GET    /sessions` — list all sessions
+- `POST   /sessions` — create a new session (auto-titled `Chat N`)
+- `PATCH  /sessions/:sessionId` — rename
+- `DELETE /sessions/:sessionId` — drop (refused if it's the last session)
+
+Both `/api/agent/stream` and `/api/prompt` accept an optional `sessionId` query
+parameter; when omitted, the most recently updated session for the workspace
+is used (or auto-created if none exist). Pre-session workspaces are migrated
+on first session-create: the legacy `chat.jsonl` is renamed into the new
+sessions directory.
 
 ---
 
