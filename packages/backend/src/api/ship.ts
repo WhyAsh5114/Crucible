@@ -156,12 +156,14 @@ interface ExecutionStatus {
 /**
  * Hit the workspace's mcp-deployer loopback to simulate a bundle through
  * KeeperHub. Returns the parsed response or throws on HTTP/parse error.
+ *
+ * The deployer resolves bytecode from the compiler artifact store — we only
+ * pass the artifact reference (contractName) here.
  */
 async function callSimulateBundle(
   deployerPort: number,
   artifactName: string,
   deployerAddress: string,
-  bytecode: string,
 ): Promise<SimulateBundleResult> {
   const res = await loopbackFetch(`http://127.0.0.1:${deployerPort}/simulate_bundle`, {
     method: 'POST',
@@ -170,9 +172,7 @@ async function callSimulateBundle(
       artifacts: [
         {
           contractName: artifactName,
-          bytecode,
           constructorData: '0x',
-          value: '0',
         },
       ],
       deployerAddress,
@@ -234,22 +234,9 @@ async function callGetExecutionStatus(
 }
 
 /**
- * Fetch contract bytecode from the workspace's mcp-compiler.
+ * (Deprecated helper kept removed; the deployer's KeeperHub client now
+ * resolves bytecode by contractName via the in-container compiler.)
  */
-async function fetchBytecode(compilerPort: number, contractName: string): Promise<string> {
-  const res = await loopbackFetch(
-    `http://127.0.0.1:${compilerPort}/bytecode/${encodeURIComponent(contractName)}`,
-  );
-  if (!res.ok) {
-    if (res.status === 404) {
-      throw new Error(`Contract "${contractName}" not found in artifact store — compile it first.`);
-    }
-    throw new Error(`bytecode fetch failed HTTP ${res.status}`);
-  }
-  const data = (await res.json()) as { bytecode?: string };
-  if (!data.bytecode) throw new Error(`Compiler returned no bytecode for "${contractName}"`);
-  return data.bytecode;
-}
 
 // ---------------------------------------------------------------------------
 // Router
@@ -298,13 +285,9 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
   }
 
   const deployerPort = runtime.deployerPort;
-  const compilerPort = runtime.compilerPort;
 
   if (!deployerPort) {
     return c.json(createApiErrorBody('runtime_unavailable', 'Deployer port not available'), 503);
-  }
-  if (!compilerPort) {
-    return c.json(createApiErrorBody('runtime_unavailable', 'Compiler port not available'), 503);
   }
 
   // Resolve sessionId — use the provided one (validated) or fall back to most-recent / auto-create.
@@ -343,30 +326,20 @@ export const shipApi = shipBase.openapi(shipRoute, async (c) => {
   let simulateResult: SimulateBundleResult | null = null;
 
   if (!activeBundleId) {
-    // Fetch bytecode first
-    let bytecode: string;
     try {
-      bytecode = await fetchBytecode(compilerPort, artifactName);
-    } catch (err) {
-      return c.json(
-        createApiErrorBody('bad_request', err instanceof Error ? err.message : String(err)),
-        400,
-      );
-    }
-
-    try {
-      simulateResult = await callSimulateBundle(
-        deployerPort,
-        artifactName,
-        deployerAddress,
-        bytecode,
-      );
+      simulateResult = await callSimulateBundle(deployerPort, artifactName, deployerAddress);
     } catch (err) {
       const isUnavail = (err as { isKhUnavailable?: boolean }).isKhUnavailable;
       if (isUnavail) {
         return c.json(createApiErrorBody('keeperhub_unavailable', String(err)), 503);
       }
-      return c.json(createApiErrorBody('internal', String(err)), 500);
+      // 4xx-class errors from the deployer (e.g. "contract not compiled")
+      // surface as 400 to the frontend so the user sees an actionable message.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/HTTP 4\d\d/u.test(msg) || /not found in artifact store/iu.test(msg)) {
+        return c.json(createApiErrorBody('bad_request', msg), 400);
+      }
+      return c.json(createApiErrorBody('internal', msg), 500);
     }
 
     activeBundleId = simulateResult.bundleId;
