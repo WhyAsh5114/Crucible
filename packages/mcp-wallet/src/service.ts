@@ -245,6 +245,29 @@ export function createWalletService(opts: {
       throw new Error('Could not resolve contract address — provide contractName or address.');
     }
     if (!abi) {
+      // No contractName given — reverse-lookup from the deployer registry by address.
+      const listRes = await fetch(`${deployerUrl}/list_deployments`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (listRes.ok) {
+        const data = (await listRes.json()) as {
+          deployments?: Array<{ contractName?: string; address?: string }>;
+        };
+        const match = data.deployments?.find(
+          (d) => d.address?.toLowerCase() === address!.toLowerCase(),
+        );
+        if (match?.contractName) {
+          const abiRes = await fetch(`${compilerUrl}/abi/${match.contractName}`);
+          if (abiRes.ok) {
+            const abiData = (await abiRes.json()) as { abi?: Abi };
+            if (abiData.abi) abi = abiData.abi;
+          }
+        }
+      }
+    }
+    if (!abi) {
       throw new Error('Could not resolve contract ABI — provide a contractName.');
     }
 
