@@ -24,8 +24,15 @@
 	onMount(async () => {
 		try {
 			models = await workspaceClient.fetchModels();
-			// If 0G is unconfigured but OpenAI is, default to first OpenAI model.
-			if (!models.og && models.openai && models.openai.length > 0) {
+			// Auto-default to the first OpenAI model only when:
+			//   1. The current `value` is the empty placeholder (i.e. the
+			//      parent has nothing persisted), AND
+			//   2. 0G is unconfigured but OpenAI is.
+			// Without the first guard we'd clobber a user's saved choice
+			// (chat-rail loads it from localStorage before we mount) every
+			// time the picker boots.
+			const isEmpty = value.provider === '0g' && value.model === '';
+			if (isEmpty && !models.og && models.openai && models.openai.length > 0) {
 				onchange({ provider: 'openai', model: models.openai[0] });
 			}
 		} catch {

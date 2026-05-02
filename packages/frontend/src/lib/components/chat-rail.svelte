@@ -121,10 +121,42 @@
 	let sendError = $state<string | null>(null);
 	let lastPrompt = $state<string | null>(null);
 
-	// Default to 0G with a placeholder model id; the picker updates this once
-	// it fetches /api/models. The placeholder is never sent to the backend
-	// because the backend uses OG_MODEL from env when provider is '0g'.
-	let selectedModel = $state<ModelSelection>({ provider: '0g', model: '' });
+	// Persist the user's model choice across reloads. Single global key — the
+	// model is a user preference, not per-workspace. Read synchronously on
+	// component init so the ModelPicker mounts with the saved value already
+	// in place; otherwise its own onMount auto-default would race and pick
+	// the first OpenAI model whenever 0G is unconfigured.
+	const MODEL_STORAGE_KEY = 'crucible:selected-model';
+	function loadSavedModel(): ModelSelection {
+		if (typeof localStorage === 'undefined') return { provider: '0g', model: '' };
+		try {
+			const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+			if (!raw) return { provider: '0g', model: '' };
+			const parsed = JSON.parse(raw) as { provider?: string; model?: string };
+			if (parsed.provider === '0g' && typeof parsed.model === 'string') {
+				return { provider: '0g', model: parsed.model };
+			}
+			if (parsed.provider === 'openai' && typeof parsed.model === 'string') {
+				return { provider: 'openai', model: parsed.model };
+			}
+		} catch {
+			// Corrupt entry — fall back to default.
+		}
+		return { provider: '0g', model: '' };
+	}
+	let selectedModel = $state<ModelSelection>(loadSavedModel());
+
+	// Persist on every change so the next reload restores the same picker
+	// state. localStorage writes are synchronous but cheap (~ms); no need to
+	// debounce — model changes happen at human cadence.
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(selectedModel));
+		} catch {
+			// Quota or disabled storage — silently skip.
+		}
+	});
 
 	// Stick-to-bottom controller from Conversation.Root, bound below. The
 	// MutationObserver inside auto-scrolls only while the user is at bottom;
