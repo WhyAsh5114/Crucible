@@ -15,8 +15,12 @@
 FROM oven/bun:1.3.6 AS base
 
 # git is required by hardhat's solc compiler downloads.
+# Node.js 22 (via NodeSource) is required by Hardhat 3.x for the warm-solc step —
+# the default apt nodejs package is v20 which lacks Iterator.prototype.flatMap.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates curl \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -56,8 +60,10 @@ COPY packages/mcp-devtools ./packages/mcp-devtools
 # the 30–60s download cost (and avoids racing Hardhat's MultiProcessMutex,
 # which has a 60s timeout). Bakes solc 0.8.28 into /root/.cache/hardhat-nodejs/
 # in this image layer; every workspace container starts with the cache primed.
-COPY packages/backend/runtime/warm-solc.ts /app/packages/backend/runtime/warm-solc.ts
-RUN bun /app/packages/backend/runtime/warm-solc.ts
+#
+# Use Node.js (not Bun) — Bun has a known Linux webstreams_adapters hang in
+# Hardhat's fetch-based compiler downloader (same workaround as CI).
+RUN cd /app/packages/mcp-compiler && node node_modules/.bin/hardhat compile
 
 # /workspace is the per-workspace bind mount target.
 WORKDIR /workspace
