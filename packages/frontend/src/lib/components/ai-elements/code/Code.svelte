@@ -55,7 +55,7 @@
 	}
 
 	.ai-code-wrapper :global(pre.shiki) {
-		@apply overflow-x-auto rounded-lg bg-inherit py-4 text-sm;
+		@apply overflow-x-auto rounded-lg bg-inherit py-4 text-xs;
 	}
 
 	.ai-code-wrapper :global(pre.shiki:not([data-code-overflow] *):not([data-code-overflow])) {
