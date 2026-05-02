@@ -23,6 +23,7 @@ import { z } from 'zod';
 import {
   mcp,
   createDevtoolsReporter,
+  abiFunctionSignatures,
   type McpToolsCallBody,
   type McpResponseBody,
 } from '@crucible/types';
@@ -317,8 +318,21 @@ app.openapi(getBytecodeRoute, async (c) => {
 app.openapi(listContractsRoute, async (c) => {
   try {
     const contracts = store.listContractNames();
+    const summaries = contracts
+      .map((fqn) => {
+        const compiled = store.getContract(fqn);
+        if (!compiled) return null;
+        const shortName = fqn.includes(':') ? fqn.split(':').pop()! : fqn;
+        return {
+          name: fqn,
+          shortName,
+          abi: compiled.abi,
+          functions: abiFunctionSignatures(compiled.abi),
+        };
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null);
     console.log(`[mcp-compiler] list_contracts ok  count=${contracts.length}`);
-    return c.json({ contracts }, 200);
+    return c.json({ contracts, summaries }, 200);
   } catch (err) {
     console.error(`[mcp-compiler] list_contracts error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);

@@ -19,6 +19,7 @@ import { createApiErrorBody } from '../lib/api-error';
 
 const QuerySchema = z.object({
   workspaceId: WorkspaceIdSchema,
+  sessionId: z.string().optional(),
 });
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
@@ -26,7 +27,10 @@ const KEEPALIVE_INTERVAL_MS = 15_000;
 export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get(
   '/agent/stream',
   async (c) => {
-    const parsed = QuerySchema.safeParse({ workspaceId: c.req.query('workspaceId') });
+    const parsed = QuerySchema.safeParse({
+      workspaceId: c.req.query('workspaceId'),
+      sessionId: c.req.query('sessionId'),
+    });
     if (!parsed.success) {
       return c.json(
         createApiErrorBody('bad_request', parsed.error.issues[0]?.message ?? 'Invalid workspaceId'),
@@ -34,7 +38,7 @@ export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get
       );
     }
 
-    const { workspaceId } = parsed.data;
+    const { workspaceId, sessionId: rawSessionId } = parsed.data;
     const userId = c.get('userId');
 
     const workspace = await prisma.workspace.findUnique({
@@ -45,7 +49,32 @@ export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    const subscription = subscribeAgentEvents(workspaceId);
+    // Resolve sessionId: use provided one (validate it), or fall back to the
+    // most recent session for this workspace.
+    let sessionId: string;
+    if (rawSessionId) {
+      const session = await prisma.chatSession.findUnique({
+        where: { id: rawSessionId },
+        select: { id: true, workspaceId: true },
+      });
+      if (!session || session.workspaceId !== workspaceId) {
+        return c.json(createApiErrorBody('not_found', 'Chat session not found'), 404);
+      }
+      sessionId = session.id;
+    } else {
+      // Fall back to the most recent session.
+      const latest = await prisma.chatSession.findFirst({
+        where: { workspaceId },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      });
+      if (!latest) {
+        return c.json(createApiErrorBody('not_found', 'No chat sessions found for workspace'), 404);
+      }
+      sessionId = latest.id;
+    }
+
+    const subscription = subscribeAgentEvents(workspaceId, sessionId);
     const encoder = new TextEncoder();
 
     const body = new ReadableStream({
@@ -70,7 +99,11 @@ export const agentApi = new OpenAPIHono<{ Variables: { userId: string } }>().get
         void (async () => {
           try {
             for await (const event of subscription.events) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify(event, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))}\n\n`,
+                ),
+              );
             }
           } catch {
             // Subscription closed or stream cancelled.

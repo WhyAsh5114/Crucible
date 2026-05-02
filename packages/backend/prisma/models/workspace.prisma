@@ -16,6 +16,7 @@ model Workspace {
     updatedAt     DateTime          @updatedAt
     deployments   Json              @default("[]")
     runtime       WorkspaceRuntime?
+    chatSessions  ChatSession[]
 
     @@index([userId])
     @@map("workspace")
@@ -42,4 +43,16 @@ model WorkspaceRuntime {
 
     @@index([status])
     @@map("workspace_runtime")
+}
+
+model ChatSession {
+    id          String    @id @default(cuid())
+    workspaceId String
+    workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+    title       String    @default("New Chat")
+    createdAt   DateTime  @default(now())
+    updatedAt   DateTime  @updatedAt
+
+    @@index([workspaceId])
+    @@map("chat_session")
 }

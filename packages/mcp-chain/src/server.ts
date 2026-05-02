@@ -233,10 +233,12 @@ export function createChainServer(
   server.registerTool(
     'mine',
     {
-      title: 'Mine Blocks',
+      title: 'Mine Blocks / Advance Time',
       description:
-        'Mine N blocks immediately on the local Hardhat node. ' +
-        'Useful for advancing time-dependent logic (e.g. unlock periods, vesting, cooldowns).',
+        'Advance the local Hardhat node by mining blocks and/or jumping forward in time. ' +
+        'Use `seconds` to advance EVM time by N seconds (the recommended way to clear ' +
+        'cooldowns / vesting / time-locks). Use `blocks` to mine N empty blocks. ' +
+        'At least one of `blocks` or `seconds` must be provided.',
       inputSchema: MineInputSchema,
       annotations: {
         destructiveHint: true,
@@ -244,16 +246,30 @@ export function createChainServer(
         openWorldHint: false,
       },
     },
-    async ({ blocks }: MineInput) => {
+    async ({ blocks, seconds }: MineInput) => {
       try {
-        log(`tool:mine blocks=${blocks}`);
+        log(`tool:mine blocks=${blocks ?? 0} seconds=${seconds ?? 0}`);
         const node = requireNode(workspaceId);
-        // hardhat_mine accepts hex-encoded block count
-        await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
+        if (seconds !== undefined && seconds > 0) {
+          // evm_increaseTime returns the new total offset; mine one block to
+          // make the new timestamp observable to subsequent reads.
+          await rpc(node.rpcUrl, 'evm_increaseTime', [seconds]);
+          await rpc(node.rpcUrl, 'evm_mine', []);
+        }
+        if (blocks !== undefined && blocks > 0) {
+          await rpc(node.rpcUrl, 'hardhat_mine', [`0x${blocks.toString(16)}`]);
+        }
         const rawBlock = await rpc<string>(node.rpcUrl, 'eth_blockNumber');
         const newBlockNumber = parseInt(rawBlock, 16);
-        log(`tool:mine ok  newBlock=${newBlockNumber}`);
-        return toolResult({ newBlockNumber });
+        // Fetch the new block timestamp for the response.
+        const blockHeader = await rpc<{ timestamp: string } | null>(
+          node.rpcUrl,
+          'eth_getBlockByNumber',
+          ['latest', false],
+        );
+        const newTimestamp = blockHeader ? parseInt(blockHeader.timestamp, 16) : 0;
+        log(`tool:mine ok  newBlock=${newBlockNumber} ts=${newTimestamp}`);
+        return toolResult({ newBlockNumber, newTimestamp });
       } catch (err) {
         logError(`tool:mine error: ${String(err)}`);
         return errorResult(`mine failed: ${String(err)}`);

@@ -20,7 +20,8 @@ export default defineConfig(
 			'**/build/**',
 			'**/artifacts/**',
 			'**/cache/**',
-			'**/src/generated/**'
+			'**/src/generated/**',
+			'**/node_modules/**',
 		]
 	},
 	js.configs.recommended,

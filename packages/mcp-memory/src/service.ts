@@ -38,7 +38,8 @@ export interface MemoryService {
   provenance: (input: mcp.memory.ProvenanceInput) => Promise<StoredPattern['provenance']>;
 }
 
-function normalize(text: string): string {
+function normalize(text: string | undefined | null): string {
+  if (!text) return '';
   return text.trim().toLowerCase();
 }
 

@@ -57,13 +57,13 @@
 </script>
 
 {#if shouldRender}
-	<div {id} class={cn('space-y-2 p-4', className)} {...restProps}>
+	<div {id} class={cn('space-y-1.5 px-2 py-2', className)} {...restProps}>
 		<h4 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
 			{errorText ? 'Error' : 'Result'}
 		</h4>
 		<div
 			class={cn(
-				'overflow-x-auto rounded-md text-xs [&_table]:w-full',
+				'overflow-x-auto rounded-md text-xs [&_pre.shiki]:py-2 [&_pre.shiki]:text-xs [&_table]:w-full',
 				errorText ? 'bg-destructive/10 text-destructive' : 'bg-muted/50 text-foreground'
 			)}
 		>

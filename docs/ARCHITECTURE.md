@@ -383,16 +383,16 @@ Each workspace also gets its own isolated Hardhat process and snapshot stack. Th
 
 The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. All custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments.
 
-| MCP Server        | Port       | Tools                                                                               | Purpose                                                                                                   |
-| :---------------- | :--------- | :---------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
-| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine`, `fork`                     | Manage the local chain lifecycle and state                                                                |
-| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts`                              | Compile Solidity source files, extract artifacts                                                          |
-| **deployer-mcp**  | 3102       | `deploy_local`, `simulate_local`, `trace`, `call`                                   | Deploy compiled contracts by name, simulate & trace transactions locally                                  |
-| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `sign_tx`, `send_tx_local`, `switch_account`        | Manage accounts and sign/send transactions                                                                |
-| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                 | Store and retrieve learned debugging patterns on 0G Storage                                               |
-| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch` | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                             |
-| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                         | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY |
-| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`             | Production-grade tx execution — the only path to public chains _(planned)_                                |
+| MCP Server        | Port       | Tools                                                                                                                                                                               | Purpose                                                                                                   |
+| :---------------- | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------- |
+| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine` (`blocks` and/or `seconds`), `fork`                                                                                         | Manage the local chain lifecycle and state                                                                |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts` (returns ABI summaries)                                                                                                      | Compile Solidity source files, extract artifacts                                                          |
+| **deployer-mcp**  | 3102       | `deploy_local` (returns `abi` + `functions`), `deploy_og_chain`, `simulate_local`, `trace`, `call`, `list_deployments`                                                              | Deploy compiled contracts by name, simulate & trace, recall past deployments                              |
+| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `switch_account`, `call_contract`, `read_contract`, `send_value` (high-level); `encode_call`, `sign_tx`, `send_tx_local` (low-level escape hatches) | Manage accounts and interact with deployed contracts by name                                              |
+| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                                                                                                                 | Store and retrieve learned debugging patterns on 0G Storage                                               |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                                                                                 | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                             |
+| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                                                                                                                         | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY |
+| **KeeperHub MCP** | (external) | `simulate_bundle`, `estimate_gas`, `execute_tx`, `get_execution_status`                                                                                                             | Production-grade tx execution — the only path to public chains _(planned)_                                |
 
 > **Devtools sidecar (port 3107, in-runner, not in the table above):** `packages/mcp-devtools` is an observability service the other in-runner MCPs report `tool_call` / `tool_result` / `container` events to via `POST /event`. The control plane proxies those events to the browser as SSE on `GET /api/workspace/:id/devtools/events`. It is intentionally not part of `McpServerName` — the agent never calls it.
 
@@ -492,7 +492,7 @@ start_node(config?: { fork?: { rpcUrl: string, blockNumber?: number } }): { rpcU
 get_state(): { blockNumber, gasPrice, accounts: Address[] }
 snapshot(): { snapshotId }
 revert(snapshotId): { success }
-mine(blocks: number): { newBlockNumber }
+mine(opts: { blocks?: number; seconds?: number }): { newBlockNumber, newTimestamp }
 fork(rpcUrl: string, blockNumber?: number): { rpcUrl, chainId }
 ```
 
@@ -509,24 +509,50 @@ list_contracts(): { contracts: string[] }
 ### deployer-mcp
 
 ```typescript
-// Tools (local Hardhat only — public-chain deploys go through KeeperHub MCP)
+// Tools (local Hardhat + 0G Galileo testnet)
 // Requires the contract to have been compiled via compiler-mcp first.
-deploy_local(contractName: string, constructorData: Hex, sender?: Address, value?: bigint): { address, txHash, gasUsed }
+deploy_local(contractName: string, constructorData: Hex, sender?: Address, value?: bigint):
+  { address, txHash, gasUsed, contractName, abi, functions }
+deploy_og_chain(contractName: string, constructorData: Hex, value?: bigint):
+  { address, txHash, gasUsed, explorerUrl }
 simulate_local(txObject): { result, gasEstimate, logs, revertReason? }
 trace(txHash): { decodedCalls, storageReads, storageWrites, events, revertReason?, gasUsed }
-call(to: Address, data: Hex, from?: Addressls, storageReads, storageWrites, events, revertReason?, gasUsed }
 call(to: Address, data: Hex, from?: Address): { result }
+list_deployments(network?: 'local' | '0g-galileo'):
+  { deployments: { contractName, address, txHash, network, deployedAt }[] }
+
+// HTTP discovery (used by wallet-mcp to resolve contractName → address):
+//   GET /deployments/:contractName?network=local
 ```
 
 ### wallet-mcp
 
 ```typescript
-// Tools
-list_accounts(): { accounts: { address, label, balance }[] }
+// High-level wrappers — preferred. The wrapper resolves the ABI from
+// compiler-mcp and the address from the deployer registry, then encodes
+// calldata and submits the tx. Reverts surface the decoded reason and feed
+// the agent's repair loop automatically.
+call_contract(input: {
+  contract: { contractName?: string; address?: Address };
+  function: string;            // name or full signature
+  args?: string[];
+  from?: Address;
+  value?: string;              // wei, decimal
+  gas?: string;
+}): { txHash, gasUsed, status: 'success' | 'reverted', address, signature, revertReason? }
+
+read_contract(input): { result, raw, address, signature }
+send_value(input: { to, value, from? }): { txHash, gasUsed, status }
+
+// Account ops
+list_accounts(): { accounts: { address, label, balance }[], activeAccountLabel }
 get_balance(address): { balance }
-sign_tx(tx): { signedTx }
-send_tx_local(tx): { txHash, receipt }   // local chain only
 switch_account(label): { active: address }
+
+// Low-level escape hatches (kept for power users; not surfaced to the agent)
+encode_call(signature, args): { data }
+sign_tx(tx): { signedTx }
+send_tx_local(tx): { txHash, receipt }
 ```
 
 ### memory-mcp (0G Storage)
@@ -841,38 +867,83 @@ crucible/
 
 ## Self-Healing Revert Loop
 
-This is Crucible's signature capability. The full flow:
+This is Crucible's signature capability. The agent loop in `packages/agent/src/loop.ts`
+detects reverts on `deploy_local`, `call_contract`, and `send_tx_local`, then
+walks a forced 7-phase repair sequence. The `prepareStep` callback restricts
+`activeTools` and forces `toolChoice` per phase so the LLM cannot stray.
 
 ```
-User action triggers revert
+deploy_local / call_contract / send_tx_local returns revert
         │
-        ▼
-Agent detects revert (tool_result.error)
+        ▼  (revert_detected event emitted)
+Phase 1 — chain.snapshot           save state for clean redeploy
+Phase 2 — deployer.trace           full EVM trace → trace_captured event
+Phase 3 — memory.recall            lookup by revert signature → memory_recall event
+Phase 4 — write_file               apply patch → patch_proposed event
+Phase 5 — compiler.compile         recompile patched source
+Phase 6 — chain.revert             rewind chain to snapshot
+Phase 7 — deployer.deploy_local    redeploy fixed contract
         │
-        ▼
-deployer-mcp.trace(txHash) → full EVM execution trace
+        ├── SUCCESS → patch_verified event → 'resume' phase
+        │             (one step constrained to call_contract / read_contract /
+        │              send_value / mine / list_accounts / get_balance so the
+        │              model continues the original task instead of redeploying)
         │
-        ▼
-memory-mcp.recall({ revert_signature }) → query 0G Storage KV
-        │
-        ├── HIT → apply known patch → verify → done
-        │
-        └── MISS → mesh-mcp.broadcast_help() over AXL
-                │
-                ├── PEER RESPONDS → verify_peer_patch() in snapshot
-                │       │
-                │       ├── VERIFIED → apply patch → remember() → done
-                │       └── FAILED → discard → fall through
-                │
-                └── NO RESPONSE / ALL FAILED → LLM reasoning from trace
-                        │
-                        └── Generate patch → deploy to snapshot → verify
-                                │
-                                ├── SUCCESS → remember() → done
-                                └── FAILED → report to user, ask for guidance
+        └── REVERT AGAIN → restart from Phase 1 (max 3 attempts)
+                          → on cap exhaustion: repair_failed event,
+                            stopWhen(repairFailed) terminates the turn
 ```
 
-Every successful fix is written back to 0G Storage via `memory-mcp.remember()` with `scope: 'mesh'`, making it available to all Crucible nodes.
+**Phase events** (typed in `packages/types/src/agent-events.ts`):
+
+- `revert_detected` — `{ txHash, revertSignature }`
+- `trace_captured` — `{ trace: TxTrace }`
+- `memory_recall` — `{ hits: MemoryRecallHit[] }`
+- `patch_proposed` — `{ source: 'reasoning' | 'memory' | 'mesh', patch: string }`
+- `patch_verified` — `{ localReceipt: Hash }`
+- `repair_failed` — `{ attempts, lastRevertSignature }`
+
+**Memory back-end:** when `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` are set,
+`memory-mcp` writes to 0G Storage KV; otherwise it falls back to a local JSONL
+file in `${workspaceDir}/.crucible/memory.jsonl`. The peer-mesh fallback shown
+in earlier drafts of this doc is wired through `mesh-mcp` _(planned, not yet
+implemented)_; in the current shipped loop, `recall` returns hits or `[]` and
+the LLM falls back to reasoning from the trace + source code.
+
+**Cleanup contract:** if the turn is cancelled or errors mid-repair, the
+`finally` block opens a one-shot MCP client to `chain.revert(snapshotId)` so
+the local Hardhat node always lands on a known state.
+
+---
+
+## Chat Sessions
+
+Each workspace owns one or more `ChatSession` rows (`backend/prisma/models/workspace.prisma`).
+A session corresponds to one persisted JSONL log on the host:
+
+```
+${workspaceDir}/.crucible/sessions/${sessionId}.jsonl
+```
+
+The agent bus (`packages/backend/src/lib/agent-bus.ts`) and chat log
+(`packages/backend/src/lib/chat-log.ts`) are keyed by `${workspaceId}:${sessionId}`,
+so events from one session never bleed into another. `message_delta` and
+`thinking` token-deltas are coalesced into single `message` / `thinking` rows
+on flush so a multi-minute turn doesn't write tens of thousands of one-token
+lines.
+
+REST surface (all under `/api/workspace/:id/sessions`):
+
+- `GET    /sessions` — list all sessions
+- `POST   /sessions` — create a new session (auto-titled `Chat N`)
+- `PATCH  /sessions/:sessionId` — rename
+- `DELETE /sessions/:sessionId` — drop (refused if it's the last session)
+
+Both `/api/agent/stream` and `/api/prompt` accept an optional `sessionId` query
+parameter; when omitted, the most recently updated session for the workspace
+is used (or auto-created if none exist). Pre-session workspaces are migrated
+on first session-create: the legacy `chat.jsonl` is renamed into the new
+sessions directory.
 
 ---
 

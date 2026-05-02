@@ -40,18 +40,25 @@ const PORT = process.env['WALLET_MCP_PORT']
   : mcp.DEFAULT_MCP_PORTS.wallet;
 
 const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc';
+const COMPILER_URL = process.env['COMPILER_URL'] ?? 'http://localhost:3101';
+const DEPLOYER_URL = process.env['DEPLOYER_URL'] ?? 'http://localhost:3102';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 const devtools = createDevtoolsReporter('wallet');
 
 console.log(
-  `[mcp-wallet] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL})`,
+  `[mcp-wallet] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL}, deployerUrl: ${DEPLOYER_URL})`,
 );
 
 if (!existsSync(WORKSPACE_ROOT)) {
   throw new Error(`[mcp-wallet] WORKSPACE_ROOT does not exist: ${WORKSPACE_ROOT}`);
 }
 
-const service = createWalletService({ chainRpcUrl: CHAIN_RPC_URL, workspaceRoot: WORKSPACE_ROOT });
+const service = createWalletService({
+  chainRpcUrl: CHAIN_RPC_URL,
+  workspaceRoot: WORKSPACE_ROOT,
+  compilerUrl: COMPILER_URL,
+  deployerUrl: DEPLOYER_URL,
+});
 
 const ErrorSchema = z.object({ error: z.string() });
 
@@ -146,7 +153,7 @@ const switchAccountRoute = createRoute({
   },
 });
 
-const mcpServer = createWalletServer({ chainRpcUrl: CHAIN_RPC_URL, workspaceRoot: WORKSPACE_ROOT });
+const mcpServer = createWalletServer({ service });
 
 type Env = { Variables: { parsedBody: unknown } };
 

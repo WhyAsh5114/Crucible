@@ -65,11 +65,11 @@ export class AgentStream {
 	 * is logged and `events` is left untouched so the live SSE can still drive
 	 * the UI.
 	 */
-	hydrate(workspaceId: string): Promise<void> {
+	hydrate(workspaceId: string, sessionId?: string): Promise<void> {
 		if (this.hydratePromise) return this.hydratePromise;
 		const promise = (async () => {
 			try {
-				const history = await workspaceClient.getChatHistory(workspaceId);
+				const history = await workspaceClient.getChatHistory(workspaceId, sessionId);
 				this.events = history;
 				this.openMessageIndex = -1;
 				this.openThinkingIndex = -1;
@@ -91,8 +91,8 @@ export class AgentStream {
 		this.error = null;
 	}
 
-	/** Open the SSE connection for a given workspace. Idempotent. */
-	start(workspaceId: string): void {
+	/** Open the SSE connection for a given workspace + session. Idempotent. */
+	start(workspaceId: string, sessionId?: string): void {
 		if (this.controller) return;
 		const token = ++this.startToken;
 		this.status = 'connecting';
@@ -105,7 +105,7 @@ export class AgentStream {
 		const controller = new AbortController();
 		this.controller = controller;
 
-		void this.pump(workspaceId, token, controller.signal);
+		void this.pump(workspaceId, token, controller.signal, sessionId);
 	}
 
 	/** Close the SSE connection. */
@@ -118,7 +118,12 @@ export class AgentStream {
 		this.status = 'closed';
 	}
 
-	private async pump(workspaceId: string, token: number, signal: AbortSignal): Promise<void> {
+	private async pump(
+		workspaceId: string,
+		token: number,
+		signal: AbortSignal,
+		sessionId?: string
+	): Promise<void> {
 		// Retry transient stream failures a few times before giving up. Browser
 		// `fetch` can throw vague "Error in input stream" / "network error"
 		// when a backend hot-reload momentarily kills the SSE connection — the
@@ -129,7 +134,9 @@ export class AgentStream {
 		while (true) {
 			attempt += 1;
 			try {
-				const url = apiClient.api.agent.stream.$url({ query: { workspaceId } });
+				const url = apiClient.api.agent.stream.$url({
+					query: { workspaceId, ...(sessionId ? { sessionId } : {}) }
+				});
 				const response = await this.fetchImpl(url.toString(), {
 					signal,
 					credentials: 'include',
@@ -270,6 +277,13 @@ export class AgentStream {
 			this.openMessageIndex = -1;
 			this.openThinkingIndex = -1;
 		}
+		// Any non-delta event (message_delta and thinking both return early above)
+		// closes the open buffers so text that follows a tool call — or any other
+		// mid-turn event — starts a new row instead of appending to the previous
+		// text block. This is the fix for the interleaving bug where all text from
+		// every segment of a multi-tool turn accumulated into one block.
+		this.openMessageIndex = -1;
+		this.openThinkingIndex = -1;
 		this.events.push(incoming);
 	}
 }

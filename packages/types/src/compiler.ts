@@ -4,7 +4,8 @@
 
 import { z } from 'zod';
 import { HexSchema } from './primitives.ts';
-import type { Abi } from 'viem';
+import type { Abi, AbiFunction } from 'viem';
+import { toFunctionSignature } from 'viem';
 
 export const CompilerSeveritySchema = z.enum(['error', 'warning']);
 export type CompilerSeverity = z.infer<typeof CompilerSeveritySchema>;
@@ -40,3 +41,13 @@ export const CompiledContractSchema = z.object({
   warnings: z.array(CompilerMessageSchema).optional(),
 });
 export type CompiledContract = z.infer<typeof CompiledContractSchema>;
+
+/**
+ * Extract canonical function signatures (e.g. "transfer(address,uint256)") from an ABI.
+ * Used to give the agent a quick summary of what's callable on a contract.
+ */
+export function abiFunctionSignatures(abi: Abi): string[] {
+  return abi
+    .filter((item): item is AbiFunction => (item as AbiFunction).type === 'function')
+    .map((item) => toFunctionSignature(item));
+}

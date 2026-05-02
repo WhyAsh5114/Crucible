@@ -1,7 +1,7 @@
 # Crucible — Project Checklist
 
 > Synthesized from `docs/PLAN.md`, `docs/ARCHITECTURE.md`, `docs/TRACKS.md`, `docs/DEPLOYMENT.md`, and `README.md`.
-> Status reflects what is wired in the working directory (branch `feat/eip-1193-bridge`).
+> Status reflects what is wired in the working directory (branch `feat/agent-self-healing`).
 
 ---
 
@@ -35,7 +35,7 @@
 - [x] `mcp-chain` — in-container port 3100, `start_node`, snapshot, revert, mine, fork
 - [x] `mcp-compiler` — in-container port 3101, compile, list artifacts, get bytecode
 - [x] `mcp-deployer` — package implemented (deploy_local, simulate_local, trace, call); Dockerfile + entrypoint wired on port 3102; tool-exec proxy wired
-- [x] `mcp-wallet` — package implemented (list_accounts, get_balance, sign_tx, send_tx_local, switch_account); Dockerfile + entrypoint wired on port 3103; tool-exec proxy wired
+- [x] `mcp-wallet` — package implemented (list_accounts, get_balance, switch_account, encode_call, sign_tx, send_tx_local, plus high-level `call_contract` / `read_contract` / `send_value` wrappers); Dockerfile + entrypoint wired on port 3103; tool-exec proxy wired
 - [x] `mcp-memory` — package implemented (recall, remember, list_patterns, provenance); Dockerfile + entrypoint wired on port 3104; tool-exec proxy wired
 
 ### Agent
@@ -72,10 +72,10 @@
 - [x] Snapshot and revert tools in `mcp-chain` (exposed to agent via tool-exec)
 - [x] Trace tool in `mcp-deployer`
 - [x] `recall` / `remember` round-trip in `mcp-memory` (local file-backed)
-- [ ] 0G Storage wiring for `mcp-memory` (currently local filesystem; `RecallInput`, `RememberInput` types exist but 0G KV/Log backend not connected)
-- [ ] Agent repair loop — agent reasoning path that: detects revert → traces → recalls → patches → redeploys to snapshot → verifies → commits
-- [ ] UI evidence of before/after state and repair source (inspector panel, revert event rendering)
-- [ ] POV-2 demo: seeded revert (allowance failure, cooldown violation) fixed end-to-end without mesh
+- [x] 0G Storage wiring for `mcp-memory` (KvClient activates with `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL`; falls back to local FS otherwise)
+- [x] Agent repair loop — `runAgentTurn` detects reverts, captures snapshot, traces the failed tx, recalls patterns, restricts tool surface per repair phase (`patch → verify → commit → resume`), and emits `revert_detected` / `patch_proposed` / `patch_verified` / `repair_failed` events
+- [x] UI evidence of before/after state and repair source — dedicated `revert-detected`, `patch-proposed` (collapsible diff with source badge), `patch-verified`, `trace-captured`, `memory-recall`, `repair-failed` event rows
+- [x] POV-2 demo: seeded `pendingOwner` revert in `DemoVault` is detected → patched → re-deployed → exercised end-to-end (verified on DeepSeek V4 Pro and Qwen3-235B)
 
 ---
 

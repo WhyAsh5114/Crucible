@@ -19,9 +19,14 @@ import { recordChatEvent, readChatHistory } from './chat-log';
 
 type Subscriber = (event: AgentEvent) => void;
 
+// All maps below are keyed by `${workspaceId}:${sessionId}`.
 const subscribers = new Map<string, Set<Subscriber>>();
 const sequence = new Map<string, number>();
 const warmed = new Set<string>();
+
+function busKey(workspaceId: string, sessionId: string): string {
+  return `${workspaceId}:${sessionId}`;
+}
 
 /**
  * Initialise the in-memory sequence counter for `workspaceId` from the
@@ -30,14 +35,15 @@ const warmed = new Set<string>();
  * producing duplicate seqs in chat.jsonl and `each_key_duplicate` Svelte
  * crashes once the frontend hydrates the old log alongside the new turn.
  *
- * Idempotent — only the first call per workspace per process actually reads
- * the log; subsequent calls are a Set lookup.
+ * Idempotent — only the first call per (workspace, session) per process
+ * actually reads the log; subsequent calls are a Set lookup.
  */
-export async function warmAgentSeq(workspaceId: string): Promise<void> {
-  if (warmed.has(workspaceId)) return;
-  warmed.add(workspaceId);
+export async function warmAgentSeq(workspaceId: string, sessionId: string): Promise<void> {
+  const key = busKey(workspaceId, sessionId);
+  if (warmed.has(key)) return;
+  warmed.add(key);
   try {
-    const events = await readChatHistory(workspaceId);
+    const events = await readChatHistory(workspaceId, sessionId);
     if (events.length === 0) return;
     let max = 0;
     for (const ev of events) {
@@ -45,37 +51,35 @@ export async function warmAgentSeq(workspaceId: string): Promise<void> {
     }
     // Only bump the counter if the on-disk log is ahead of the in-memory
     // state — never roll back a counter that was already advanced this run.
-    const current = sequence.get(workspaceId) ?? 0;
-    if (max + 1 > current) sequence.set(workspaceId, max + 1);
+    const current = sequence.get(key) ?? 0;
+    if (max + 1 > current) sequence.set(key, max + 1);
   } catch {
     // First-time workspaces have no log; nothing to warm from.
   }
 }
 
 /**
- * Allocate the next monotonic `seq` for the given workspace's stream. Used
- * by producers to stamp `AgentEvent`s before publishing.
+ * Allocate the next monotonic `seq` for the given workspace + session stream.
  */
-export function nextAgentSeq(workspaceId: string): number {
-  const current = sequence.get(workspaceId) ?? 0;
-  sequence.set(workspaceId, current + 1);
+export function nextAgentSeq(workspaceId: string, sessionId: string): number {
+  const key = busKey(workspaceId, sessionId);
+  const current = sequence.get(key) ?? 0;
+  sequence.set(key, current + 1);
   return current;
 }
 
 /**
- * Publish an `AgentEvent` to all subscribers of `workspaceId`. Validates
- * the event against the schema so producers can't smuggle malformed frames
- * through the bus.
+ * Publish an `AgentEvent` to all subscribers of `workspaceId` + `sessionId`.
  */
-export function publishAgentEvent(workspaceId: string, event: AgentEvent): void {
+export function publishAgentEvent(workspaceId: string, sessionId: string, event: AgentEvent): void {
   const validated = AgentEventSchema.parse(event);
 
   // Persist before fan-out so the on-disk chat log captures every event
-  // regardless of whether anyone is currently subscribed (e.g. user reloaded
-  // mid-turn — we still want the rest of the turn in history).
-  recordChatEvent(workspaceId, validated);
+  // regardless of whether anyone is currently subscribed.
+  recordChatEvent(workspaceId, sessionId, validated);
 
-  const set = subscribers.get(workspaceId);
+  const key = busKey(workspaceId, sessionId);
+  const set = subscribers.get(key);
   if (!set) return;
   for (const handler of set) {
     try {
@@ -87,16 +91,17 @@ export function publishAgentEvent(workspaceId: string, event: AgentEvent): void 
 }
 
 /**
- * Subscribe to a workspace's event stream. Returns an async iterator that
- * yields each event in publish order, plus an `unsubscribe` method to detach.
- *
- * The iterator never completes on its own — callers must call `unsubscribe()`
- * when their consumer (e.g. an SSE connection) closes.
+ * Subscribe to a workspace session's event stream. Returns an async iterator
+ * that yields each event in publish order, plus an `unsubscribe` method to detach.
  */
-export function subscribeAgentEvents(workspaceId: string): {
+export function subscribeAgentEvents(
+  workspaceId: string,
+  sessionId: string,
+): {
   events: AsyncIterable<AgentEvent>;
   unsubscribe: () => void;
 } {
+  const key = busKey(workspaceId, sessionId);
   const queue: AgentEvent[] = [];
   let resolveNext: ((value: IteratorResult<AgentEvent>) => void) | null = null;
   let closed = false;
@@ -112,19 +117,19 @@ export function subscribeAgentEvents(workspaceId: string): {
     }
   };
 
-  let set = subscribers.get(workspaceId);
+  let set = subscribers.get(key);
   if (!set) {
     set = new Set();
-    subscribers.set(workspaceId, set);
+    subscribers.set(key, set);
   }
   set.add(handler);
 
   const unsubscribe = (): void => {
     if (closed) return;
     closed = true;
-    const s = subscribers.get(workspaceId);
+    const s = subscribers.get(key);
     s?.delete(handler);
-    if (s && s.size === 0) subscribers.delete(workspaceId);
+    if (s && s.size === 0) subscribers.delete(key);
     if (resolveNext) {
       const r = resolveNext;
       resolveNext = null;
@@ -162,8 +167,20 @@ export function subscribeAgentEvents(workspaceId: string): {
  * Remove all in-memory bus state for the given workspace. Call this when a
  * workspace is closed or deleted so subscribers and sequence counters do not
  * accumulate indefinitely.
+ *
+ * Iterates the keyspace because every map is keyed by `${workspaceId}:${sessionId}`
+ * — a single workspace may have N sessions, each with its own subscriber set
+ * and seq counter.
  */
 export function cleanupAgentBus(workspaceId: string): void {
-  subscribers.delete(workspaceId);
-  sequence.delete(workspaceId);
+  const prefix = `${workspaceId}:`;
+  for (const key of [...subscribers.keys()]) {
+    if (key.startsWith(prefix)) subscribers.delete(key);
+  }
+  for (const key of [...sequence.keys()]) {
+    if (key.startsWith(prefix)) sequence.delete(key);
+  }
+  for (const key of [...warmed]) {
+    if (key.startsWith(prefix)) warmed.delete(key);
+  }
 }

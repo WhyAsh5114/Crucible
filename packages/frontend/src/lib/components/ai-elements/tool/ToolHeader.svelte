@@ -1,14 +1,8 @@
 <script lang="ts">
 	import { CollapsibleTrigger } from '$lib/components/ui/collapsible/index.js';
-	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { cn } from '$lib/utils';
 
-	import CheckCircleIcon from '@lucide/svelte/icons/check-circle';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-	import CircleIcon from '@lucide/svelte/icons/circle';
-	import ClockIcon from '@lucide/svelte/icons/clock';
-	import WrenchIcon from '@lucide/svelte/icons/wrench';
-	import XCircleIcon from '@lucide/svelte/icons/x-circle';
 
 	type ToolUIPartType = string;
 	type ToolUIPartState =
@@ -26,62 +20,29 @@
 
 	let { type, state, class: className = '', ...restProps }: ToolHeaderProps = $props();
 
-	let getStatusBadge = $derived.by(() => {
-		let labels = {
-			'input-streaming': 'Pending',
-			'input-available': 'Running',
-			'output-available': 'Completed',
-			'output-error': 'Error'
-		} as const;
-
-		let icons = {
-			'input-streaming': CircleIcon,
-			'input-available': ClockIcon,
-			'output-available': CheckCircleIcon,
-			'output-error': XCircleIcon
-		} as const;
-
-		let IconComponent = icons[state];
-		let label = labels[state];
-
-		return { IconComponent, label };
-	});
-	let IconComponent = $derived(getStatusBadge.IconComponent);
-
 	let id = $props.id();
 </script>
 
 <CollapsibleTrigger
 	{id}
-	class={cn('flex w-full items-center justify-between gap-4 p-3', className)}
+	class={cn(
+		'group flex w-full items-center gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-muted/30',
+		className
+	)}
 	{...restProps}
 >
-	<div class="flex items-center gap-2">
-		<WrenchIcon class="size-4 text-muted-foreground" />
-		<span class="text-sm font-medium">{type}</span>
-		<Badge class="gap-1.5 rounded-full text-xs" variant="secondary">
-			<!-- <svelte:component
-        this={getStatusBadge.IconComponent}
-        class={cn(
-          "size-4",
-          state === "input-available" && "animate-pulse",
-          state === "output-available" && "text-green-600",
-          state === "output-error" && "text-red-600"
-        )}
-      /> -->
-			<IconComponent
-				class={cn(
-					'size-4',
-					state === 'input-available' && 'animate-pulse',
-					state === 'output-available' && 'text-live',
-					state === 'output-error' && 'text-destructive'
-				)}
-			/>
-
-			{getStatusBadge.label}
-		</Badge>
-	</div>
+	<span
+		class={cn(
+			'inline-block size-1.5 shrink-0 rounded-full',
+			state === 'input-streaming' && 'bg-muted-foreground/40',
+			state === 'input-available' && 'animate-pulse bg-amber-400',
+			state === 'output-available' && 'bg-live',
+			state === 'output-error' && 'bg-destructive'
+		)}
+	></span>
+	<span class="font-mono text-[11px] text-muted-foreground group-hover:text-foreground">{type}</span
+	>
 	<ChevronDownIcon
-		class="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+		class="ml-auto size-3 shrink-0 text-muted-foreground/40 transition-transform group-data-[state=open]:rotate-180"
 	/>
 </CollapsibleTrigger>

@@ -19,7 +19,7 @@ describe('buildSystemPrompt', () => {
       },
       {
         path: 'frontend/src/App.tsx',
-        lang: 'tsx',
+        lang: 'typescript',
         hash: 'deadbeef00000000deadbeef00000000deadbeef00000000deadbeef00000000',
         content: '',
         modifiedAt: now,
@@ -29,7 +29,7 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('[solidity]');
     expect(prompt).toContain('sha256:abcdef12');
     expect(prompt).toContain('frontend/src/App.tsx');
-    expect(prompt).toContain('[tsx]');
+    expect(prompt).toContain('[typescript]');
     expect(prompt).toContain('sha256:deadbeef');
   });
 

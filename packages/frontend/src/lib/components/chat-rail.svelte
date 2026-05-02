@@ -13,6 +13,12 @@
 	import type { ModelSelection } from './model-picker.svelte';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import StopIcon from '@lucide/svelte/icons/square';
+	import PlusIcon from '@lucide/svelte/icons/plus';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import CheckIcon from '@lucide/svelte/icons/check';
+	import XIcon from '@lucide/svelte/icons/x';
+	import ZapIcon from '@lucide/svelte/icons/zap';
 	import { setContext } from 'svelte';
 	import type { WorkspaceId } from '@crucible/types';
 
@@ -24,6 +30,90 @@
 
 	const stream = getAgentStream();
 	let items = $derived(pairToolEvents(stream.events));
+
+	// ── Session state ─────────────────────────────────────────────────────────
+	let sessions = $state<{ id: string; title: string; createdAt: number; updatedAt: number }[]>([]);
+	let activeSessionId = $state<string | null>(null);
+	let sessionError = $state<string | null>(null);
+	// Inline rename state
+	let renamingId = $state<string | null>(null);
+	let renameValue = $state('');
+
+	async function loadSessions(): Promise<void> {
+		sessionError = null;
+		try {
+			const res = await workspaceClient.listSessions(workspaceId);
+			sessions = res.sessions;
+			// Keep the active session if it still exists, else pick the most recent.
+			const currentStillExists = activeSessionId && sessions.some((s) => s.id === activeSessionId);
+			if (!currentStillExists) {
+				const mostRecent = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+				if (mostRecent) await switchSession(mostRecent.id, false);
+			}
+		} catch (err) {
+			sessionError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	async function switchSession(sessionId: string, reload = true): Promise<void> {
+		if (sessionId === activeSessionId && !reload) return;
+		activeSessionId = sessionId;
+		stream.stop();
+		stream.clear();
+		await stream.hydrate(workspaceId, sessionId);
+		stream.start(workspaceId, sessionId);
+	}
+
+	async function newSession(): Promise<void> {
+		try {
+			const res = await workspaceClient.createSession(workspaceId);
+			sessions = res.sessions;
+			const newest = [...res.sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
+			if (newest) await switchSession(newest.id, false);
+		} catch (err) {
+			sessionError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	async function deleteSession(sessionId: string): Promise<void> {
+		try {
+			await workspaceClient.deleteSession(workspaceId, sessionId);
+			await loadSessions();
+		} catch (err) {
+			sessionError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	function startRename(session: { id: string; title: string }): void {
+		renamingId = session.id;
+		renameValue = session.title;
+	}
+
+	async function commitRename(sessionId: string): Promise<void> {
+		const title = renameValue.trim();
+		if (!title) {
+			cancelRename();
+			return;
+		}
+		try {
+			const res = await workspaceClient.renameSession(workspaceId, sessionId, { title });
+			sessions = res.sessions;
+		} catch (err) {
+			sessionError = err instanceof Error ? err.message : String(err);
+		} finally {
+			renamingId = null;
+		}
+	}
+
+	function cancelRename(): void {
+		renamingId = null;
+		renameValue = '';
+	}
+
+	// Load sessions on mount and whenever workspaceId changes.
+	$effect(() => {
+		void loadSessions();
+	});
 
 	let prompt = $state('');
 	let sending = $state(false);
@@ -52,6 +142,38 @@
 		sending || stream.status === 'streaming' || stream.status === 'connecting'
 	);
 
+	// Autopilot: when enabled, auto-sends "continue" after each turn where the
+	// agent was actively calling tools — matching VS Code Copilot's Autopilot
+	// behaviour of running uninterrupted until the model returns a pure-text
+	// response with no tool calls (its natural stopping signal).
+	let autopilot = $state(false);
+
+	const lastTurnHadTools = $derived(
+		(() => {
+			const evs = stream.events;
+			let start = evs.length - 1;
+			while (start >= 0 && evs[start].type !== 'user_prompt') start--;
+			if (start < 0) return false;
+			return evs.slice(start + 1).some((e) => e.type === 'tool_call');
+		})()
+	);
+
+	let _prevStatus = stream.status;
+	$effect(() => {
+		const cur = stream.status;
+		if (
+			autopilot &&
+			(_prevStatus === 'streaming' || _prevStatus === 'connecting') &&
+			cur === 'idle' &&
+			!inFlight &&
+			!sendError &&
+			lastTurnHadTools
+		) {
+			void sendPrompt('continue', false);
+		}
+		_prevStatus = cur;
+	});
+
 	async function sendPrompt(text: string, forceFallback: boolean): Promise<void> {
 		sending = true;
 		sendError = null;
@@ -61,6 +183,7 @@
 			await workspaceClient.sendPrompt({
 				workspaceId,
 				prompt: text,
+				...(activeSessionId ? { sessionId: activeSessionId } : {}),
 				...(useOpenAi
 					? {
 							force_openai_fallback: true,
@@ -114,31 +237,132 @@
 </script>
 
 <aside class="flex h-full min-h-0 flex-col bg-background">
-	<header class="shrink-0 border-b border-border bg-muted/20 px-3 py-2">
-		<div class="flex items-center justify-between gap-2">
-			<h2 class="text-sm font-medium tracking-tight text-foreground">Agent</h2>
-			<div class="flex items-center gap-1 font-mono text-[11px] uppercase">
+	<header class="shrink-0 border-b border-border bg-muted/20 px-2 py-1.5">
+		<div class="flex items-center gap-2">
+			<h2 class="text-xs font-medium tracking-tight text-foreground">Agent</h2>
+			<div class="flex items-center gap-1 font-mono text-[10px] uppercase">
 				{#if stream.status === 'streaming'}
-					<Loader class="size-3 text-live" />
+					<Loader class="size-2.5 text-live" />
 					<span class="text-live">streaming</span>
 				{:else if stream.status === 'connecting'}
-					<Loader class="size-3 text-muted-foreground" />
+					<Loader class="size-2.5 text-muted-foreground" />
 					<span class="text-muted-foreground">connecting</span>
-				{:else if stream.status === 'closed'}
-					<span class="text-muted-foreground">closed</span>
 				{:else if stream.status === 'error'}
 					<span class="text-destructive">error</span>
-				{:else}
-					<span class="text-muted-foreground">idle</span>
 				{/if}
 			</div>
-		</div>
-		<div class="mt-1.5">
-			<ModelPicker value={selectedModel} onchange={(sel) => (selectedModel = sel)} />
+			<div class="ml-auto flex items-center gap-1">
+				<button
+					type="button"
+					onclick={() => (autopilot = !autopilot)}
+					class="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors {autopilot
+						? 'bg-amber-400/15 text-amber-400'
+						: 'text-muted-foreground hover:bg-muted'}"
+					title={autopilot
+						? 'Autopilot on — agent auto-continues when it pauses mid-task'
+						: 'Autopilot off — click to enable auto-continue'}
+				>
+					<ZapIcon class="size-3" />
+					auto
+				</button>
+				<ModelPicker value={selectedModel} onchange={(sel) => (selectedModel = sel)} />
+			</div>
 		</div>
 	</header>
 
-	<Conversation.Root class="min-h-0 flex-1" bind:stick>
+	<!-- Session picker ────────────────────────────────────────────────────── -->
+	<div
+		class="session-bar flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border/60 bg-muted/10 px-2 py-1"
+	>
+		{#each sessions as session (session.id)}
+			{@const isActive = session.id === activeSessionId}
+			{@const isRenaming = renamingId === session.id}
+			<div
+				class="group relative flex min-w-0 shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors {isActive
+					? 'bg-accent text-accent-foreground'
+					: 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'}"
+			>
+				{#if isRenaming}
+					<input
+						type="text"
+						bind:value={renameValue}
+						class="w-24 min-w-0 border-0 bg-transparent text-[10px] font-medium focus:outline-none"
+						onkeydown={(e) => {
+							if (e.key === 'Enter') {
+								e.preventDefault();
+								void commitRename(session.id);
+							}
+							if (e.key === 'Escape') {
+								e.preventDefault();
+								cancelRename();
+							}
+						}}
+					/>
+					<button
+						type="button"
+						onclick={() => void commitRename(session.id)}
+						class="ml-0.5 text-muted-foreground hover:text-foreground"
+						aria-label="Confirm rename"
+					>
+						<CheckIcon class="size-2.5" />
+					</button>
+					<button
+						type="button"
+						onclick={cancelRename}
+						class="ml-0.5 text-muted-foreground hover:text-foreground"
+						aria-label="Cancel rename"
+					>
+						<XIcon class="size-2.5" />
+					</button>
+				{:else}
+					<button
+						type="button"
+						onclick={() => void switchSession(session.id)}
+						class="max-w-[8rem] truncate"
+						title={session.title}
+					>
+						{session.title}
+					</button>
+					<!-- Action icons, shown on hover or when active -->
+					<span class="ml-1 hidden items-center gap-0.5 group-hover:flex {isActive ? 'flex' : ''}">
+						<button
+							type="button"
+							onclick={() => startRename(session)}
+							class="text-muted-foreground hover:text-foreground"
+							aria-label="Rename session"
+						>
+							<PencilIcon class="size-2.5" />
+						</button>
+						{#if sessions.length > 1}
+							<button
+								type="button"
+								onclick={() => void deleteSession(session.id)}
+								class="text-muted-foreground hover:text-destructive"
+								aria-label="Delete session"
+							>
+								<Trash2Icon class="size-2.5" />
+							</button>
+						{/if}
+					</span>
+				{/if}
+			</div>
+		{/each}
+
+		<button
+			type="button"
+			onclick={() => void newSession()}
+			class="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+			aria-label="New chat session"
+			title="New chat"
+		>
+			<PlusIcon class="size-3" />
+		</button>
+	</div>
+	{#if sessionError}
+		<p class="px-2 py-0.5 font-mono text-[10px] text-destructive">{sessionError}</p>
+	{/if}
+
+	<Conversation.Root bind:stick class="min-h-0 flex-1">
 		<Conversation.Content class="!p-0">
 			{#if stream.events.length === 0 && stream.status === 'error'}
 				<EmptyState
@@ -168,20 +392,20 @@
 		<Conversation.ScrollButton />
 	</Conversation.Root>
 
-	<form onsubmit={handleSubmit} class="shrink-0 border-t border-border bg-muted/10 p-3">
+	<form onsubmit={handleSubmit} class="shrink-0 border-t border-border bg-muted/10 p-2">
 		{#if sendError}
-			<p class="mb-2 font-mono text-[11px] text-destructive">{sendError}</p>
+			<p class="mb-1.5 font-mono text-[10px] text-destructive">{sendError}</p>
 		{/if}
 		<div
-			class="flex items-end gap-2 rounded-md border border-border bg-background p-2 focus-within:ring-1 focus-within:ring-ring"
+			class="flex items-end gap-1.5 rounded border border-border bg-background px-2 py-1.5 focus-within:ring-1 focus-within:ring-ring"
 		>
 			<textarea
 				bind:value={prompt}
 				onkeydown={handleKeydown}
-				placeholder="Ask the agent…  (Enter to send, Shift+Enter for newline)"
-				rows={2}
+				placeholder="Ask the agent… (Enter · Shift+Enter newline)"
+				rows={1}
 				disabled={inFlight}
-				class="min-h-[2.5rem] flex-1 resize-none bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
+				class="min-h-[1.5rem] flex-1 resize-none bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/60 focus:outline-none disabled:opacity-50"
 			></textarea>
 			{#if inFlight}
 				<Button

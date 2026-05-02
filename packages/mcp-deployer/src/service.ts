@@ -1,8 +1,15 @@
 import { isAbsolute, relative } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { createPublicClient, createWalletClient, defineChain, http, type Hex } from 'viem';
+import {
+  createPublicClient,
+  createWalletClient,
+  defineChain,
+  http,
+  type Hex,
+  type Abi,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { encodeBigInt, type mcp } from '@crucible/types';
+import { encodeBigInt, abiFunctionSignatures, type mcp } from '@crucible/types';
 
 /**
  * 0G Galileo testnet — chainId 16602.
@@ -66,6 +73,9 @@ export interface DeployerService {
     address: `0x${string}`;
     txHash: `0x${string}`;
     gasUsed: string;
+    contractName: string;
+    abi: Abi;
+    functions: string[];
   }>;
   simulateLocal: (input: mcp.deployer.SimulateLocalInput) => Promise<{
     result: `0x${string}`;
@@ -94,6 +104,17 @@ export interface DeployerService {
     chainId: 16602;
     explorerUrl: string;
   }>;
+  listDeployments: (
+    input: mcp.deployer.ListDeploymentsInput,
+  ) => Promise<{ deployments: mcp.deployer.DeploymentRecord[] }>;
+  /**
+   * Look up a deployment by contract name (most recent wins). Returns undefined
+   * if the contract was never deployed in this session.
+   */
+  getDeployment: (
+    contractName: string,
+    network?: 'local' | '0g-galileo',
+  ) => mcp.deployer.DeploymentRecord | undefined;
 }
 
 /**
@@ -294,15 +315,42 @@ export function createDeployerService(opts: {
   const { chainRpcUrl, compilerUrl = 'http://localhost:3101', ogDeployPrivateKey } = opts;
 
   /**
+   * In-memory deployment registry. Most-recent deploy per (network, contractName)
+   * wins. Persists for the lifetime of the deployer process — sufficient for a
+   * single agent session.
+   */
+  const deployments: mcp.deployer.DeploymentRecord[] = [];
+
+  function recordDeployment(record: mcp.deployer.DeploymentRecord): void {
+    deployments.push(record);
+  }
+
+  /**
    * Fetch contract bytecode from mcp-compiler.
-   * Throws if the contract is not found in the artifact store.
+   * Throws with a helpful "available contracts: ..." list on 404 so the agent
+   * can self-correct without an extra round-trip.
    */
   async function getCompiledBytecode(contractName: string): Promise<string> {
     const res = await fetch(`${compilerUrl}/bytecode/${contractName}`);
     if (!res.ok) {
       if (res.status === 404) {
+        // Try to list available contracts so the agent gets an actionable error.
+        let available = '';
+        try {
+          const listRes = await fetch(`${compilerUrl}/contracts`);
+          if (listRes.ok) {
+            const listData = (await listRes.json()) as { contracts?: string[] };
+            const names = listData.contracts ?? [];
+            available =
+              names.length > 0
+                ? ` Available compiled contracts: ${names.join(', ')}.`
+                : ' No contracts have been compiled in this session yet.';
+          }
+        } catch {
+          // ignore — we'll just return the basic error
+        }
         throw new Error(
-          `Contract "${contractName}" not found in artifact store — compile it first or provide raw bytecode`,
+          `Contract "${contractName}" not found in artifact store — compile it first (compiler.compile) or check the contract name.${available}`,
         );
       }
       const text = await res.text().catch(() => '');
@@ -313,6 +361,21 @@ export function createDeployerService(opts: {
       throw new Error(`Compiler returned no bytecode for "${contractName}"`);
     }
     return data.bytecode;
+  }
+
+  /**
+   * Fetch ABI from mcp-compiler. Returns undefined if not found instead of
+   * throwing — callers handle the missing-ABI case at their own discretion.
+   */
+  async function getCompiledAbi(contractName: string): Promise<Abi | undefined> {
+    try {
+      const res = await fetch(`${compilerUrl}/abi/${contractName}`);
+      if (!res.ok) return undefined;
+      const data = (await res.json()) as { abi?: Abi };
+      return data.abi;
+    } catch {
+      return undefined;
+    }
   }
 
   return {
@@ -331,7 +394,7 @@ export function createDeployerService(opts: {
           from: sender,
           to: null,
           data,
-          ...(input.value !== undefined ? { value: toHexQuantity(input.value) } : {}),
+          ...(input.value !== undefined ? { value: toHexQuantity(BigInt(input.value)) } : {}),
         },
       ]);
 
@@ -340,10 +403,32 @@ export function createDeployerService(opts: {
         throw new Error(`Deploy transaction did not produce a contract address: ${txHash}`);
       }
 
+      // Resolve ABI for the deployed contract. If the compiler doesn't have it
+      // (e.g. the user supplied bytecode some other way), fall back to an empty
+      // ABI \u2014 callers can still recover via compiler.get_abi later.
+      const abi = (await getCompiledAbi(input.contractName)) ?? [];
+      const functions = abiFunctionSignatures(abi);
+
+      const shortName = input.contractName.includes(':')
+        ? input.contractName.split(':').pop()!
+        : input.contractName;
+
+      const record: mcp.deployer.DeploymentRecord = {
+        contractName: shortName,
+        address: receipt.contractAddress as `0x${string}`,
+        txHash: txHash as `0x${string}`,
+        network: 'local',
+        deployedAt: new Date().toISOString(),
+      };
+      recordDeployment(record);
+
       return {
         address: receipt.contractAddress as `0x${string}`,
         txHash: txHash as `0x${string}`,
         gasUsed: encodeBigInt(BigInt(receipt.gasUsed)),
+        contractName: shortName,
+        abi,
+        functions,
       };
     },
 
@@ -352,8 +437,8 @@ export function createDeployerService(opts: {
         ...(input.tx.from ? { from: input.tx.from } : {}),
         ...(input.tx.to ? { to: input.tx.to } : { to: null }),
         data: input.tx.data,
-        ...(input.tx.value !== undefined ? { value: toHexQuantity(input.tx.value) } : {}),
-        ...(input.tx.gas !== undefined ? { gas: toHexQuantity(input.tx.gas) } : {}),
+        ...(input.tx.value !== undefined ? { value: toHexQuantity(BigInt(input.tx.value)) } : {}),
+        ...(input.tx.gas !== undefined ? { gas: toHexQuantity(BigInt(input.tx.gas)) } : {}),
       };
 
       const [callRes, estimateRes] = await Promise.all([
@@ -372,7 +457,7 @@ export function createDeployerService(opts: {
         gasEstimate:
           estimateRes.result !== undefined
             ? encodeBigInt(BigInt(estimateRes.result))
-            : encodeBigInt(input.tx.gas ?? 0n),
+            : encodeBigInt(input.tx.gas !== undefined ? BigInt(input.tx.gas) : 0n),
         ...(revertReason ? { revertReason } : {}),
         logs,
       };
@@ -449,13 +534,24 @@ export function createDeployerService(opts: {
 
       const txHash = await wallet.sendTransaction({
         data,
-        ...(input.value !== undefined ? { value: input.value } : {}),
+        ...(input.value !== undefined ? { value: BigInt(input.value) } : {}),
       });
 
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
       if (!receipt.contractAddress) {
         throw new Error(`0G deploy did not produce a contract address: ${txHash}`);
       }
+
+      const shortName = input.contractName.includes(':')
+        ? input.contractName.split(':').pop()!
+        : input.contractName;
+      recordDeployment({
+        contractName: shortName,
+        address: receipt.contractAddress,
+        txHash,
+        network: '0g-galileo',
+        deployedAt: new Date().toISOString(),
+      });
 
       return {
         address: receipt.contractAddress,
@@ -464,6 +560,25 @@ export function createDeployerService(opts: {
         chainId: 16602 as const,
         explorerUrl: `https://chainscan-galileo.0g.ai/tx/${txHash}`,
       };
+    },
+
+    async listDeployments(input) {
+      const filtered = input.network
+        ? deployments.filter((d) => d.network === input.network)
+        : deployments;
+      // Return newest first.
+      return { deployments: [...filtered].reverse() };
+    },
+
+    getDeployment(contractName, network) {
+      // Walk in reverse so the most recent deployment wins.
+      for (let i = deployments.length - 1; i >= 0; i--) {
+        const d = deployments[i]!;
+        if (d.contractName !== contractName) continue;
+        if (network && d.network !== network) continue;
+        return d;
+      }
+      return undefined;
     },
   };
 }

@@ -5,6 +5,7 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
+	import ZapIcon from '@lucide/svelte/icons/zap';
 
 	export type ModelSelection =
 		| { provider: '0g'; model: string }
@@ -50,6 +51,12 @@
 		// Drop trailing "-instruct" / "-chat" / "-preview" / "-latest" suffixes
 		return base.replace(/-(instruct|chat|preview|latest)$/i, '');
 	}
+
+	const RECOMMENDED = ['glm-5', 'minimax-b2.5', 'deepseek-v4-pro'];
+	function isRecommended(m: string): boolean {
+		const lower = m.toLowerCase();
+		return RECOMMENDED.some((s) => lower.includes(s));
+	}
 </script>
 
 <DropdownMenu.DropdownMenu>
@@ -65,7 +72,10 @@
 	</DropdownMenu.DropdownMenuTrigger>
 
 	<DropdownMenu.DropdownMenuPortal>
-		<DropdownMenu.DropdownMenuContent align="start" class="w-64 font-mono">
+		<DropdownMenu.DropdownMenuContent
+			align="start"
+			class="max-h-[60vh] w-64 overflow-y-auto font-mono"
+		>
 			<!-- 0G section -->
 			{#if loading || models?.og}
 				<DropdownMenu.DropdownMenuGroup>
@@ -114,17 +124,43 @@
 							Loading…
 						</DropdownMenu.DropdownMenuItem>
 					{:else if models?.openai && models.openai.length > 0}
-						{#each models.openai as m (m)}
-							<DropdownMenu.DropdownMenuItem
-								class="flex items-center justify-between text-[11px]"
-								onclick={() => onchange({ provider: 'openai', model: m })}
-							>
-								<span class="truncate">{shortModelName(m)}</span>
-								{#if value.provider === 'openai' && value.model === m}
-									<CheckIcon class="ml-2 size-3 shrink-0" />
-								{/if}
-							</DropdownMenu.DropdownMenuItem>
-						{/each}
+						{@const recommended = models.openai.filter(isRecommended)}
+						{@const others = models.openai.filter((m) => !isRecommended(m))}
+						{#if recommended.length > 0}
+							<div class="flex items-center gap-1 px-2 pt-1 pb-0.5 text-[10px] text-amber-400/80">
+								<ZapIcon class="size-3" />
+								Recommended for coding
+							</div>
+							{#each recommended as m (m)}
+								<DropdownMenu.DropdownMenuItem
+									class="flex items-center justify-between text-[11px]"
+									onclick={() => onchange({ provider: 'openai', model: m })}
+								>
+									<span class="truncate">{shortModelName(m)}</span>
+									{#if value.provider === 'openai' && value.model === m}
+										<CheckIcon class="ml-2 size-3 shrink-0 text-amber-400" />
+									{:else}
+										<ZapIcon class="ml-2 size-3 shrink-0 text-amber-400/40" />
+									{/if}
+								</DropdownMenu.DropdownMenuItem>
+							{/each}
+						{/if}
+						{#if others.length > 0}
+							{#if recommended.length > 0}
+								<DropdownMenu.DropdownMenuSeparator />
+							{/if}
+							{#each others as m (m)}
+								<DropdownMenu.DropdownMenuItem
+									class="flex items-center justify-between text-[11px]"
+									onclick={() => onchange({ provider: 'openai', model: m })}
+								>
+									<span class="truncate">{shortModelName(m)}</span>
+									{#if value.provider === 'openai' && value.model === m}
+										<CheckIcon class="ml-2 size-3 shrink-0" />
+									{/if}
+								</DropdownMenu.DropdownMenuItem>
+							{/each}
+						{/if}
 					{:else}
 						<DropdownMenu.DropdownMenuItem disabled class="text-[11px] text-muted-foreground">
 							Not configured
