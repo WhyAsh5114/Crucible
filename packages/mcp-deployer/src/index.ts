@@ -41,7 +41,7 @@ import {
   ExecuteTxInputSchema,
   SimulateBundleOutputSchema,
   ExecuteTxOutputSchema,
-  ExecutionStatusOutputSchema,
+  GetExecutionStatusOutputSchema,
   createKeeperHubClient,
   getKeeperHubConfig,
 } from './keeperhub-client.ts';
@@ -149,7 +149,7 @@ const DeployOgChainOutputWireSchema = z.object({
 
 const SimulateBundleWireOutputSchema = SimulateBundleOutputSchema;
 const ExecuteTxWireOutputSchema = ExecuteTxOutputSchema;
-const ExecutionStatusWireOutputSchema = ExecutionStatusOutputSchema;
+const ExecutionStatusWireOutputSchema = GetExecutionStatusOutputSchema;
 
 const ListDeploymentsOutputWireSchema = z.object({
   deployments: z.array(
@@ -333,7 +333,7 @@ const mcpServer = createDeployerServer({
 const khConfig = KEEPERHUB_API_KEY
   ? { apiKey: KEEPERHUB_API_KEY, baseUrl: KEEPERHUB_API_URL }
   : getKeeperHubConfig();
-const khRestClient = khConfig ? createKeeperHubClient(khConfig) : null;
+const khRestClient = khConfig ? createKeeperHubClient(khConfig, service.resolveBytecode) : null;
 
 type Env = { Variables: { parsedBody: unknown } };
 

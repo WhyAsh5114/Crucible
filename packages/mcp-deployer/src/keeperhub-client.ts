@@ -22,7 +22,42 @@
  *   get_execution_status(executionId)           → ExecutionStatusOutput
  */
 
-import { z } from 'zod';
+import {
+  SimulateBundleInputSchema,
+  SimulateBundleOutputSchema,
+  ExecuteTxInputSchema,
+  ExecuteTxOutputSchema,
+  GetExecutionStatusInputSchema,
+  GetExecutionStatusOutputSchema,
+  type SimulateBundleInput,
+  type SimulateBundleOutput,
+  type ExecuteTxInput,
+  type ExecuteTxOutput,
+  type GetExecutionStatusInput,
+  type GetExecutionStatusOutput,
+  type PerTxGasEstimate,
+} from '@crucible/types/mcp/deployer';
+
+// Re-export for callers that previously imported from this module.
+export {
+  SimulateBundleInputSchema,
+  SimulateBundleOutputSchema,
+  ExecuteTxInputSchema,
+  ExecuteTxOutputSchema,
+  GetExecutionStatusInputSchema,
+  GetExecutionStatusOutputSchema,
+};
+export type {
+  SimulateBundleInput,
+  SimulateBundleOutput,
+  ExecuteTxInput,
+  ExecuteTxOutput,
+  GetExecutionStatusInput,
+  GetExecutionStatusOutput,
+};
+
+// Output type alias used internally by executeAndPoll.
+type ExecutionStatusOutput = GetExecutionStatusOutput;
 
 // ---------------------------------------------------------------------------
 // Environment config
@@ -32,6 +67,13 @@ export interface KeeperHubClientConfig {
   apiKey: string;
   baseUrl: string;
 }
+
+/**
+ * Resolves a compiled contract's creation bytecode by bare contract name.
+ * Injected by the deployer service so the KeeperHub client can stay
+ * transport-only and the agent never has to pass raw bytecode in tool inputs.
+ */
+export type BytecodeResolver = (contractName: string) => Promise<string>;
 
 export function getKeeperHubConfig(): KeeperHubClientConfig | null {
   const apiKey = process.env['KEEPERHUB_API_KEY'];
@@ -48,104 +90,9 @@ export function getKeeperHubConfig(): KeeperHubClientConfig | null {
 // Input / output schemas
 // ---------------------------------------------------------------------------
 
-/** A single pre-compiled artifact ready for KeeperHub simulation. */
-export const ArtifactSchema = z.object({
-  /** Contract name (must match a compiled artifact in the store). */
-  contractName: z.string().min(1),
-  /** ABI-encoded constructor arguments, 0x-prefixed. */
-  constructorData: z
-    .string()
-    .regex(/^0x([0-9a-fA-F]{2})*$/u)
-    .default('0x'),
-  /** EVM bytecode (creation code), 0x-prefixed. */
-  bytecode: z.string().regex(/^0x([0-9a-fA-F]{2})*$/u),
-  /** Value to send with constructor (decimal string). */
-  value: z
-    .string()
-    .regex(/^(?:0|[1-9][0-9]*)$/u)
-    .optional(),
-});
-export type Artifact = z.infer<typeof ArtifactSchema>;
-
-export const SimulateBundleInputSchema = z.object({
-  /** Compiled contract artifacts to simulate. */
-  artifacts: z.array(ArtifactSchema).min(1),
-  /** EOA address that will authorize the bundle. */
-  deployerAddress: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{40}$/u, 'Expected a 0x-prefixed 20-byte hex address'),
-  /** Sepolia (11155111) is the only supported public testnet for ship. */
-  chainId: z.literal(11155111).default(11155111),
-});
-export type SimulateBundleInput = z.infer<typeof SimulateBundleInputSchema>;
-
-export const PerTxGasEstimateSchema = z.object({
-  /** Index in the artifacts array. */
-  index: z.number().int().nonnegative(),
-  contractName: z.string(),
-  /** Estimated gas as a decimal string (uint256-safe). */
-  gasEstimate: z.string(),
-  /** Human-readable note, e.g. "within safe limits". */
-  note: z.string().optional(),
-});
-export type PerTxGasEstimate = z.infer<typeof PerTxGasEstimateSchema>;
-
-export const SimulateBundleOutputSchema = z.object({
-  /** Opaque ID returned by KeeperHub — pass to execute_tx. */
-  bundleId: z.string().min(1),
-  gasEstimates: z.array(PerTxGasEstimateSchema),
-  /**
-   * Whether the simulation predicts the bundle will succeed.
-   * KeeperHub workflow creation doesn't return willSucceed — we always set
-   * true here since the workflow was created successfully. If KeeperHub
-   * rejects the nodes, the create call will fail with an error.
-   */
-  willSucceed: z.boolean().optional(),
-  /** KeeperHub's aggregate note on the bundle. */
-  summary: z.string().optional(),
-});
-export type SimulateBundleOutput = z.infer<typeof SimulateBundleOutputSchema>;
-
-export const ExecuteTxInputSchema = z.object({
-  bundleId: z.string().min(1),
-});
-export type ExecuteTxInput = z.infer<typeof ExecuteTxInputSchema>;
-
-export const ExecuteTxOutputSchema = z.object({
-  executionId: z.string().min(1),
-  /** Submitted tx hash (may be null if KeeperHub has not yet broadcast). */
-  txHash: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/u)
-    .nullable(),
-  status: z.enum(['pending', 'mined', 'confirmed', 'failed']),
-});
-export type ExecuteTxOutput = z.infer<typeof ExecuteTxOutputSchema>;
-
-export const GetExecutionStatusInputSchema = z.object({
-  executionId: z.string().min(1),
-});
-export type GetExecutionStatusInput = z.infer<typeof GetExecutionStatusInputSchema>;
-
-export const ExecutionStatusOutputSchema = z.object({
-  executionId: z.string().min(1),
-  status: z.enum(['pending', 'mined', 'confirmed', 'failed']),
-  txHash: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{64}$/u)
-    .nullable(),
-  blockNumber: z.number().int().nonnegative().nullable(),
-  /** Set when status === 'confirmed'. Required by KeeperHub audit trail. */
-  auditTrailId: z.string().nullable(),
-  /** Deployed contract address, set on confirmed contract-creation txs. */
-  contractAddress: z
-    .string()
-    .regex(/^0x[0-9a-fA-F]{40}$/u)
-    .nullable(),
-  /** Sepolia explorer URL once the tx is mined. */
-  explorerUrl: z.string().url().nullable(),
-});
-export type ExecutionStatusOutput = z.infer<typeof ExecutionStatusOutputSchema>;
+// Schemas live in @crucible/types/mcp/deployer (see top-of-file imports).
+// The agent registers those schemas with the AI SDK's MCP client so the
+// LLM sees the same artifact-reference shape this server expects.
 
 // ---------------------------------------------------------------------------
 // HTTP transport helpers
@@ -313,10 +260,17 @@ function normalizeStatus(khStatus: string): 'pending' | 'mined' | 'confirmed' | 
 }
 
 /**
- * Create a KeeperHub client. Returns null when KEEPERHUB_API_KEY is absent so
- * callers can degrade gracefully instead of throwing at construction time.
+ * Create a KeeperHub client.
+ *
+ * `resolveBytecode` is required: artifact inputs only carry a `contractName`,
+ * so the client must look up the matching creation bytecode from the local
+ * compiler artifact store. The deployer service injects a fetch-based
+ * resolver that hits mcp-compiler's `/bytecode/:name` endpoint.
  */
-export function createKeeperHubClient(config: KeeperHubClientConfig): KeeperHubClient {
+export function createKeeperHubClient(
+  config: KeeperHubClientConfig,
+  resolveBytecode: BytecodeResolver,
+): KeeperHubClient {
   return {
     /**
      * simulate_bundle → Creates a KeeperHub workflow with contractWrite action
@@ -325,6 +279,15 @@ export function createKeeperHubClient(config: KeeperHubClientConfig): KeeperHubC
      * doesn't expose a standalone simulation endpoint.
      */
     async simulateBundle(input) {
+      // Resolve bytecode for every artifact up-front so a missing artifact
+      // surfaces a single clear error instead of a half-built workflow.
+      const resolved = await Promise.all(
+        input.artifacts.map(async (a) => ({
+          ref: a,
+          bytecode: await resolveBytecode(a.contractName),
+        })),
+      );
+
       // Build workflow nodes: one trigger + one action per artifact
       const triggerId = `trigger_${Date.now()}`;
       const nodes: KhWorkflowNode[] = [
@@ -346,13 +309,13 @@ export function createKeeperHubClient(config: KeeperHubClientConfig): KeeperHubC
       let prevNodeId = triggerId;
       const gasEstimates: PerTxGasEstimate[] = [];
 
-      for (let i = 0; i < input.artifacts.length; i++) {
-        const artifact = input.artifacts[i]!;
+      for (let i = 0; i < resolved.length; i++) {
+        const { ref: artifact, bytecode } = resolved[i]!;
         const actionId = `deploy_${i}_${Date.now()}`;
         const fullBytecode =
           artifact.constructorData && artifact.constructorData !== '0x'
-            ? artifact.bytecode + artifact.constructorData.slice(2)
-            : artifact.bytecode;
+            ? bytecode + artifact.constructorData.slice(2)
+            : bytecode;
 
         nodes.push({
           id: actionId,
@@ -453,9 +416,9 @@ export function createKeeperHubClient(config: KeeperHubClientConfig): KeeperHubC
 
       const status = normalizeStatus(statusRes.status);
 
-      // For terminal states, also fetch logs to extract tx details
-      let txHash: string | null = null;
-      let contractAddress: string | null = null;
+      // Extract tx details from node outputs (action nodes that wrote to chain)
+      let txHash: `0x${string}` | null = null;
+      let contractAddress: `0x${string}` | null = null;
       let auditTrailId: string | null = null;
       let explorerUrl: string | null = null;
       let blockNumber: number | null = null;
@@ -476,13 +439,13 @@ export function createKeeperHubClient(config: KeeperHubClientConfig): KeeperHubC
               if (nodeLog.output) {
                 const out = nodeLog.output as Record<string, unknown>;
                 if (typeof out['transactionHash'] === 'string') {
-                  txHash = out['transactionHash'] as string;
+                  txHash = out['transactionHash'] as `0x${string}`;
                 }
                 if (typeof out['txHash'] === 'string') {
-                  txHash = out['txHash'] as string;
+                  txHash = out['txHash'] as `0x${string}`;
                 }
                 if (typeof out['contractAddress'] === 'string') {
-                  contractAddress = out['contractAddress'] as string;
+                  contractAddress = out['contractAddress'] as `0x${string}`;
                 }
                 if (typeof out['blockNumber'] === 'number') {
                   blockNumber = out['blockNumber'] as number;

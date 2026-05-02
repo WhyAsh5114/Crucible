@@ -115,6 +115,13 @@ export interface DeployerService {
     contractName: string,
     network?: 'local' | '0g-galileo',
   ) => mcp.deployer.DeploymentRecord | undefined;
+  /**
+   * Resolve a compiled contract's creation bytecode by bare name. Used by
+   * the KeeperHub client so callers (and the agent) never have to pass raw
+   * bytecode through tool inputs. Throws with an actionable error listing
+   * available contracts when the name doesn't match.
+   */
+  resolveBytecode: (contractName: string) => Promise<string>;
 }
 
 /**
@@ -579,6 +586,10 @@ export function createDeployerService(opts: {
         return d;
       }
       return undefined;
+    },
+
+    resolveBytecode(contractName) {
+      return getCompiledBytecode(contractName);
     },
   };
 }
