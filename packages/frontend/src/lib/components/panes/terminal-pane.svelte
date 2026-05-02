@@ -67,6 +67,12 @@
 			if (term !== liveTerm) return;
 			term.options.theme = resolveTerminalTheme();
 			term.refresh(0, term.rows - 1);
+			// Keep the terminal focused after any theme repaint. xterm's
+			// `refresh()` itself doesn't drop focus, but adjacent UI events
+			// (mode toggle clicks, workspace status reloads, etc.) often do —
+			// re-asserting focus here means typing always picks up where the
+			// user left off without an explicit click.
+			term.focus();
 		});
 		return () => cancelAnimationFrame(handle);
 	});
@@ -197,7 +203,32 @@
 				// xterm only fires `onResize` on changes; push the current size
 				// once on open so the PTY matches the rendered grid from frame zero.
 				send({ kind: 'resize', cols: term!.cols, rows: term!.rows });
-				term?.focus();
+
+				// On a fresh page load, browsers' autofocus prevention can
+				// silently swallow the first programmatic `focus()` until
+				// after the user has interacted with the page at least once.
+				// Retry a handful of times across animation frames until the
+				// xterm textarea actually becomes the active element — but
+				// only if the user hasn't focused something else themselves
+				// (e.g. clicked into the chat input). That makes typing into
+				// a freshly-loaded workspace "just work" without an extra
+				// click, while still respecting an explicit user choice.
+				const tryFocus = (attemptsLeft: number): void => {
+					if (cancelled || !term) return;
+					const active = document.activeElement;
+					const userHasFocusedSomethingElse =
+						active &&
+						active !== document.body &&
+						active.tagName !== 'TEXTAREA' &&
+						active.tagName !== 'INPUT';
+					if (userHasFocusedSomethingElse) return;
+					term.focus();
+					if (attemptsLeft > 0) {
+						setTimeout(() => tryFocus(attemptsLeft - 1), 60);
+					}
+				};
+				tryFocus(5);
+
 				// Drain any frames buffered between WS open and xterm ready
 				// (rare but possible if onmessage fires before this onopen).
 				for (const frame of pending) applyFrame(frame);
@@ -297,6 +328,19 @@
 				<span class="text-live">connected</span>
 			{/if}
 		</div>
-		<div bind:this={host} class="size-full overflow-hidden bg-background p-2"></div>
+		<!--
+			Click anywhere in the host div forwards focus into xterm. Without
+			this, clicking on the padded margin around the textarea (or after
+			any UI event that pulled focus away) leaves the terminal looking
+			"alive" but ignoring keystrokes.
+			role/tabindex satisfy a11y for the click target — xterm itself
+			holds the real focusable textarea.
+		-->
+		<div
+			bind:this={host}
+			role="presentation"
+			onclick={() => liveTerm?.focus()}
+			class="size-full overflow-hidden bg-background p-2"
+		></div>
 	{/if}
 </section>
