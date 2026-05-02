@@ -159,7 +159,19 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  server: { strictPort: true },
+  server: {
+    strictPort: true,
+    // Crucible's backend writes files via atomic temp-file + rename so the
+    // dev server never observes a half-written module mid-flight. The
+    // tradeoff is that inotify/fsevents on bind-mounted dirs sometimes miss
+    // the rename event entirely, so HMR silently doesn't fire after a save.
+    // Polling sidesteps this by stat-checking files at a steady cadence —
+    // ~1–2% CPU for a deterministic reload signal.
+    watch: {
+      usePolling: true,
+      interval: 200,
+    },
+  },
 });
 `,
   );
