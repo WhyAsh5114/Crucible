@@ -94,6 +94,16 @@ export function getPreviewState(workspaceId: string): PreviewState {
   return previewStates.get(workspaceId) ?? makeIdleState();
 }
 
+/**
+ * Force the preview phase to `starting` synchronously. Used by the
+ * restart endpoint so the next frontend poll never observes `idle`
+ * during the brief window between `stopPreview` and the new
+ * `startPreview` advancing the phase itself.
+ */
+export function setPreviewStarting(workspaceId: string): void {
+  setPhase(workspaceId, 'starting');
+}
+
 // ---------------------------------------------------------------------------
 // Port helpers
 // ---------------------------------------------------------------------------
@@ -370,16 +380,31 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
   vite.stdout?.on('data', (chunk: Buffer) => appendLogTail(workspaceId, chunk.toString()));
   vite.stderr?.on('data', (chunk: Buffer) => appendLogTail(workspaceId, chunk.toString()));
 
+  // Capture the entry as a closure so the exit handler can tell whether
+  // *this* process is still the registered preview, or whether a newer
+  // call to startPreview (e.g. user-initiated restart) has already
+  // replaced it. Without this guard, an old Vite's delayed SIGTERM exit
+  // would race ahead of the new Vite, delete its entry from the map, and
+  // flip the phase back to `idle` — exactly the flicker the user reports
+  // when they hit the reload button.
+  const myEntry: PreviewEntry = { process: vite, port, previewUrl };
+
   (vite as unknown as EventEmitter).on('exit', (code: number | null) => {
+    appendLogTail(workspaceId, `Vite exited with code ${code ?? 'null'}.`);
+    if (previews.get(workspaceId) !== myEntry) {
+      // A newer startPreview already replaced us in the registry. Don't
+      // touch the phase or the persisted previewUrl — those belong to
+      // the new process now.
+      return;
+    }
     previews.delete(workspaceId);
     setPhase(workspaceId, code === 0 || code === null ? 'idle' : 'failed');
-    appendLogTail(workspaceId, `Vite exited with code ${code ?? 'null'}.`);
     prisma.workspaceRuntime
       .updateMany({ where: { workspaceId }, data: { previewUrl: null } })
       .catch(() => undefined);
   });
 
-  previews.set(workspaceId, { process: vite, port, previewUrl });
+  previews.set(workspaceId, myEntry);
   setPhase(workspaceId, 'ready');
 
   await prisma.workspaceRuntime
