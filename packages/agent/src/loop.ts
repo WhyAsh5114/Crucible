@@ -549,6 +549,11 @@ const RESUME_TOOLS = [
 /**
  * Detect whether a `deploy_local` tool result contains a revert.
  * Returns `{ reverted: true, txHash, revertSignature }` or `{ reverted: false }`.
+ *
+ * A revert is recognised only when the error text contains the word
+ * "revert". Infrastructure errors ("contract not found in artifact store",
+ * "node not running", network timeouts) are treated as plain failures and
+ * never trigger the repair loop, even if they happen to contain a tx hash.
  */
 export function extractDeployRevert(
   toolName: string,
@@ -568,16 +573,17 @@ export function extractDeployRevert(
       .map((c) => c.text ?? '')
       .join('\n') ?? '';
   // Only treat as a revert if the error message actually describes an EVM
-  // revert. Infrastructure errors (e.g. "contract not found in artifact store",
-  // "node not running") must not trigger the repair loop.
-  const isRevertMessage = /revert/i.test(message) || /0x[0-9a-f]{64}/i.test(message);
-  if (!isRevertMessage) return { reverted: false };
+  // revert (i.e. contains the word "revert"). Infrastructure errors — node
+  // unreachable, contract not found in artifact store, RPC timeouts — must
+  // not trigger the repair loop, so we deliberately don't fall back to a
+  // bare tx-hash match here.
+  if (!/revert/i.test(message)) return { reverted: false };
   // Extract txHash from common Hardhat revert messages, e.g.
   // "Transaction reverted: 0xabc... reverted with reason: …"
   const txMatch = /0x[0-9a-f]{64}/i.exec(message);
   const txHash = txMatch?.[0] ?? '0x' + '0'.repeat(64);
   // Normalise a revert signature: prefer decoded reason string; fall back to
-  // first 4 bytes as a selector if present; otherwise use the raw message.
+  // the raw message slice.
   const reasonMatch = /reverted with reason:\s*"([^"]+)"/i.exec(message);
   const revertSignature = reasonMatch?.[1] ?? message.slice(0, 200);
   return { reverted: true, txHash, revertSignature };
@@ -1021,7 +1027,18 @@ export async function runAgentTurn(
                   break;
                 }
                 case 'compile': {
-                  repairCtx.phase = 'revert';
+                  // If the compile failed, loop back to `patch` so the model
+                  // gets another shot at producing valid Solidity. The compile
+                  // tool result (with the error) is already in the message
+                  // history; the next prepareStep will force write_file again.
+                  // The 3-attempt cap on the *outer* repair loop still applies
+                  // — but compile retries within a single attempt are free.
+                  const raw = rawResult as { isError?: boolean } | undefined;
+                  if (raw?.isError) {
+                    repairCtx.phase = 'patch';
+                  } else {
+                    repairCtx.phase = 'revert';
+                  }
                   break;
                 }
                 case 'revert': {
@@ -1373,29 +1390,36 @@ export async function runAgentTurn(
     if (finalCtx?.snapshotId != null) {
       const chainUrl = config.mcpServerUrls?.chain;
       if (chainUrl) {
-        try {
-          const cleanupClient = await createMCPClient({
-            transport: {
-              type: 'http',
-              url: chainUrl,
-              ...(config.mcpFetch ? { fetch: config.mcpFetch } : {}),
-            },
-          });
-          const cleanupTools = await cleanupClient.tools({
-            schemas: getMcpSchemas('chain'),
-          });
-          // Call chain.revert to restore state; ignore errors — best-effort only.
-          await (
-            cleanupTools['revert'] as unknown as {
-              execute: (args: { snapshotId: string }, opts?: unknown) => Promise<unknown>;
-            }
-          )
-            ?.execute({ snapshotId: finalCtx.snapshotId })
-            .catch(() => undefined);
-          await cleanupClient.close().catch(() => undefined);
-        } catch {
-          // Best-effort — do not rethrow.
-        }
+        // Best-effort, time-bounded: if the workspace is being torn down the
+        // chain MCP may already be unreachable. We never want shutdown to
+        // hang on this cleanup, so cap the whole revert at 5 seconds.
+        const cleanupTimeout = new Promise<void>((resolve) => setTimeout(resolve, 5_000));
+        const cleanupRun = (async (): Promise<void> => {
+          try {
+            const cleanupClient = await createMCPClient({
+              transport: {
+                type: 'http',
+                url: chainUrl,
+                ...(config.mcpFetch ? { fetch: config.mcpFetch } : {}),
+              },
+            });
+            const cleanupTools = await cleanupClient.tools({
+              schemas: getMcpSchemas('chain'),
+            });
+            // Call chain.revert to restore state; ignore errors — best-effort only.
+            await (
+              cleanupTools['revert'] as unknown as {
+                execute: (args: { snapshotId: string }, opts?: unknown) => Promise<unknown>;
+              }
+            )
+              ?.execute({ snapshotId: finalCtx.snapshotId! })
+              .catch(() => undefined);
+            await cleanupClient.close().catch(() => undefined);
+          } catch {
+            // Best-effort — do not rethrow.
+          }
+        })();
+        await Promise.race([cleanupRun, cleanupTimeout]);
       }
     }
     await Promise.all(mcpClients.map((c) => c.close().catch(() => undefined)));
