@@ -41,12 +41,19 @@ const PORT = process.env['MESH_MCP_PORT']
   : mcp.DEFAULT_MCP_PORTS.mesh;
 
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
+const WORKSPACE_ID = process.env['WORKSPACE_ID'] ?? '';
+const BACKEND_URL = process.env['CRUCIBLE_BACKEND_URL'] ?? '';
+const RUNTIME_SECRET = process.env['CRUCIBLE_RUNTIME_SECRET'] ?? '';
 const devtools = createDevtoolsReporter('mesh');
 
 console.log(`[mcp-mesh] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT})`);
 
 // Boot the AXL node — this must succeed before we serve any requests.
-const manager = new AXLNodeManager(WORKSPACE_ROOT);
+const manager = new AXLNodeManager(WORKSPACE_ROOT, {
+  backendUrl: BACKEND_URL,
+  workspaceId: WORKSPACE_ID,
+  runtimeSecret: RUNTIME_SECRET,
+});
 await manager.start();
 
 // Register shutdown handler so the AXL child process is cleaned up.
@@ -55,6 +62,19 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     console.log(`[mcp-mesh] received ${sig} — stopping AXL node`);
     void manager.stop().then(() => process.exit(0));
   });
+}
+
+// Register this workspace's AXL public key with the backend so other
+// workspace containers can discover it.  Fire-and-forget — the mesh still
+// works without the registry (just without cross-workspace peers).
+if (WORKSPACE_ID && BACKEND_URL && RUNTIME_SECRET) {
+  void manager.registerOwnKey().catch((err: unknown) => {
+    console.warn('[mcp-mesh] AXL key registration failed:', String(err));
+  });
+} else {
+  console.warn(
+    '[mcp-mesh] skipping AXL key registration: WORKSPACE_ID, CRUCIBLE_BACKEND_URL, or CRUCIBLE_RUNTIME_SECRET not set',
+  );
 }
 
 // ── Wire-format schemas for OpenAPI ───────────────────────────────────────

@@ -443,6 +443,22 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     `WORKSPACE_ROOT=${workspaceDir}`,
   ];
 
+  // Allow in-container services (e.g. mcp-mesh) to call back to the host
+  // backend API.  On macOS/Windows Docker Desktop `host.docker.internal`
+  // resolves to the host; on Linux with `--add-host` it also works.
+  // Operators can override with CRUCIBLE_BACKEND_URL if the backend is not
+  // on the Docker host (e.g. in a Compose network).
+  const backendUrl =
+    process.env['CRUCIBLE_BACKEND_URL'] ??
+    `http://host.docker.internal:${process.env['PORT'] ?? 3000}`;
+  env.push(`CRUCIBLE_BACKEND_URL=${backendUrl}`);
+
+  // Shared secret used by in-container services to authenticate callbacks to
+  // the backend's internal container API routes.  If not set the feature
+  // degrades gracefully (mcp-mesh will log a warning and skip registration).
+  const runtimeSecret = process.env['CRUCIBLE_RUNTIME_SECRET'];
+  if (runtimeSecret) env.push(`CRUCIBLE_RUNTIME_SECRET=${runtimeSecret}`);
+
   // Forward 0G credentials when set so in-container services can use 0G
   // Storage (mcp-memory) and 0G Chain (mcp-deployer) without a custom image.
   const ogPassthrough = [

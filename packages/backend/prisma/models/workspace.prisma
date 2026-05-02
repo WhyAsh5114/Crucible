@@ -35,9 +35,14 @@ model WorkspaceRuntime {
     deployerPort      Int?
     walletPort        Int?
     memoryPort        Int?
+    meshPort          Int?
     terminalPort      Int?
     devtoolsPort      Int?
     chainState        Json?
+    /** AXL public key registered by mcp-mesh on startup. Null until mcp-mesh
+     *  has started and called POST /api/workspace/:id/axl-key. Used by peer
+     *  workspaces to discover each other's AXL identity for P2P messaging. */
+    axlPublicKey      String?
     createdAt         DateTime      @default(now())
     updatedAt         DateTime      @updatedAt
 

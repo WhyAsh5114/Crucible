@@ -36,3 +36,7 @@ cache/
 
 # Backend generated files (Prisma client) — see packages/backend/.gitignore
 .workspaces
+
+# Other
+SUBMISSION.md
+SCRIPT.md

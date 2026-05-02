@@ -80,9 +80,21 @@ function parseEnvelope(raw: string): CrucibleEnvelope | null {
 
 // ── Node Manager ──────────────────────────────────────────────────────────
 
+export interface AXLNodeManagerConfig {
+  /** Base URL of the Crucible backend, e.g. http://host.docker.internal:3000 */
+  backendUrl?: string;
+  /** This workspace's ID — used to register/fetch peers from the backend. */
+  workspaceId?: string;
+  /** Shared secret for container → backend API authentication. */
+  runtimeSecret?: string;
+}
+
 export class AXLNodeManager {
   private readonly workspaceRoot: string;
   private readonly axlClient: AXLClient;
+  private readonly backendUrl: string;
+  private readonly workspaceId: string;
+  private readonly runtimeSecret: string;
 
   private proc: Subprocess | null = null;
   private recvTimer: ReturnType<typeof setInterval> | null = null;
@@ -97,9 +109,12 @@ export class AXLNodeManager {
    */
   private incomingRequests = new Map<string, { request: MeshHelpRequest; fromPeerId: string }>();
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, config: AXLNodeManagerConfig = {}) {
     this.workspaceRoot = workspaceRoot;
     this.axlClient = new AXLClient(AXL_API_PORT);
+    this.backendUrl = config.backendUrl ?? '';
+    this.workspaceId = config.workspaceId ?? '';
+    this.runtimeSecret = config.runtimeSecret ?? '';
   }
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -155,17 +170,58 @@ export class AXLNodeManager {
 
   // ── Tool implementations ─────────────────────────────────────────────────
 
+  /**
+   * Register our own AXL public key with the Crucible backend.
+   * Called once after `start()` by the entry point.
+   */
+  async registerOwnKey(): Promise<void> {
+    if (!this.backendUrl || !this.workspaceId || !this.runtimeSecret) {
+      throw new Error(
+        'backendUrl, workspaceId, and runtimeSecret are required for key registration',
+      );
+    }
+    const url = `${this.backendUrl}/api/workspace/${this.workspaceId}/axl-key`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Container-Secret': this.runtimeSecret,
+      },
+      body: JSON.stringify({ axlPublicKey: this.ownPublicKey }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`registerOwnKey failed: ${res.status} ${text}`);
+    }
+    console.log(
+      `[mcp-mesh] registered AXL key with backend (pubkey=${this.ownPublicKey.slice(0, 12)}…)`,
+    );
+  }
+
+  /**
+   * Fetch peer AXL public keys from the backend registry.
+   * Returns an empty array when backend integration is not configured.
+   */
+  private async fetchBackendPeers(): Promise<string[]> {
+    if (!this.backendUrl || !this.workspaceId || !this.runtimeSecret) return [];
+    try {
+      const url = `${this.backendUrl}/api/workspace/${this.workspaceId}/mesh-peers`;
+      const res = await fetch(url, {
+        headers: { 'X-Container-Secret': this.runtimeSecret },
+      });
+      if (!res.ok) return [];
+      const body = (await res.json()) as { peers?: Array<{ axlPublicKey: string }> };
+      return (body.peers ?? []).map((p) => p.axlPublicKey);
+    } catch {
+      return [];
+    }
+  }
+
   async listPeers(): Promise<ListPeersOutput> {
     const topology = await this.axlClient.topology();
     const now = Date.now();
 
-    // topology.peers contains only the direct bootstrap/relay connections —
-    // useless for Crucible collaboration.  The spanning tree (topology.tree)
-    // contains every node the local AXL instance has learned about, including
-    // leaf nodes reachable only via relays.  We filter out:
-    //   • our own key            (it's us)
-    //   • direct bootstrap keys  (infrastructure, not Crucible workspaces)
-    //   • root nodes (parent === self) — relay infrastructure
+    // Build the set of infrastructure keys to exclude from the peer list.
     const bootstrapKeys = new Set(topology.peers.map((p) => p.public_key));
     bootstrapKeys.add(topology.our_public_key);
     // Also exclude root nodes (their parent == themselves).
@@ -173,13 +229,22 @@ export class AXLNodeManager {
       if (entry.parent === entry.public_key) bootstrapKeys.add(entry.public_key);
     }
 
-    const peers: MeshPeer[] = topology.tree
-      .filter((entry) => !bootstrapKeys.has(entry.public_key))
-      .map((entry) => ({
-        nodeId: entry.public_key as MeshPeer['nodeId'],
-        lastSeen: now as MeshPeer['lastSeen'],
-        reputation: 0.5,
-      }));
+    // Start with peers visible in the AXL spanning-tree (may be empty behind NAT).
+    const treeKeys = new Set(
+      topology.tree
+        .filter((entry) => !bootstrapKeys.has(entry.public_key))
+        .map((entry) => entry.public_key),
+    );
+
+    // Merge with backend registry (authoritative phonebook).
+    const backendKeys = await this.fetchBackendPeers();
+    const allPeerKeys = new Set([...treeKeys, ...backendKeys]);
+
+    const peers: MeshPeer[] = Array.from(allPeerKeys).map((key) => ({
+      nodeId: key as MeshPeer['nodeId'],
+      lastSeen: now as MeshPeer['lastSeen'],
+      reputation: 0.5,
+    }));
 
     return { peers };
   }
@@ -199,19 +264,25 @@ export class AXLNodeManager {
     const topology = await this.axlClient.topology();
     const sendErrors: string[] = [];
 
-    // Use the same filter as listPeers: send to non-bootstrap tree entries only.
+    // Use the same filter as listPeers: send to non-bootstrap tree entries,
+    // plus backend-registered peers (may differ behind NAT).
     const bootstrapKeys = new Set(topology.peers.map((p) => p.public_key));
     bootstrapKeys.add(topology.our_public_key);
     for (const entry of topology.tree) {
       if (entry.parent === entry.public_key) bootstrapKeys.add(entry.public_key);
     }
-    const targets = topology.tree.filter((e) => !bootstrapKeys.has(e.public_key));
+    const treeTargets = topology.tree
+      .filter((e) => !bootstrapKeys.has(e.public_key))
+      .map((e) => e.public_key);
 
-    for (const peer of targets) {
+    const backendPeers = await this.fetchBackendPeers();
+    const targetSet = new Set([...treeTargets, ...backendPeers]);
+
+    for (const pubKey of targetSet) {
       try {
-        await this.axlClient.send(peer.public_key, payload);
+        await this.axlClient.send(pubKey, payload);
       } catch (err) {
-        sendErrors.push(`${peer.public_key.slice(0, 8)}…: ${String(err)}`);
+        sendErrors.push(`${pubKey.slice(0, 8)}…: ${String(err)}`);
       }
     }
 

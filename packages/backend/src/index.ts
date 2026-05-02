@@ -6,7 +6,7 @@ import { auth, requireSession } from './lib/auth';
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { rpcApi } from './api/rpc';
-import { workspaceApi } from './api/workspace';
+import { workspaceApi, containerApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
 import { modelsApi } from './api/models';
@@ -54,6 +54,7 @@ app.use('/api/models', requireSession);
 
 const apiRoutes = app
   .route('/api', workspaceApi)
+  .route('/api', containerApi)
   .route('/api', runtimeApi)
   .route('/api', rpcApi)
   .route('/api', agentApi)

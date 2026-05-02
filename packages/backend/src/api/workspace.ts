@@ -25,6 +25,9 @@ import {
   ChatSessionCreateRequestSchema,
   ChatSessionRenameRequestSchema,
   ChatSessionDeleteResponseSchema,
+  AxlKeyRegisterRequestSchema,
+  AxlKeyRegisterResponseSchema,
+  MeshPeersResponseSchema,
   type TemplateState,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
@@ -439,6 +442,65 @@ const purgeMemoryRoute = createRoute({
   },
 });
 
+// ── AXL key registry ─────────────────────────────────────────────────────────
+
+/** mcp-mesh calls this once on startup (from inside the container) to
+ *  publish its AXL public key.  The route is protected by
+ *  `requireContainerAuth` (X-Container-Secret header) rather than a user
+ *  session, because the container does not hold user credentials. */
+const registerAxlKeyRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/axl-key',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    headers: z.object({ 'x-container-secret': z.string() }),
+    body: {
+      content: { 'application/json': { schema: AxlKeyRegisterRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: AxlKeyRegisterResponseSchema } },
+      description: 'AXL key registered',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace runtime not found',
+    },
+  },
+});
+
+/** Returns the AXL public keys of all other workspace containers that belong
+ *  to the same operator user.  Only workspaces that have already registered
+ *  a key are included.  The calling workspace's own entry is excluded. */
+const getMeshPeersRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/mesh-peers',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    headers: z.object({ 'x-container-secret': z.string() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MeshPeersResponseSchema } },
+      description: 'Peer AXL public keys',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+  },
+});
+
 // ── Chain auto-boot ──────────────────────────────────────────────────────────
 
 /**
@@ -641,6 +703,7 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
         deployerPort: container.ports.deployer,
         walletPort: container.ports.wallet,
         memoryPort: container.ports.memory,
+        meshPort: container.ports.mesh,
         terminalPort: container.ports.terminal,
         devtoolsPort: container.ports.devtools,
       },
@@ -1377,4 +1440,89 @@ export const workspaceApi = workspaceApiBase
         'X-Accel-Buffering': 'no',
       },
     });
+  });
+
+// ── Container-auth API ───────────────────────────────────────────────────────
+// These routes are called by mcp-mesh processes running INSIDE workspace
+// containers.  They are NOT protected by `requireSession` (no user session is
+// available inside a container).  Instead they require an
+// `X-Container-Secret` header that matches the `CRUCIBLE_RUNTIME_SECRET` env
+// var shared between the host backend process and every container it spawns.
+// If the operator has not set `CRUCIBLE_RUNTIME_SECRET` the routes return 401
+// so the feature degrades gracefully rather than becoming an open API.
+
+function requireContainerAuth(
+  c: { req: { header: (k: string) => string | undefined } },
+  next: () => Promise<Response | undefined>,
+): Response | Promise<Response | undefined> {
+  const secret = process.env['CRUCIBLE_RUNTIME_SECRET'];
+  if (!secret) {
+    return new Response(JSON.stringify({ error: 'container auth not configured' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const provided = c.req.header('x-container-secret');
+  if (!provided || provided !== secret) {
+    return new Response(JSON.stringify({ error: 'invalid container secret' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return next();
+}
+
+const containerApiBase = new OpenAPIHono();
+containerApiBase.use('*', requireContainerAuth as Parameters<typeof containerApiBase.use>[1]);
+
+export const containerApi = containerApiBase
+  .openapi(registerAxlKeyRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { axlPublicKey } = c.req.valid('json');
+
+    // Ensure the workspace runtime row exists (container is running, so it should).
+    const runtime = await prisma.workspaceRuntime.findUnique({ where: { workspaceId: id } });
+    if (!runtime) {
+      return c.json(createApiErrorBody('not_found', 'Workspace runtime not found'), 404);
+    }
+
+    await prisma.workspaceRuntime.update({
+      where: { workspaceId: id },
+      data: { axlPublicKey },
+    });
+
+    return c.json({ ok: true as const }, 200);
+  })
+  .openapi(getMeshPeersRoute, async (c) => {
+    const { id } = c.req.valid('param');
+
+    // Verify workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    // Return all other workspaces belonging to the same user that have
+    // registered an AXL public key.
+    const peers = await prisma.workspaceRuntime.findMany({
+      where: {
+        workspace: { userId: workspace.userId },
+        axlPublicKey: { not: null },
+        NOT: { workspaceId: id },
+      },
+      select: { workspaceId: true, axlPublicKey: true },
+    });
+
+    return c.json(
+      {
+        peers: peers.map((p) => ({
+          workspaceId: p.workspaceId as z.infer<typeof WorkspaceIdSchema>,
+          axlPublicKey: p.axlPublicKey!,
+        })),
+      },
+      200,
+    );
   });
