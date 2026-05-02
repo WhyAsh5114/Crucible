@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   Batcher,
   Indexer,
@@ -12,20 +13,22 @@ import {
 import { JsonRpcProvider, Wallet, computeAddress, hexlify, zeroPadValue } from 'ethers';
 import { type mcp } from '@crucible/types';
 
-interface StoredPattern {
-  id: string;
-  revertSignature: string;
-  patch: string;
-  traceRef: string;
-  verificationReceipt: `0x${string}`;
-  provenance: {
-    authorNode: string;
-    originalSession: string;
-    derivedFrom?: string[];
-  };
-  scope: 'local' | 'mesh';
-  createdAt: number;
-}
+const StoredPatternSchema = z.object({
+  id: z.string(),
+  revertSignature: z.string(),
+  patch: z.string(),
+  traceRef: z.string(),
+  verificationReceipt: z.string().regex(/^0x[0-9a-fA-F]+$/),
+  provenance: z.object({
+    authorNode: z.string(),
+    originalSession: z.string(),
+    derivedFrom: z.array(z.string()).optional(),
+  }),
+  scope: z.enum(['local', 'mesh']),
+  createdAt: z.number(),
+});
+
+type StoredPattern = z.infer<typeof StoredPatternSchema>;
 
 export interface MemoryService {
   recall: (
@@ -36,6 +39,7 @@ export interface MemoryService {
     input: mcp.memory.ListPatternsInput,
   ) => Promise<{ patterns: StoredPattern[]; nextCursor: string | null }>;
   provenance: (input: mcp.memory.ProvenanceInput) => Promise<StoredPattern['provenance']>;
+  purge: (input: mcp.memory.PurgeInput) => Promise<{ deleted: number }>;
 }
 
 function normalize(text: string | undefined | null): string {
@@ -118,17 +122,21 @@ async function readPatternsFs(filePath: string): Promise<StoredPattern[]> {
   try {
     const raw = await readFile(filePath, 'utf8');
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed as StoredPattern[];
+    const items: unknown[] = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { patterns?: unknown }).patterns)
+        ? (parsed as { patterns: unknown[] }).patterns
+        : [];
+    const valid: StoredPattern[] = [];
+    for (const item of items) {
+      const result = StoredPatternSchema.safeParse(item);
+      if (result.success) {
+        valid.push(result.data);
+      }
     }
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      Array.isArray((parsed as { patterns?: unknown }).patterns)
-    ) {
-      return (parsed as { patterns: StoredPattern[] }).patterns;
-    }
-    return [];
+    return valid;
   } catch {
     return [];
   }
@@ -169,9 +177,8 @@ function createFsService(opts: {
     },
     async listPatterns(input) {
       const patterns = await readPatternsFs(patternsPath);
-      const filtered = input.scope
-        ? patterns.filter((pattern) => pattern.scope === input.scope)
-        : patterns;
+      const scope = input.scope ?? 'local';
+      const filtered = patterns.filter((pattern) => pattern.scope === scope);
       const offset = safeParseCursor(input.cursor);
       const limit = input.limit ?? 50;
       const page = filtered.slice(offset, offset + limit);
@@ -186,6 +193,12 @@ function createFsService(opts: {
       const found = patterns.find((pattern) => pattern.id === input.id);
       if (!found) throw new Error(`Pattern not found: ${input.id}`);
       return found.provenance;
+    },
+    async purge(input) {
+      const all = await readPatternsFs(patternsPath);
+      const remaining = input.scope ? all.filter((p) => p.scope !== input.scope) : [];
+      await writePatternsFs(patternsPath, remaining);
+      return { deleted: all.length - remaining.length };
     },
   };
 }
@@ -359,6 +372,26 @@ function createKvService(cfg: KvConfig): MemoryService {
       const found = await findById(input.id);
       if (!found) throw new Error(`Pattern not found: ${input.id}`);
       return found.provenance;
+    },
+    async purge(input) {
+      const scopes: ('local' | 'mesh')[] = input.scope ? [input.scope] : ['local', 'mesh'];
+      let deleted = 0;
+      for (const scope of scopes) {
+        const patterns = await readAllPatterns(scope);
+        if (patterns.length === 0) continue;
+        const nodes = await getNodes();
+        const flowAddress = await getFlowAddress();
+        const flow = getFlowContract(flowAddress, signer);
+        const batcher = new Batcher(Date.now(), nodes, flow, cfg.rpcUrl);
+        const streamId = streamIdForScope(cfg, scope);
+        for (const pattern of patterns) {
+          batcher.streamDataBuilder.set(streamId, encodeKey(pattern.id), new Uint8Array(0));
+        }
+        const [, err] = await batcher.exec();
+        if (err) throw new Error(`0G KV purge failed for scope="${scope}": ${err.message}`);
+        deleted += patterns.length;
+      }
+      return { deleted };
     },
   };
 }

@@ -56,9 +56,17 @@ export const ProvenanceOutputSchema = MemoryProvenanceSchema;
 export type ProvenanceInput = z.infer<typeof ProvenanceInputSchema>;
 export type ProvenanceOutput = z.infer<typeof ProvenanceOutputSchema>;
 
+export const PurgeInputSchema = z.object({
+  scope: MemoryScopeSchema.optional(),
+});
+export const PurgeOutputSchema = z.object({ deleted: z.number().int().nonnegative() });
+export type PurgeInput = z.infer<typeof PurgeInputSchema>;
+export type PurgeOutput = z.infer<typeof PurgeOutputSchema>;
+
 export const tools = {
   recall: { input: RecallInputSchema, output: RecallOutputSchema },
   remember: { input: RememberInputSchema, output: RememberOutputSchema },
   list_patterns: { input: ListPatternsInputSchema, output: ListPatternsOutputSchema },
   provenance: { input: ProvenanceInputSchema, output: ProvenanceOutputSchema },
+  purge: { input: PurgeInputSchema, output: PurgeOutputSchema },
 } as const;

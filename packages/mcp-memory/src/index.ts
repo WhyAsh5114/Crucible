@@ -29,6 +29,7 @@ import {
   RememberInputSchema,
   ListPatternsInputSchema,
   ProvenanceInputSchema,
+  PurgeInputSchema,
 } from '@crucible/types/mcp/memory';
 import { createMemoryServer } from './server.ts';
 import { createMemoryService } from './service.ts';
@@ -76,6 +77,8 @@ const RecallOutputWireSchema = z.object({
     }),
   ),
 });
+
+const PurgeOutputWireSchema = z.object({ deleted: z.number().int().nonnegative() });
 
 const RememberOutputWireSchema = z.object({ id: z.string() });
 
@@ -140,6 +143,19 @@ const provenanceRoute = createRoute({
   },
 });
 
+const purgeRoute = createRoute({
+  method: 'delete',
+  path: '/patterns',
+  request: { query: PurgeInputSchema },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: PurgeOutputWireSchema } },
+      description: 'Number of patterns deleted',
+    },
+    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
+  },
+});
+
 const mcpServer = createMemoryServer({ workspaceRoot: WORKSPACE_ROOT });
 
 type Env = { Variables: { parsedBody: unknown } };
@@ -183,9 +199,10 @@ app.use('*', async (c, next) => {
   logFn(`[mcp-memory] ← ${status} (${ms}ms)`);
 });
 
-function memoryToolForPath(path: string): string | null {
+function memoryToolForPath(path: string, method?: string): string | null {
   if (path === '/recall') return 'recall';
   if (path === '/remember') return 'remember';
+  if (path === '/patterns' && method === 'DELETE') return 'purge';
   if (path === '/patterns') return 'list_patterns';
   if (path.startsWith('/provenance/')) return 'provenance';
   return null;
@@ -193,7 +210,7 @@ function memoryToolForPath(path: string): string | null {
 
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  let tool = memoryToolForPath(path);
+  let tool = memoryToolForPath(path, c.req.method);
   let args: unknown = {};
 
   if (path === '/mcp') {
@@ -284,6 +301,16 @@ app.openapi(provenanceRoute, async (c) => {
     return c.json(output, 200);
   } catch (err) {
     console.error(`[mcp-memory] provenance error: ${String(err)}`);
+    return c.json({ error: String(err) }, 500);
+  }
+});
+
+app.openapi(purgeRoute, async (c) => {
+  try {
+    const output = await service.purge(c.req.valid('query'));
+    return c.json(output, 200);
+  } catch (err) {
+    console.error(`[mcp-memory] purge error: ${String(err)}`);
     return c.json({ error: String(err) }, 500);
   }
 });
