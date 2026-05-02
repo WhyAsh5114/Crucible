@@ -1,7 +1,7 @@
 # Crucible — Project Checklist
 
 > Synthesized from `docs/PLAN.md`, `docs/ARCHITECTURE.md`, `docs/TRACKS.md`, `docs/DEPLOYMENT.md`, and `README.md`.
-> Status reflects what is wired in the working directory (branch `feat/24-47`).
+> Status reflects what is wired in the working directory (branch `main`).
 
 ---
 
