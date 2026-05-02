@@ -23,6 +23,7 @@ import { executeRuntimeTool } from '../lib/tool-exec';
 import { createApiErrorBody } from '../lib/api-error';
 import { provisionWorkspaceDirectory, workspaceHostPath } from '../lib/workspace-fs';
 import { nextAgentSeq, publishAgentEvent, cleanupAgentBus } from '../lib/agent-bus';
+import { disposeChatLog } from '../lib/chat-log';
 import { cleanupWorkspacePty } from '../lib/pty-manager';
 import { startPreview, stopPreview } from '../lib/preview-manager';
 import { requireSession } from '../lib/auth';
@@ -297,6 +298,7 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
       await stopWorkspaceContainer(workspace.id);
       stopPreview(workspace.id);
       cleanupAgentBus(workspace.id);
+      disposeChatLog(workspace.id);
       cleanupWorkspacePty(workspace.id);
 
       if (workspace.runtime) {

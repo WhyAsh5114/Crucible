@@ -167,8 +167,20 @@ export function subscribeAgentEvents(
  * Remove all in-memory bus state for the given workspace. Call this when a
  * workspace is closed or deleted so subscribers and sequence counters do not
  * accumulate indefinitely.
+ *
+ * Iterates the keyspace because every map is keyed by `${workspaceId}:${sessionId}`
+ * — a single workspace may have N sessions, each with its own subscriber set
+ * and seq counter.
  */
 export function cleanupAgentBus(workspaceId: string): void {
-  subscribers.delete(workspaceId);
-  sequence.delete(workspaceId);
+  const prefix = `${workspaceId}:`;
+  for (const key of [...subscribers.keys()]) {
+    if (key.startsWith(prefix)) subscribers.delete(key);
+  }
+  for (const key of [...sequence.keys()]) {
+    if (key.startsWith(prefix)) sequence.delete(key);
+  }
+  for (const key of [...warmed]) {
+    if (key.startsWith(prefix)) warmed.delete(key);
+  }
 }
