@@ -17,6 +17,7 @@ import {
   type GetAbiInput,
   type GetBytecodeInput,
 } from '@crucible/types/mcp/compiler';
+import { abiFunctionSignatures } from '@crucible/types';
 import { compileSolidity, type SolcSettings } from './compiler.ts';
 import type { ArtifactStore } from './artifact-store.ts';
 
@@ -235,8 +236,21 @@ export function createCompilerServer(opts: {
     async () => {
       try {
         const contracts = store.listContractNames();
+        const summaries = contracts
+          .map((fqn) => {
+            const compiled = store.getContract(fqn);
+            if (!compiled) return null;
+            const shortName = fqn.includes(':') ? fqn.split(':').pop()! : fqn;
+            return {
+              name: fqn,
+              shortName,
+              abi: compiled.abi,
+              functions: abiFunctionSignatures(compiled.abi),
+            };
+          })
+          .filter((s): s is NonNullable<typeof s> => s !== null);
         log(`tool:list_contracts ok  count=${contracts.length}`);
-        return toolResult({ contracts });
+        return toolResult({ contracts, summaries });
       } catch (err) {
         logError(`tool:list_contracts error: ${String(err)}`);
         return errorResult(`list_contracts failed: ${String(err)}`);
