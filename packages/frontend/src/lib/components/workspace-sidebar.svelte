@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WorkspaceSummary } from '@crucible/types';
+	import type { WorkspaceSummary, WorkspaceTemplate } from '@crucible/types';
 	import { authClient } from '$lib/auth-client';
 	import { workspaceClient } from '$lib/api/workspace';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -10,16 +10,24 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import TemplatePickerDialog, {
+		TEMPLATE_INFO
+	} from '$lib/components/template-picker-dialog.svelte';
 	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import SignOutIcon from 'phosphor-svelte/lib/SignOutIcon';
 	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDownIcon';
-	import FolderIcon from 'phosphor-svelte/lib/FolderIcon';
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 	import { toast } from 'svelte-sonner';
 	import { cn } from '$lib/utils';
+
+	// Per-template icon shorthand. The picker dialog already declares the
+	// mapping; we just look it up by id rather than duplicating the table.
+	function templateIconFor(id: WorkspaceSummary['template']) {
+		return TEMPLATE_INFO.find((t) => t.id === id)?.icon ?? TEMPLATE_INFO[0]!.icon;
+	}
 
 	type Props = {
 		user: { id: string; name: string; email?: string | null; image?: string | null };
@@ -63,11 +71,21 @@
 		}
 	}
 
-	async function createWorkspace(): Promise<void> {
+	let templatePickerOpen = $state(false);
+
+	function openTemplatePicker(): void {
+		templatePickerOpen = true;
+	}
+
+	async function createWorkspaceWithTemplate(params: {
+		name: string;
+		template: WorkspaceTemplate;
+	}): Promise<void> {
 		creating = true;
 		try {
-			const created = await workspaceClient.createWorkspace({ name: 'Untitled workspace' });
+			const created = await workspaceClient.createWorkspace(params);
 			await refresh();
+			templatePickerOpen = false;
 			const next = workspaces.find((ws) => ws.id === created.id);
 			if (next) onSelect(next);
 		} catch (err) {
@@ -84,10 +102,16 @@
 		window.location.assign('/');
 	}
 
+	// Status dots only render for *non-steady* states. Marking every ready
+	// workspace with a glowing green dot turns the sidebar into a wall of
+	// indicators and trains the eye to ignore them — exactly the opposite
+	// of what an indicator should do. Showing the dot only for things that
+	// need attention (booting / degraded / crashed / stopped) keeps the
+	// sidebar calm in the common case.
 	const statusDotClass: Record<NonNullable<WorkspaceSummary['runtimeStatus']>, string> = {
-		ready: 'bg-live shadow-[0_0_6px_var(--live)]',
-		starting: 'bg-muted-foreground',
-		degraded: 'bg-muted-foreground/60',
+		ready: '',
+		starting: 'bg-primary animate-pulse',
+		degraded: 'bg-warning',
 		crashed: 'bg-destructive',
 		stopped: 'bg-muted-foreground/40'
 	};
@@ -200,17 +224,16 @@
 						</Sidebar.MenuItem>
 					{:else}
 						{#each workspaces as ws (ws.id)}
+							{@const TIcon = templateIconFor(ws.template)}
+							{@const dotClass = ws.runtimeStatus ? statusDotClass[ws.runtimeStatus] : ''}
 							<Sidebar.MenuItem>
 								<Sidebar.MenuButton isActive={ws.id === selectedId} onclick={() => onSelect(ws)}>
-									<FolderIcon />
+									<TIcon weight="fill" />
 									<span class="truncate">{ws.name}</span>
-									{#if ws.runtimeStatus}
+									{#if dotClass}
 										<span
-											aria-label={ws.runtimeStatus}
-											class={cn(
-												'mr-5 ml-auto size-1.5 rounded-full',
-												statusDotClass[ws.runtimeStatus]
-											)}
+											aria-label={ws.runtimeStatus ?? undefined}
+											class={cn('mr-5 ml-auto size-1.5 rounded-full', dotClass)}
 										></span>
 									{/if}
 								</Sidebar.MenuButton>
@@ -258,7 +281,7 @@
 						<Sidebar.MenuButton
 							aria-disabled={creating}
 							onclick={() => {
-								if (!creating) void createWorkspace();
+								if (!creating) openTemplatePicker();
 							}}
 						>
 							<PlusIcon weight="bold" />
@@ -390,3 +413,9 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+<TemplatePickerDialog
+	bind:open={templatePickerOpen}
+	onCreate={createWorkspaceWithTemplate}
+	{creating}
+/>

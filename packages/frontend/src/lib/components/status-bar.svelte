@@ -11,7 +11,7 @@
 </script>
 
 <header
-	class="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-background px-4 text-xs"
+	class="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-background pr-12 pl-4 text-xs"
 >
 	<div class="flex items-center gap-2">
 		<span class="size-1.5 rounded-full bg-primary shadow-[0_0_6px_var(--primary)]"></span>
