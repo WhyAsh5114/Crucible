@@ -19,6 +19,7 @@
 	import PreviewPane from '$lib/components/panes/preview-pane.svelte';
 	import TerminalPane from '$lib/components/panes/terminal-pane.svelte';
 	import WalletPane from '$lib/components/panes/wallet-pane.svelte';
+	import InspectorPane from '$lib/components/inspector/inspector-pane.svelte';
 	import WorkspaceBootOverlay from '$lib/components/workspace-boot-overlay.svelte';
 	import WalletApprovalDialog from '$lib/components/wallet-approval-dialog.svelte';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
@@ -28,6 +29,7 @@
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import PenLineIcon from '@lucide/svelte/icons/pen-line';
 	import WalletIcon from '@lucide/svelte/icons/wallet';
+	import BugIcon from '@lucide/svelte/icons/bug';
 
 	const stream = getAgentStream();
 	const wallet = getWalletStore();
@@ -37,9 +39,9 @@
 	let workspace = $state<WorkspaceState | null>(null);
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
-	let activeMainTab = $state<'editor' | 'preview' | 'wallet'>('editor');
-	let mainView = $state<'editor' | 'preview' | 'wallet' | 'devtools'>('editor');
-	let previousMainTab = $state<'editor' | 'preview' | 'wallet'>('editor');
+	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector'>('editor');
+	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'devtools'>('editor');
+	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector'>('editor');
 	let loadedWorkspaceId = $state<string | null>(null);
 	// Latch: once a workspace has finished its initial boot we never show the
 	// full-screen boot overlay again for that session, even if a sub-component
@@ -386,8 +388,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-										activeMainTab = v as 'editor' | 'preview' | 'wallet';
-										mainView = v as 'editor' | 'preview' | 'wallet';
+										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector';
+										mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>
@@ -408,6 +410,13 @@
 											>
 												<MonitorIcon class="size-3.5" />
 												preview
+											</Tabs.Trigger>
+											<Tabs.Trigger
+												value="inspector"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
+											>
+												<BugIcon class="size-3.5" />
+												inspector
 											</Tabs.Trigger>
 											<Tabs.Trigger
 												value="wallet"
@@ -431,6 +440,9 @@
 									</Tabs.Content>
 									<Tabs.Content value="preview" class="m-0 min-h-0 flex-1 overflow-hidden">
 										<PreviewPane {workspace} onRestart={restartPreview} />
+									</Tabs.Content>
+									<Tabs.Content value="inspector" class="m-0 min-h-0 flex-1 overflow-hidden">
+										<InspectorPane />
 									</Tabs.Content>
 									<Tabs.Content value="wallet" class="m-0 min-h-0 flex-1 overflow-hidden">
 										<WalletPane {workspace} />
