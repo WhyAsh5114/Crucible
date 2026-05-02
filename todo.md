@@ -72,10 +72,10 @@
 - [x] Snapshot and revert tools in `mcp-chain` (exposed to agent via tool-exec)
 - [x] Trace tool in `mcp-deployer`
 - [x] `recall` / `remember` round-trip in `mcp-memory` (local file-backed)
-- [ ] 0G Storage wiring for `mcp-memory` (currently local filesystem; `RecallInput`, `RememberInput` types exist but 0G KV/Log backend not connected)
-- [ ] Agent repair loop — agent reasoning path that: detects revert → traces → recalls → patches → redeploys to snapshot → verifies → commits
-- [ ] UI evidence of before/after state and repair source (inspector panel, revert event rendering)
-- [ ] POV-2 demo: seeded revert (allowance failure, cooldown violation) fixed end-to-end without mesh
+- [x] 0G Storage wiring for `mcp-memory` (KvClient activates with `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL`; falls back to local FS otherwise)
+- [x] Agent repair loop — `runAgentTurn` detects reverts, captures snapshot, traces the failed tx, recalls patterns, restricts tool surface per repair phase (`patch → verify → commit → resume`), and emits `revert_detected` / `patch_proposed` / `patch_verified` / `repair_failed` events
+- [x] UI evidence of before/after state and repair source — dedicated `revert-detected`, `patch-proposed` (collapsible diff with source badge), `patch-verified`, `trace-captured`, `memory-recall`, `repair-failed` event rows
+- [x] POV-2 demo: seeded `pendingOwner` revert in `DemoVault` is detected → patched → re-deployed → exercised end-to-end (verified on DeepSeek V4 Pro and Qwen3-235B)
 
 ---
 
