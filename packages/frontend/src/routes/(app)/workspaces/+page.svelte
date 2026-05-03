@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import type { WorkspaceState, WorkspaceSummary, WorkspaceTemplate } from '@crucible/types';
 	import { authClient } from '$lib/auth-client';
 	import { workspaceClient } from '$lib/api/workspace';
@@ -78,7 +79,7 @@
 
 	async function openIde(): Promise<void> {
 		if (!selected) return;
-		await goto(`/workspaces/${selected.id}`);
+		await goto(resolve(`/workspaces/${selected.id}`));
 	}
 
 	// ── Inline template picker ───────────────────────────────────────────────
@@ -102,7 +103,7 @@
 			templatePickerOpen = false;
 			// Navigate straight into the new workspace — that's what the user
 			// actually wants 99% of the time after picking a template.
-			await goto(`/workspaces/${created.id}`);
+			await goto(resolve(`/workspaces/${created.id}`));
 		} catch (err) {
 			toast.error('Failed to create workspace', {
 				description: err instanceof Error ? err.message : String(err)
