@@ -48,9 +48,8 @@
 					style="animation-delay: {i * 50}ms;"
 				>
 					{#if tech.svg}
-						<div
-							class="h-5 w-5 transition-transform duration-300 group-hover:scale-110"
-						>
+						<div class="h-5 w-5 transition-transform duration-300 group-hover:scale-110">
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
 							{@html tech.svg}
 						</div>
 					{:else if tech.icon}

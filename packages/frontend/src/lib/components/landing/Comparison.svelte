@@ -177,7 +177,12 @@
 										{#if value.negative}
 											<X size={14} class="shrink-0 text-muted-foreground" />
 										{:else if value.positive}
-											<Check size={14} class="shrink-0 {colIndex === 3 ? 'text-foreground' : 'text-muted-foreground'}" />
+											<Check
+												size={14}
+												class="shrink-0 {colIndex === 3
+													? 'text-foreground'
+													: 'text-muted-foreground'}"
+											/>
 										{/if}
 										{value.text}
 									</span>
