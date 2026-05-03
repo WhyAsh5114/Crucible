@@ -1,6 +1,6 @@
 # Architecture — MCP Servers, Type Contracts & Monorepo Structure
 
-> The heavy lifting (Hardhat node, solc compilation, transaction tracing, AXL node, KeeperHub client, preview dev server, workspace filesystem, terminal PTY sessions) runs on a **Node.js backend**. The browser frontend renders the interactive surface but is not the source of truth for project state.
+> The heavy lifting (Hardhat node, solc compilation, transaction tracing, AXL node, KeeperHub hosted MCP client, preview dev server, workspace filesystem, terminal PTY sessions) runs on a **Node.js backend**. The browser frontend renders the interactive surface but is not the source of truth for project state.
 
 ---
 
@@ -62,7 +62,8 @@ flowchart TD
     A <==>|Agent ↔ MCP over HTTP| MCPS
 
     %% Tool specific interactions
-    M3 -->|simulate & execute via KeeperHub| EXT
+    M3 -->|deploy_local / deploy_og_chain / deploy_sepolia| EXT
+    A -.->|keeperhub_* tools — hosted MCP Bearer auth| EXT
     M5 <==>|memory read/write| S0G
     M6 <--> X
     X <-.->|peer Crucible nodes| X
@@ -205,7 +206,7 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- KeeperHub end-to-end demo run — the agent loop now connects to KeeperHub's hosted MCP (`https://app.keeperhub.com/mcp`) on every turn when `KEEPERHUB_API_KEY` is set in the backend env, and the system prompt teaches it the post-deploy automation workflow (`keeperhub_list_action_schemas` → `keeperhub_get_wallet_integration` → `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow`); what's still needed is a recorded demo run where the agent deploys a Counter via `deploy_og_chain` and then wires a keeper around it through KeeperHub.
+- KeeperHub end-to-end demo run — the agent loop connects to KeeperHub's hosted MCP (`https://app.keeperhub.com/mcp`) on every turn when `KEEPERHUB_API_KEY` is set in the backend env, and the system prompt teaches it the post-deploy automation workflow (`keeperhub_list_action_schemas` → `keeperhub_get_wallet_integration` → `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow`); what's still needed is a recorded demo run where the agent deploys a Counter to Sepolia via `deploy_sepolia` and then wires a keeper around it through KeeperHub.
 - AXL cross-process proof — `mcp-mesh` is fully implemented inside each workspace runner container (port 3105); what remains is a same-machine dual-workspace AXL connectivity proof (two containers, `list_peers` shows mutual discovery) and a two-laptop proof.
 - Frontend mesh panel — the memory pane has a mesh scope filter and the chat inspector renders `mesh_help_broadcast` / `mesh_help_received` event rows, but there is no dedicated pane showing live peer list, active help requests, and received responses.
 - Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).

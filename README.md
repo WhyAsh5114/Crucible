@@ -158,18 +158,18 @@ Once a contract is live (locally or on 0G Galileo), the agent connects to Keeper
 
 ## How It Compares
 
-|                             | Remix           | ChainIDE | v0 (Vercel)         | **Crucible**                                        |
-| :-------------------------- | :-------------- | :------- | :------------------ | :-------------------------------------------------- |
-| **AI-Driven**               | No              | No       | Yes (frontend only) | **Yes (full-stack + chain)**                        |
-| **Local Chain**             | JS VM (limited) | Partial  | No                  | **Full Hardhat node (server-side)**                 |
-| **Embedded Wallet**         | Yes (basic)     | No       | N/A                 | **Pre-funded, labeled, auto-synced**                |
-| **Live dApp Preview**       | No              | No       | Yes                 | **Yes, with chain injection**                       |
-| **Tx Inspector**            | Basic           | Basic    | No                  | **Decoded traces, events, on-chain state diffs**    |
-| **Agent has chain context** | No              | No       | No                  | **Yes, via MCP**                                    |
-| **Persistent agent memory** | No              | No       | No                  | **Yes, on 0G Storage (cross-session, cross-node)**  |
-| **Peer knowledge mesh**     | No              | No       | No                  | **Yes, via Gensyn AXL**                             |
-| **Self-Healing Reverts**    | No              | No       | No                  | **Recall → mesh → patch → verify → remember**       |
-| **Ship to public chains**   | Manual          | Manual   | N/A                 | **Deploy to 0G Galileo + KeeperHub automation MCP** |
+|                             | Remix           | ChainIDE | v0 (Vercel)         | **Crucible**                                                   |
+| :-------------------------- | :-------------- | :------- | :------------------ | :------------------------------------------------------------- |
+| **AI-Driven**               | No              | No       | Yes (frontend only) | **Yes (full-stack + chain)**                                   |
+| **Local Chain**             | JS VM (limited) | Partial  | No                  | **Full Hardhat node (server-side)**                            |
+| **Embedded Wallet**         | Yes (basic)     | No       | N/A                 | **Pre-funded, labeled, auto-synced**                           |
+| **Live dApp Preview**       | No              | No       | Yes                 | **Yes, with chain injection**                                  |
+| **Tx Inspector**            | Basic           | Basic    | No                  | **Decoded traces, events, on-chain state diffs**               |
+| **Agent has chain context** | No              | No       | No                  | **Yes, via MCP**                                               |
+| **Persistent agent memory** | No              | No       | No                  | **Yes, on 0G Storage (cross-session, cross-node)**             |
+| **Peer knowledge mesh**     | No              | No       | No                  | **Yes, via Gensyn AXL**                                        |
+| **Self-Healing Reverts**    | No              | No       | No                  | **Recall → mesh → patch → verify → remember**                  |
+| **Ship to public chains**   | Manual          | Manual   | N/A                 | **Deploy to 0G Galileo or Sepolia + KeeperHub automation MCP** |
 
 ---
 
@@ -262,7 +262,7 @@ The narrative is one continuous build → break → heal → ship arc:
    - **Cut to a second laptop** running Crucible, also on AXL. Its agent solved this exact pattern yesterday. It responds with the patch + verification receipt.
    - Local agent verifies the patch in a snapshot. Withdraw succeeds.
    - `memory-mcp.remember()` writes the verified pattern back to 0G Storage. _"Now everyone benefits."_
-4. **(2:30–3:30)** **Deploy + Automate.** User asks the agent to deploy to 0G Galileo. `deploy_og_chain` returns an explorer link to chainscan-galileo. Then: _"Set up a keeper that calls `harvest()` every hour."_ Agent calls `keeperhub_list_action_schemas`, then `keeperhub_get_wallet_integration` for chain `16602`, then `keeperhub_ai_generate_workflow` with the natural-language description, then `keeperhub_create_workflow` and `keeperhub_execute_workflow`. The Inspector shows each `keeperhub_*` tool call and the returned `executionId` linked to the KeeperHub dashboard.
+4. **(2:30–3:30)** **Deploy + Automate.** User asks the agent to deploy to Sepolia. `deploy_sepolia` returns an Etherscan Sepolia link. Then: _"Set up a keeper that calls `harvest()` every hour."_ Agent calls `keeperhub_list_action_schemas`, then `keeperhub_get_wallet_integration` for chain `11155111`, then `keeperhub_ai_generate_workflow` with the natural-language description, then `keeperhub_create_workflow` and `keeperhub_execute_workflow`. The Inspector shows each `keeperhub_*` tool call and the returned `executionId` linked to the KeeperHub dashboard.
 5. **(3:30–4:00)** Architecture slide: **OpenClaw extension + 0G Compute/Storage** + **7 custom MCPs** + **AXL peer mesh** + **KeeperHub execution layer**.
 
 ---
