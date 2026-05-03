@@ -2,6 +2,7 @@ import path from 'node:path';
 import Docker from 'dockerode';
 import { Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
+import { computeAddress, keccak256, toUtf8Bytes, zeroPadValue } from 'ethers';
 
 export type DockerCommandResult = {
   code: number;
@@ -466,7 +467,6 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     'OG_STORAGE_KV_URL',
     'OG_STORAGE_RPC_URL',
     'OG_STORAGE_INDEXER_URL',
-    'OG_STORAGE_LOCAL_STREAM_ID',
     'OG_STORAGE_MESH_STREAM_ID',
     'OG_DEPLOY_PRIVATE_KEY',
     'KEEPERHUB_API_KEY',
@@ -475,6 +475,25 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
   for (const key of ogPassthrough) {
     const val = process.env[key];
     if (val) env.push(`${key}=${val}`);
+  }
+
+  // Each workspace gets its own local 0G KV stream so patterns written by
+  // workspace A are physically separate from patterns written by workspace B,
+  // even though they share the same private key. Derive as:
+  //   keccak256(signerAddress ++ workspaceId) → 32-byte stream ID
+  // If the operator has already set OG_STORAGE_LOCAL_STREAM_ID in the host
+  // env (e.g. for single-workspace deployments) we respect that instead.
+  const privateKey = process.env['OG_STORAGE_PRIVATE_KEY'];
+  const explicitLocalStreamId = process.env['OG_STORAGE_LOCAL_STREAM_ID'];
+  if (privateKey && !explicitLocalStreamId) {
+    const signerAddress = computeAddress(privateKey);
+    const localStreamId = zeroPadValue(
+      keccak256(toUtf8Bytes(`${signerAddress}:${workspaceId}`)),
+      32,
+    );
+    env.push(`OG_STORAGE_LOCAL_STREAM_ID=${localStreamId}`);
+  } else if (explicitLocalStreamId) {
+    env.push(`OG_STORAGE_LOCAL_STREAM_ID=${explicitLocalStreamId}`);
   }
 
   return env;
