@@ -5,7 +5,6 @@
 	import { TEMPLATE_INFO } from '$lib/components/template-picker-dialog.svelte';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeftIcon';
 	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
-	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
 	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
 	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 
@@ -63,7 +62,7 @@
 		<div
 			class="flex size-5 items-center justify-center rounded-md bg-primary text-primary-foreground"
 		>
-			<CubeIcon class="size-3" weight="fill" />
+			<img src="/icon.svg" alt="Crucible" class="size-3" />
 		</div>
 		<span class="font-medium tracking-tight text-foreground">Crucible</span>
 	</div>
@@ -125,7 +124,7 @@
 	<button
 		type="button"
 		onclick={refreshWorkspace}
-		class="ml-auto flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+		class="ml-auto flex size-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 		title="Refresh workspace"
 		aria-label="Refresh workspace"
 	>

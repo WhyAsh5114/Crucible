@@ -13,7 +13,6 @@
 	import TemplatePickerDialog, {
 		TEMPLATE_INFO
 	} from '$lib/components/template-picker-dialog.svelte';
-	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import SignOutIcon from 'phosphor-svelte/lib/SignOutIcon';
 	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDownIcon';
@@ -196,7 +195,7 @@
 					<div
 						class="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground"
 					>
-						<CubeIcon weight="bold" />
+						<img src="/icon.svg" alt="Crucible" class="size-5" />
 					</div>
 					<div class="flex flex-col gap-0.5 leading-none">
 						<span class="font-semibold">Crucible</span>
