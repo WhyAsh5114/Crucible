@@ -17,24 +17,33 @@ export default defineConfig({
 				target: 'http://localhost:3000',
 				changeOrigin: true,
 				// Vite uses http-proxy under the hood, which buffers responses
-				// by default. SSE needs the headers flushed immediately so the
-				// browser EventSource sees the open connection.
+				// by default. SSE needs both headers AND each body chunk
+				// flushed immediately so events render as the agent emits
+				// them — not in a clump at turn end / on cancel.
 				configure: (proxy) => {
 					proxy.on('proxyRes', (proxyRes, _req, res) => {
 						const ct = proxyRes.headers['content-type'];
-						if (typeof ct === 'string' && ct.includes('text/event-stream')) {
-							// Vite's proxy (http-proxy-3) only flushes response
-							// headers once the upstream sends body bytes. SSE
-							// streams may stay quiet for many seconds before the
-							// first event, so flush headers ourselves on the next
-							// tick (after Vite's writeHeaders pass) so the
-							// browser's EventSource sees an open connection.
-							setImmediate(() => {
-								if (!res.headersSent && !res.writableEnded) {
-									res.flushHeaders();
-								}
-							});
-						}
+						if (typeof ct !== 'string' || !ct.includes('text/event-stream')) return;
+
+						// Flush response headers right away so the browser sees
+						// the open EventSource without waiting for the first
+						// agent event.
+						setImmediate(() => {
+							if (!res.headersSent && !res.writableEnded) {
+								res.flushHeaders();
+							}
+						});
+
+						// Defeat Nagle's algorithm on the downstream socket.
+						// Without TCP_NODELAY, small SSE chunks (< ~1.5 KB
+						// each, which is typical for one event) queue up
+						// in the kernel and are only flushed when the buffer
+						// fills, the connection closes, or another large
+						// chunk lands. That's exactly the "events appear all
+						// at once on cancel" symptom: cancel closes the
+						// stream, which forces the kernel to flush.
+						const sock = res.socket as import('net').Socket | undefined;
+						sock?.setNoDelay(true);
 					});
 				}
 			},

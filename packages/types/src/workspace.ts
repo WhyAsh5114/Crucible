@@ -105,6 +105,13 @@ export type TemplateState = z.infer<typeof TemplateStateSchema>;
 export const WorkspaceStateSchema = z.object({
   id: WorkspaceIdSchema,
   name: z.string().min(1),
+  /**
+   * Initial scaffold template. Persisted on create; used by the status bar
+   * and IDE chrome to surface "what flavour of dApp is this" context.
+   * Defaulted to 'counter' so old workspaces (created before the column
+   * existed) read back consistently.
+   */
+  template: z.enum(['counter', 'uniswap-v3', 'nft-mint']).default('counter'),
   createdAt: TimestampMsSchema,
   /** Null while the workspace runtime is still booting. */
   chainState: ChainStateSchema.nullable(),

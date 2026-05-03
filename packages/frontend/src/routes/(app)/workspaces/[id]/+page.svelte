@@ -19,14 +19,19 @@
 	import PreviewPane from '$lib/components/panes/preview-pane.svelte';
 	import TerminalPane from '$lib/components/panes/terminal-pane.svelte';
 	import WalletPane from '$lib/components/panes/wallet-pane.svelte';
+	import InspectorPane from '$lib/components/inspector/inspector-pane.svelte';
 	import MemoryPane from '$lib/components/panes/memory-pane.svelte';
 	import WorkspaceBootOverlay from '$lib/components/workspace-boot-overlay.svelte';
+	import WalletApprovalDialog from '$lib/components/wallet-approval-dialog.svelte';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
 	import BrainIcon from '@lucide/svelte/icons/brain';
 	import MonitorIcon from '@lucide/svelte/icons/monitor';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import TerminalIcon from '@lucide/svelte/icons/terminal';
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
+	import PenLineIcon from '@lucide/svelte/icons/pen-line';
+	import WalletIcon from '@lucide/svelte/icons/wallet';
+	import BugIcon from '@lucide/svelte/icons/bug';
 
 	const stream = getAgentStream();
 	const wallet = getWalletStore();
@@ -36,52 +41,24 @@
 	let workspace = $state<WorkspaceState | null>(null);
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
-	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'memory'>('editor');
-	let mainView = $state<'editor' | 'preview' | 'wallet' | 'memory' | 'devtools'>('editor');
-	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'memory'>('editor');
+	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
+	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory' | 'devtools'>(
+		'editor'
+	);
+	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
 	let loadedWorkspaceId = $state<string | null>(null);
+	// Latch: once a workspace has finished its initial boot we never show the
+	// full-screen boot overlay again for that session, even if a sub-component
+	// (preview Vite, chain, etc.) restarts and briefly flips back through
+	// `installing` / `starting` phases. Subsequent restarts surface inside the
+	// affected pane only.
+	let hasBootedOnce = $state(false);
 
-	// Auto-switch to the wallet tab when a new approval request lands so the
-	// user can act on it without hunting for the tab.
-	$effect(() => {
-		if (wallet.pending.length > 0 && activeMainTab !== 'wallet') {
-			activeMainTab = 'wallet';
-			if (mainView !== 'devtools') {
-				mainView = 'wallet';
-			}
-		}
-	});
-
-	// Fire a sonner toast whenever the pending queue grows so the user
-	// notices the approval request even if the wallet tab is already active
-	// (auto-switch above is a no-op in that case). Tracks the previous count
-	// rather than length alone so resolved requests don't re-toast.
-	let lastPendingCount = $state(0);
-	$effect(() => {
-		const next = wallet.pending.length;
-		if (next > lastPendingCount) {
-			const newest = wallet.pending[next - 1];
-			if (newest) {
-				const label =
-					newest.method === 'eth_sendTransaction'
-						? 'Transaction approval requested'
-						: newest.method === 'personal_sign'
-							? 'Message signature requested'
-							: 'Typed data signature requested';
-				toast(label, {
-					description: 'Open the wallet pane to review and approve.',
-					action: {
-						label: 'Review',
-						onClick: () => {
-							activeMainTab = 'wallet';
-							mainView = 'wallet';
-						}
-					}
-				});
-			}
-		}
-		lastPendingCount = next;
-	});
+	// Wallet approval requests no longer hijack the active tab: they surface
+	// as a centered Dialog (`WalletApprovalDialog` mounted below) so the user
+	// can stay on the preview/editor tab they were on, approve in place, and
+	// drop straight back into context. The previous auto-switch + toast
+	// pattern was disorienting once the dApp was driving multiple txs.
 
 	type Tone = 'idle' | 'live' | 'degraded';
 
@@ -135,16 +112,24 @@
 
 	const workspaceId = $derived(page.params.id);
 
-	// Poll the workspace endpoint while the runtime is still booting so the
-	// status bar / terminal / preview pick up `chainState` and `previewUrl`
-	// once the Docker container reports ready. Cold `bun install` for a fresh
-	// workspace's frontend can take well over a minute, so we keep polling
-	// while the preview supervisor is still in `installing` / `starting`.
-	const POLL_INTERVAL_MS = 2000;
-	const POLL_MAX_MS = 600_000;
+	// Poll the workspace endpoint to keep the UI in sync with backend state.
+	// Two cadences:
+	//   - FAST (2s): during boot + after any user-initiated refresh, so we
+	//     pick up newly-assigned previewUrl, chainState etc. quickly.
+	//   - SLOW (10s): steady-state, after the workspace has reported booted
+	//     at least once. We can't STOP polling because the preview Vite can
+	//     crash or be restarted later (e.g. user clicks refresh), and the
+	//     frontend needs to learn about the new previewUrl. 10s is the
+	//     longest a user should wait to see a crash reflected in the pane.
+	// `pollDeadline` caps how long fast-mode runs so a failed boot doesn't
+	// hammer the backend forever — once exceeded we drop to slow regardless.
+	const POLL_FAST_MS = 2000;
+	const POLL_SLOW_MS = 10_000;
+	const POLL_FAST_MAX_MS = 600_000;
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let pollStartedAt = 0;
 	let pollWorkspaceId: string | null = null;
+	let pollMode: 'fast' | 'slow' = 'fast';
 
 	function workspaceIsBooted(ws: WorkspaceState | null): boolean {
 		if (!ws) return false;
@@ -177,9 +162,10 @@
 
 	function schedulePoll(id: string): void {
 		if (pollTimer) clearTimeout(pollTimer);
+		const interval = pollMode === 'fast' ? POLL_FAST_MS : POLL_SLOW_MS;
 		pollTimer = setTimeout(() => {
 			void pollWorkspace(id);
-		}, POLL_INTERVAL_MS);
+		}, interval);
 	}
 
 	async function pollWorkspace(id: string): Promise<void> {
@@ -189,19 +175,70 @@
 			const next = await workspaceClient.getWorkspace(id);
 			if (pollWorkspaceId !== id) return;
 			workspace = next;
-			if (workspaceIsBooted(next)) {
-				clearPoll();
-				return;
+			// Once the workspace has reached a settled state (chain up, preview
+			// settled, template settled), drop to slow cadence — but keep
+			// polling so we'll catch a later Vite crash / backend-side restart.
+			if (pollMode === 'fast' && workspaceIsBooted(next)) {
+				pollMode = 'slow';
+			}
+			// Latch the "booted once" flag the first time we observe a settled
+			// state. From here on, sub-component restarts (preview Vite,
+			// chain, …) keep their progress UI inside their own pane rather
+			// than reopening the full-screen boot overlay.
+			if (!hasBootedOnce && workspaceIsBooted(next)) {
+				hasBootedOnce = true;
+			}
+			// If we're in slow mode and the preview state has degraded
+			// (no URL but phase claims ready, or phase is installing /
+			// starting / failed), bump back to fast so the user sees the
+			// resolution quickly.
+			if (pollMode === 'slow') {
+				const phase = next.previewState.phase;
+				const previewUnhealthy = !next.previewUrl || phase === 'installing' || phase === 'starting';
+				if (previewUnhealthy) {
+					pollMode = 'fast';
+					pollStartedAt = Date.now();
+				}
 			}
 		} catch {
 			// Swallow transient polling errors; the next tick will retry. The
 			// initial load already surfaced any hard failure via `loadError`.
 		}
-		if (Date.now() - pollStartedAt >= POLL_MAX_MS) {
-			clearPoll();
-			return;
+		// Cap continuous fast polling so a permanently-failing workspace
+		// doesn't hammer the backend. Once exceeded we drop to slow until
+		// the next user-initiated bump.
+		if (pollMode === 'fast' && Date.now() - pollStartedAt >= POLL_FAST_MAX_MS) {
+			pollMode = 'slow';
 		}
 		schedulePoll(id);
+	}
+
+	/**
+	 * Force polling back to fast cadence. Called by the preview pane after
+	 * a user-initiated restart so the UI sees the new previewUrl as soon as
+	 * the backend assigns one.
+	 */
+	function bumpPollingFast(): void {
+		pollMode = 'fast';
+		pollStartedAt = Date.now();
+		if (pollWorkspaceId && pollTimer) {
+			// Reschedule immediately at fast cadence rather than waiting for
+			// the current slow-mode timer to elapse.
+			schedulePoll(pollWorkspaceId);
+		}
+	}
+
+	async function restartPreview(): Promise<void> {
+		if (!workspace) return;
+		try {
+			await workspaceClient.restartPreview(workspace.id);
+		} catch (err) {
+			toast.error('Failed to restart preview', {
+				description: err instanceof Error ? err.message : String(err)
+			});
+			return;
+		}
+		bumpPollingFast();
 	}
 
 	async function loadWorkspace(id: string): Promise<void> {
@@ -209,6 +246,9 @@
 		loading = true;
 		loadError = null;
 		workspace = null;
+		// New workspace → reset the boot-once latch so the overlay covers the
+		// initial boot of this workspace.
+		hasBootedOnce = false;
 		// Bind the wallet store to the workspace at page level (not just from
 		// inside the wallet pane). bits-ui Tabs unmount inactive content, so
 		// without this the store stays unbound until the user clicks the wallet
@@ -219,11 +259,19 @@
 			workspace = await workspaceClient.getWorkspace(id);
 			// Note: session hydration and stream start are managed by chat-rail.svelte.
 			devtoolsStream.start(workspace.id);
-			if (!workspaceIsBooted(workspace)) {
-				pollWorkspaceId = id;
-				pollStartedAt = Date.now();
-				schedulePoll(id);
-			}
+			// Always start polling. If already booted we drop to slow cadence
+			// immediately on the first tick; if not, we stay at fast cadence
+			// until boot completes. Either way we never stop — Vite can crash
+			// or restart later and the UI must learn about it.
+			pollWorkspaceId = id;
+			pollStartedAt = Date.now();
+			const initiallyBooted = workspaceIsBooted(workspace);
+			pollMode = initiallyBooted ? 'slow' : 'fast';
+			// If the workspace was already booted on initial load (e.g. user
+			// navigated away and back), latch the flag immediately so the
+			// boot overlay never appears.
+			if (initiallyBooted) hasBootedOnce = true;
+			schedulePoll(id);
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -316,8 +364,16 @@
 
 <StatusBar {workspace} />
 
+<!--
+	Mounted at the IDE root so the approval dialog can overlay any pane
+	(editor / preview / wallet / terminal) when the dApp triggers a wallet
+	action via the bridge. Self-contained — pulls pending state from the
+	wallet store via `getWalletStore()`.
+-->
+<WalletApprovalDialog />
+
 <main class="relative min-h-0 flex-1">
-	{#if !workspaceIsBooted(workspace) || loadError}
+	{#if (!hasBootedOnce && !workspaceIsBooted(workspace)) || loadError}
 		<WorkspaceBootOverlay {workspace} {loading} {loadError} />
 	{/if}
 	{#if workspace}
@@ -336,8 +392,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'memory';
-										mainView = v as 'editor' | 'preview' | 'wallet' | 'memory';
+										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
+										mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>
@@ -347,20 +403,30 @@
 										<Tabs.List class="bg-transparent p-0">
 											<Tabs.Trigger
 												value="editor"
-												class="rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<PenLineIcon class="size-3.5" />
 												editor
 											</Tabs.Trigger>
 											<Tabs.Trigger
 												value="preview"
-												class="rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<MonitorIcon class="size-3.5" />
 												preview
 											</Tabs.Trigger>
 											<Tabs.Trigger
-												value="wallet"
-												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+												value="inspector"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
 											>
+												<BugIcon class="size-3.5" />
+												inspector
+											</Tabs.Trigger>
+											<Tabs.Trigger
+												value="wallet"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground transition-colors data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
+											>
+												<WalletIcon class="size-3.5" />
 												wallet
 												{#if wallet.pending.length > 0}
 													<Badge
@@ -384,7 +450,10 @@
 										<EditorPane {workspace} />
 									</Tabs.Content>
 									<Tabs.Content value="preview" class="m-0 min-h-0 flex-1 overflow-hidden">
-										<PreviewPane {workspace} />
+										<PreviewPane {workspace} onRestart={restartPreview} />
+									</Tabs.Content>
+									<Tabs.Content value="inspector" class="m-0 min-h-0 flex-1 overflow-hidden">
+										<InspectorPane />
 									</Tabs.Content>
 									<Tabs.Content value="wallet" class="m-0 min-h-0 flex-1 overflow-hidden">
 										<WalletPane {workspace} />

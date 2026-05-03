@@ -240,14 +240,18 @@ export async function getOrCreatePtySession(
   const sessionId = `pty-${randomUUID()}`;
   const dataListeners = new Set<PtyDataListener>();
   const exitListeners = new Set<PtyExitListener>();
-  let pendingOutput = '';
+  // Persistent scrollback: capped ring of the most recent PTY output. Appended
+  // to on EVERY chunk regardless of how many listeners are attached, so a
+  // freshly-mounted WebSocket (e.g. after a page reload) can replay the
+  // recent terminal state — including the current shell prompt — without
+  // having to wait for new output. Previously this only buffered while
+  // detached, which meant a reload while the shell was idle showed an empty
+  // pane until the user typed something.
+  let scrollback = '';
   let disposed = false;
 
   const fanOut = (chunk: string) => {
-    if (dataListeners.size === 0) {
-      pendingOutput = appendPendingOutput(pendingOutput, chunk);
-      return;
-    }
+    scrollback = appendPendingOutput(scrollback, chunk);
     for (const listener of dataListeners) {
       try {
         listener(chunk);
@@ -316,11 +320,14 @@ export async function getOrCreatePtySession(
     },
     onData: (listener) => {
       dataListeners.add(listener);
-      if (pendingOutput.length > 0) {
-        const replay = pendingOutput;
-        pendingOutput = '';
+      // Replay the persistent scrollback so the new listener sees the
+      // current terminal state immediately — shell prompt, recent output,
+      // any in-flight input. Don't clear `scrollback` here; subsequent
+      // attaches (e.g. another browser tab opening the same workspace)
+      // need the same replay.
+      if (scrollback.length > 0) {
         try {
-          listener(replay);
+          listener(scrollback);
         } catch {
           // ignore
         }

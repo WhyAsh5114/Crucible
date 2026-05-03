@@ -543,8 +543,8 @@
 											class={cn(
 												'h-4 gap-1 px-1.5 font-mono text-[9px] tracking-wide uppercase',
 												pattern.scope === 'local'
-													? 'border-indigo-500/30 bg-indigo-950/40 text-indigo-300'
-													: 'border-amber-500/30 bg-amber-950/40 text-amber-300'
+													? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300'
+													: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300'
 											)}
 										>
 											{#if pattern.scope === 'local'}
@@ -572,7 +572,9 @@
 										class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed">{#each patchLines(pattern.patch) as line, i (i)}<span
 												class={cn(
 													'block',
-													line.startsWith('+') ? 'text-green-400' : 'text-red-400'
+													line.startsWith('+')
+														? 'text-green-600 dark:text-green-400'
+														: 'text-red-600 dark:text-red-400'
 												)}>{line}</span
 											>{/each}</pre>
 								{/if}
@@ -591,8 +593,7 @@
 		{:else}
 			<!-- ── Graph view ── -->
 			<div
-				class="relative h-full overflow-hidden"
-				style="background: #080a0d;"
+				class="relative h-full overflow-hidden bg-card dark:bg-[#080a0d]"
 				bind:clientWidth={graphW}
 				bind:clientHeight={graphH}
 			>
@@ -621,7 +622,7 @@
 								height="32"
 								patternUnits="userSpaceOnUse"
 							>
-								<circle cx="1" cy="1" r="0.6" fill="rgba(255,255,255,0.05)" />
+								<circle cx="1" cy="1" r="0.6" fill="hsl(var(--foreground) / 0.05)" />
 							</pattern>
 						</defs>
 
@@ -637,7 +638,7 @@
 									y1={s.y}
 									x2={t.x}
 									y2={t.y}
-									stroke="rgba(148,163,184,{(edge.weight * 0.3).toFixed(2)})"
+									style="stroke: hsl(var(--foreground) / {(edge.weight * 0.25).toFixed(2)})"
 									stroke-width={edge.weight * 1.5}
 								/>
 							{/if}
@@ -729,8 +730,8 @@
 												class={cn(
 													'h-4 gap-1 px-1.5 text-[9px] uppercase',
 													selectedPattern.scope === 'local'
-														? 'border-indigo-500/30 bg-indigo-950/40 text-indigo-300'
-														: 'border-amber-500/30 bg-amber-950/40 text-amber-300'
+														? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300'
+														: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300'
 												)}
 											>
 												{#if selectedPattern.scope === 'local'}
@@ -759,7 +760,9 @@
 												class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 text-[10px] leading-relaxed">{#each patchLines(selectedPattern.patch, 10) as line, i (i)}<span
 														class={cn(
 															'block',
-															line.startsWith('+') ? 'text-green-400' : 'text-red-400'
+															line.startsWith('+')
+																? 'text-green-600 dark:text-green-400'
+																: 'text-red-600 dark:text-red-400'
 														)}>{line}</span
 													>{/each}</pre>
 										</dd>

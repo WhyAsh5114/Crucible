@@ -1,5 +1,7 @@
 # Crucible
 
+![Crucible Cover](packages/frontend/static/cover_image.png 'Crucible - AI-Powered dApp Development')
+
 **Describe a dApp. Watch it build itself. Ship it.**
 
 > An AI agent that writes, compiles, deploys, and previews decentralized applications — all in one browser tab, with full transparency into every step.

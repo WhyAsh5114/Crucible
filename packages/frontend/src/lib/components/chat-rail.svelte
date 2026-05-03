@@ -11,13 +11,13 @@
 	import EmptyState from './empty-state.svelte';
 	import ModelPicker from './model-picker.svelte';
 	import type { ModelSelection } from './model-picker.svelte';
+	import ChatSessionDialog, { type ChatSessionDialogMode } from './chat-session-dialog.svelte';
+	import ChatSessionDeleteDialog from './chat-session-delete-dialog.svelte';
 	import SendIcon from '@lucide/svelte/icons/send';
 	import StopIcon from '@lucide/svelte/icons/square';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
-	import CheckIcon from '@lucide/svelte/icons/check';
-	import XIcon from '@lucide/svelte/icons/x';
 	import ZapIcon from '@lucide/svelte/icons/zap';
 	import { setContext } from 'svelte';
 	import type { WorkspaceId } from '@crucible/types';
@@ -35,9 +35,18 @@
 	let sessions = $state<{ id: string; title: string; createdAt: number; updatedAt: number }[]>([]);
 	let activeSessionId = $state<string | null>(null);
 	let sessionError = $state<string | null>(null);
-	// Inline rename state
-	let renamingId = $state<string | null>(null);
-	let renameValue = $state('');
+	// Dialog state for create/rename/delete chat session flows. Replaces the
+	// older inline rename UI — centralising in Dialogs gives consistent
+	// keyboard / focus / Esc-to-cancel behaviour and keeps the session bar
+	// itself uncluttered (just session pills + a + button).
+	let sessionDialogOpen = $state(false);
+	let sessionDialogMode = $state<ChatSessionDialogMode>('create');
+	let sessionDialogInitial = $state('');
+	let sessionDialogTargetId = $state<string | null>(null);
+
+	let deleteDialogOpen = $state(false);
+	let deleteDialogTitle = $state('');
+	let deleteDialogTargetId = $state<string | null>(null);
 
 	async function loadSessions(): Promise<void> {
 		sessionError = null;
@@ -64,50 +73,58 @@
 		stream.start(workspaceId, sessionId);
 	}
 
-	async function newSession(): Promise<void> {
+	function openCreateDialog(): void {
+		sessionDialogMode = 'create';
+		sessionDialogInitial = '';
+		sessionDialogTargetId = null;
+		sessionDialogOpen = true;
+	}
+
+	function openRenameDialog(session: { id: string; title: string }): void {
+		sessionDialogMode = 'rename';
+		sessionDialogInitial = session.title;
+		sessionDialogTargetId = session.id;
+		sessionDialogOpen = true;
+	}
+
+	function openDeleteDialog(session: { id: string; title: string }): void {
+		deleteDialogTitle = session.title;
+		deleteDialogTargetId = session.id;
+		deleteDialogOpen = true;
+	}
+
+	/** Backend defaults to a "Chat N" name when none is supplied. */
+	async function handleSessionDialogSubmit(name: string): Promise<void> {
 		try {
-			const res = await workspaceClient.createSession(workspaceId);
-			sessions = res.sessions;
-			const newest = [...res.sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
-			if (newest) await switchSession(newest.id, false);
+			if (sessionDialogMode === 'create') {
+				const res = await workspaceClient.createSession(workspaceId, name ? { title: name } : {});
+				sessions = res.sessions;
+				const newest = [...res.sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
+				if (newest) await switchSession(newest.id, false);
+			} else if (sessionDialogTargetId) {
+				const title = name || sessionDialogInitial;
+				const res = await workspaceClient.renameSession(workspaceId, sessionDialogTargetId, {
+					title
+				});
+				sessions = res.sessions;
+			}
+			sessionError = null;
 		} catch (err) {
 			sessionError = err instanceof Error ? err.message : String(err);
+			throw err; // keep the dialog open so the user can retry
 		}
 	}
 
-	async function deleteSession(sessionId: string): Promise<void> {
+	async function handleDeleteConfirm(): Promise<void> {
+		if (!deleteDialogTargetId) return;
 		try {
-			await workspaceClient.deleteSession(workspaceId, sessionId);
+			await workspaceClient.deleteSession(workspaceId, deleteDialogTargetId);
 			await loadSessions();
+			sessionError = null;
 		} catch (err) {
 			sessionError = err instanceof Error ? err.message : String(err);
+			throw err;
 		}
-	}
-
-	function startRename(session: { id: string; title: string }): void {
-		renamingId = session.id;
-		renameValue = session.title;
-	}
-
-	async function commitRename(sessionId: string): Promise<void> {
-		const title = renameValue.trim();
-		if (!title) {
-			cancelRename();
-			return;
-		}
-		try {
-			const res = await workspaceClient.renameSession(workspaceId, sessionId, { title });
-			sessions = res.sessions;
-		} catch (err) {
-			sessionError = err instanceof Error ? err.message : String(err);
-		} finally {
-			renamingId = null;
-		}
-	}
-
-	function cancelRename(): void {
-		renamingId = null;
-		renameValue = '';
 	}
 
 	// Load sessions on mount and whenever workspaceId changes.
@@ -121,10 +138,42 @@
 	let sendError = $state<string | null>(null);
 	let lastPrompt = $state<string | null>(null);
 
-	// Default to 0G with a placeholder model id; the picker updates this once
-	// it fetches /api/models. The placeholder is never sent to the backend
-	// because the backend uses OG_MODEL from env when provider is '0g'.
-	let selectedModel = $state<ModelSelection>({ provider: '0g', model: '' });
+	// Persist the user's model choice across reloads. Single global key — the
+	// model is a user preference, not per-workspace. Read synchronously on
+	// component init so the ModelPicker mounts with the saved value already
+	// in place; otherwise its own onMount auto-default would race and pick
+	// the first OpenAI model whenever 0G is unconfigured.
+	const MODEL_STORAGE_KEY = 'crucible:selected-model';
+	function loadSavedModel(): ModelSelection {
+		if (typeof localStorage === 'undefined') return { provider: '0g', model: '' };
+		try {
+			const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+			if (!raw) return { provider: '0g', model: '' };
+			const parsed = JSON.parse(raw) as { provider?: string; model?: string };
+			if (parsed.provider === '0g' && typeof parsed.model === 'string') {
+				return { provider: '0g', model: parsed.model };
+			}
+			if (parsed.provider === 'openai' && typeof parsed.model === 'string') {
+				return { provider: 'openai', model: parsed.model };
+			}
+		} catch {
+			// Corrupt entry — fall back to default.
+		}
+		return { provider: '0g', model: '' };
+	}
+	let selectedModel = $state<ModelSelection>(loadSavedModel());
+
+	// Persist on every change so the next reload restores the same picker
+	// state. localStorage writes are synchronous but cheap (~ms); no need to
+	// debounce — model changes happen at human cadence.
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		try {
+			localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(selectedModel));
+		} catch {
+			// Quota or disabled storage — silently skip.
+		}
+	});
 
 	// Stick-to-bottom controller from Conversation.Root, bound below. The
 	// MutationObserver inside auto-scrolls only while the user is at bottom;
@@ -256,7 +305,7 @@
 					type="button"
 					onclick={() => (autopilot = !autopilot)}
 					class="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors {autopilot
-						? 'bg-amber-400/15 text-amber-400'
+						? 'bg-warning/15 text-warning'
 						: 'text-muted-foreground hover:bg-muted'}"
 					title={autopilot
 						? 'Autopilot on — agent auto-continues when it pauses mid-task'
@@ -276,86 +325,54 @@
 	>
 		{#each sessions as session (session.id)}
 			{@const isActive = session.id === activeSessionId}
-			{@const isRenaming = renamingId === session.id}
 			<div
 				class="group relative flex min-w-0 shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors {isActive
 					? 'bg-accent text-accent-foreground'
 					: 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'}"
 			>
-				{#if isRenaming}
-					<input
-						type="text"
-						bind:value={renameValue}
-						class="w-24 min-w-0 border-0 bg-transparent text-[10px] font-medium focus:outline-none"
-						onkeydown={(e) => {
-							if (e.key === 'Enter') {
-								e.preventDefault();
-								void commitRename(session.id);
-							}
-							if (e.key === 'Escape') {
-								e.preventDefault();
-								cancelRename();
-							}
-						}}
-					/>
+				<button
+					type="button"
+					onclick={() => void switchSession(session.id)}
+					class="max-w-[8rem] truncate"
+					title={session.title}
+				>
+					{session.title}
+				</button>
+				<!-- Action icons, shown on hover or when active. Both open Dialogs
+				     for proper focus/keyboard behaviour rather than mutating
+				     inline. -->
+				<span class="ml-1 hidden items-center gap-0.5 group-hover:flex {isActive ? 'flex' : ''}">
 					<button
 						type="button"
-						onclick={() => void commitRename(session.id)}
-						class="ml-0.5 text-muted-foreground hover:text-foreground"
-						aria-label="Confirm rename"
+						onclick={() => openRenameDialog(session)}
+						class="text-muted-foreground hover:text-foreground"
+						aria-label="Rename session"
 					>
-						<CheckIcon class="size-2.5" />
+						<PencilIcon class="size-2.5" />
 					</button>
-					<button
-						type="button"
-						onclick={cancelRename}
-						class="ml-0.5 text-muted-foreground hover:text-foreground"
-						aria-label="Cancel rename"
-					>
-						<XIcon class="size-2.5" />
-					</button>
-				{:else}
-					<button
-						type="button"
-						onclick={() => void switchSession(session.id)}
-						class="max-w-[8rem] truncate"
-						title={session.title}
-					>
-						{session.title}
-					</button>
-					<!-- Action icons, shown on hover or when active -->
-					<span class="ml-1 hidden items-center gap-0.5 group-hover:flex {isActive ? 'flex' : ''}">
+					{#if sessions.length > 1}
 						<button
 							type="button"
-							onclick={() => startRename(session)}
-							class="text-muted-foreground hover:text-foreground"
-							aria-label="Rename session"
+							onclick={() => openDeleteDialog(session)}
+							class="text-muted-foreground hover:text-destructive"
+							aria-label="Delete session"
 						>
-							<PencilIcon class="size-2.5" />
+							<Trash2Icon class="size-2.5" />
 						</button>
-						{#if sessions.length > 1}
-							<button
-								type="button"
-								onclick={() => void deleteSession(session.id)}
-								class="text-muted-foreground hover:text-destructive"
-								aria-label="Delete session"
-							>
-								<Trash2Icon class="size-2.5" />
-							</button>
-						{/if}
-					</span>
-				{/if}
+					{/if}
+				</span>
 			</div>
 		{/each}
 
 		<button
 			type="button"
-			onclick={() => void newSession()}
-			class="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+			onclick={openCreateDialog}
+			class="ml-auto flex shrink-0 items-center gap-1 rounded border border-dashed border-border/60 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
 			aria-label="New chat session"
 			title="New chat"
 		>
-			<PlusIcon class="size-3" />
+			<PlusIcon class="size-2.5" />
+			new chat
 		</button>
 	</div>
 	{#if sessionError}
@@ -438,3 +455,16 @@
 		</div>
 	</form>
 </aside>
+
+<ChatSessionDialog
+	bind:open={sessionDialogOpen}
+	mode={sessionDialogMode}
+	initialName={sessionDialogInitial}
+	onSubmit={handleSessionDialogSubmit}
+/>
+
+<ChatSessionDeleteDialog
+	bind:open={deleteDialogOpen}
+	sessionTitle={deleteDialogTitle}
+	onConfirm={handleDeleteConfirm}
+/>

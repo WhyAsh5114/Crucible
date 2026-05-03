@@ -56,14 +56,14 @@
 			</span>
 		{:else if isOg && receipt.fallbackReason}
 			<span
-				class="rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400"
+				class="rounded bg-warning/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-warning uppercase"
 				title="0G Compute Router error — turn did not complete"
 			>
 				0G Compute · {fallbackLabel(receipt.fallbackReason)}
 			</span>
 		{:else}
 			<span
-				class="rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-amber-600 uppercase dark:text-amber-400"
+				class="rounded bg-warning/15 px-2 py-0.5 font-mono text-[10px] tracking-wide text-warning uppercase"
 			>
 				Fallback: {fallbackLabel(receipt.fallbackReason)}
 			</span>

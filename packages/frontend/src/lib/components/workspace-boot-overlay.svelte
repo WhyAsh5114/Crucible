@@ -124,17 +124,24 @@
 </script>
 
 <div
-	class="absolute inset-0 z-50 flex items-center justify-center bg-background/80 px-6 backdrop-blur"
+	class="absolute inset-0 z-50 flex items-center justify-center bg-background/85 px-6 backdrop-blur-md"
 >
-	<Card.Root class="w-full max-w-md">
+	<Card.Root class="w-full max-w-md shadow-xl">
 		<Card.Header>
+			<div class="flex items-center gap-2 pb-1">
+				<span
+					class="size-1.5 rounded-full bg-primary shadow-[0_0_6px_var(--primary)]"
+					aria-hidden="true"
+				></span>
+				<span class="font-mono text-[10px] tracking-widest text-muted-foreground uppercase">
+					Crucible
+				</span>
+			</div>
 			<Card.Title class="flex items-center gap-2">
-				{#if loadError}
-					<AlertTriangleIcon class="size-5 text-destructive" />
-				{:else if previewFailed}
+				{#if loadError || previewFailed}
 					<AlertTriangleIcon class="size-5 text-destructive" />
 				{:else}
-					<LoaderIcon class="size-5 animate-spin text-muted-foreground" />
+					<LoaderIcon class="size-5 animate-spin text-primary" />
 				{/if}
 				{title}
 			</Card.Title>
@@ -147,11 +154,11 @@
 					{#each steps as step (step.id)}
 						<li class="flex items-center gap-2 text-sm">
 							{#if step.status === 'done'}
-								<CheckCircleIcon class="size-4 text-foreground" />
+								<CheckCircleIcon class="size-4 text-live" />
 								<span class="text-foreground">{step.label}</span>
 							{:else if step.status === 'active'}
-								<LoaderIcon class="size-4 animate-spin text-foreground" />
-								<span class="text-foreground">{step.label}</span>
+								<LoaderIcon class="size-4 animate-spin text-primary" />
+								<span class="font-medium text-foreground">{step.label}</span>
 							{:else if step.status === 'failed'}
 								<AlertTriangleIcon class="size-4 text-destructive" />
 								<span class="text-destructive">{step.label}</span>
@@ -169,7 +176,7 @@
 				{#if hasLogs}
 					<div
 						{@attach autoScrollToBottom}
-						class="max-h-48 overflow-auto rounded-md border border-border bg-muted p-2 font-mono text-[11px] leading-relaxed text-muted-foreground"
+						class="max-h-48 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground"
 					>
 						{#each logLines as line, index (index)}
 							<div class="whitespace-pre-wrap">{line}</div>

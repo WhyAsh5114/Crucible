@@ -136,7 +136,15 @@ export const runtimeApi = baseRuntimeApi.openapi(runtimeRoute, async (c) => {
     }
 
     try {
-      const directoryPath = await provisionWorkspaceDirectory(workspace.id);
+      // Re-provision uses the workspace's persisted template so the
+      // overlay (contracts + App.tsx) matches what the user originally
+      // chose. Idempotent — `writeIfAbsent` skips files that already exist.
+      const directoryPath = await provisionWorkspaceDirectory(
+        workspace.id,
+        // Cast: Prisma column is `String` for forward-compat; the runtime
+        // resolveTemplate falls back to 'counter' for any unknown value.
+        workspace.template as 'counter' | 'uniswap-v3' | 'nft-mint',
+      );
       if (workspace.directoryPath !== directoryPath) {
         await prisma.workspace.update({
           where: { id: workspace.id },

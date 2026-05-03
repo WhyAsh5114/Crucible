@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WorkspaceSummary } from '@crucible/types';
+	import type { WorkspaceSummary, WorkspaceTemplate } from '@crucible/types';
 	import { authClient } from '$lib/auth-client';
 	import { workspaceClient } from '$lib/api/workspace';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -10,16 +10,27 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import TemplatePickerDialog, {
+		TEMPLATE_INFO
+	} from '$lib/components/template-picker-dialog.svelte';
 	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
 	import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
 	import SignOutIcon from 'phosphor-svelte/lib/SignOutIcon';
 	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDownIcon';
-	import FolderIcon from 'phosphor-svelte/lib/FolderIcon';
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import { toast } from 'svelte-sonner';
 	import { cn } from '$lib/utils';
+	import { UseClipboard } from '$lib/hooks/use-clipboard.svelte';
+
+	// Per-template icon shorthand. The picker dialog already declares the
+	// mapping; we just look it up by id rather than duplicating the table.
+	function templateIconFor(id: WorkspaceSummary['template']) {
+		return TEMPLATE_INFO.find((t) => t.id === id)?.icon ?? TEMPLATE_INFO[0]!.icon;
+	}
 
 	type Props = {
 		user: { id: string; name: string; email?: string | null; image?: string | null };
@@ -44,6 +55,13 @@
 			.slice(0, 2) || 'U'
 	);
 
+	const clipboard = new UseClipboard();
+	const isWalletAddress = $derived(/^0x[a-fA-F0-9]{40}$/.test(user.name));
+
+	function shortAddress(addr: string) {
+		return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+	}
+
 	$effect(() => {
 		void refresh();
 	});
@@ -63,11 +81,21 @@
 		}
 	}
 
-	async function createWorkspace(): Promise<void> {
+	let templatePickerOpen = $state(false);
+
+	function openTemplatePicker(): void {
+		templatePickerOpen = true;
+	}
+
+	async function createWorkspaceWithTemplate(params: {
+		name: string;
+		template: WorkspaceTemplate;
+	}): Promise<void> {
 		creating = true;
 		try {
-			const created = await workspaceClient.createWorkspace({ name: 'Untitled workspace' });
+			const created = await workspaceClient.createWorkspace(params);
 			await refresh();
+			templatePickerOpen = false;
 			const next = workspaces.find((ws) => ws.id === created.id);
 			if (next) onSelect(next);
 		} catch (err) {
@@ -84,10 +112,16 @@
 		window.location.assign('/');
 	}
 
+	// Status dots only render for *non-steady* states. Marking every ready
+	// workspace with a glowing green dot turns the sidebar into a wall of
+	// indicators and trains the eye to ignore them — exactly the opposite
+	// of what an indicator should do. Showing the dot only for things that
+	// need attention (booting / degraded / crashed / stopped) keeps the
+	// sidebar calm in the common case.
 	const statusDotClass: Record<NonNullable<WorkspaceSummary['runtimeStatus']>, string> = {
-		ready: 'bg-live shadow-[0_0_6px_var(--live)]',
-		starting: 'bg-muted-foreground',
-		degraded: 'bg-muted-foreground/60',
+		ready: '',
+		starting: 'bg-primary animate-pulse',
+		degraded: 'bg-warning',
 		crashed: 'bg-destructive',
 		stopped: 'bg-muted-foreground/40'
 	};
@@ -200,17 +234,16 @@
 						</Sidebar.MenuItem>
 					{:else}
 						{#each workspaces as ws (ws.id)}
+							{@const TIcon = templateIconFor(ws.template)}
+							{@const dotClass = ws.runtimeStatus ? statusDotClass[ws.runtimeStatus] : ''}
 							<Sidebar.MenuItem>
 								<Sidebar.MenuButton isActive={ws.id === selectedId} onclick={() => onSelect(ws)}>
-									<FolderIcon />
+									<TIcon weight="fill" />
 									<span class="truncate">{ws.name}</span>
-									{#if ws.runtimeStatus}
+									{#if dotClass}
 										<span
-											aria-label={ws.runtimeStatus}
-											class={cn(
-												'mr-5 ml-auto size-1.5 rounded-full',
-												statusDotClass[ws.runtimeStatus]
-											)}
+											aria-label={ws.runtimeStatus ?? undefined}
+											class={cn('mr-5 ml-auto size-1.5 rounded-full', dotClass)}
 										></span>
 									{/if}
 								</Sidebar.MenuButton>
@@ -258,7 +291,7 @@
 						<Sidebar.MenuButton
 							aria-disabled={creating}
 							onclick={() => {
-								if (!creating) void createWorkspace();
+								if (!creating) openTemplatePicker();
 							}}
 						>
 							<PlusIcon weight="bold" />
@@ -291,22 +324,45 @@
 							</Sidebar.MenuButton>
 						{/snippet}
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Content side="top" align="end" class="w-56">
-						<DropdownMenu.Group>
-							<DropdownMenu.Label class="flex items-center gap-2">
-								<Avatar.Root class="size-8">
-									<Avatar.Image src={avatarUrl} alt={user.name} />
-									<Avatar.Fallback>{initials}</Avatar.Fallback>
-								</Avatar.Root>
-								<div class="flex min-w-0 flex-col gap-0.5 text-left leading-tight">
+					<DropdownMenu.Content side="top" align="end" class="w-72 p-0">
+						<div class="flex items-center gap-3 bg-muted/40 px-3 py-3">
+							<Avatar.Root class="size-11 ring-1 ring-border/60">
+								<Avatar.Image src={avatarUrl} alt={user.name} />
+								<Avatar.Fallback>{initials}</Avatar.Fallback>
+							</Avatar.Root>
+							<div class="flex min-w-0 flex-1 flex-col gap-1 text-left leading-tight">
+								<span
+									class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase"
+								>
+									{isWalletAddress ? 'Connected wallet' : 'Account'}
+								</span>
+								{#if isWalletAddress}
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono text-sm">{shortAddress(user.name)}</span>
+										<button
+											type="button"
+											aria-label="Copy address"
+											onclick={() => {
+												void clipboard.copy(user.name);
+											}}
+											class="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+										>
+											{#if clipboard.copied}
+												<CheckIcon class="size-3.5" />
+											{:else}
+												<CopyIcon class="size-3.5" />
+											{/if}
+										</button>
+									</div>
+								{:else}
 									<span class="truncate text-sm font-medium">{user.name}</span>
 									{#if user.email}
 										<span class="truncate text-xs text-muted-foreground">{user.email}</span>
 									{/if}
-								</div>
-							</DropdownMenu.Label>
-						</DropdownMenu.Group>
-						<DropdownMenu.Separator />
+								{/if}
+							</div>
+						</div>
+						<DropdownMenu.Separator class="m-0" />
 						<DropdownMenu.Item onclick={signOut}>
 							<SignOutIcon />
 							Sign out
@@ -390,3 +446,9 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+<TemplatePickerDialog
+	bind:open={templatePickerOpen}
+	onCreate={createWorkspaceWithTemplate}
+	{creating}
+/>

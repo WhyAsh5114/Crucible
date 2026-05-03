@@ -26,8 +26,15 @@
 	onMount(async () => {
 		try {
 			models = await workspaceClient.fetchModels();
-			// If 0G is unconfigured but OpenAI is, default to first OpenAI model.
-			if (!models.og && models.openai && models.openai.length > 0) {
+			// Auto-default to the first OpenAI model only when:
+			//   1. The current `value` is the empty placeholder (i.e. the
+			//      parent has nothing persisted), AND
+			//   2. 0G is unconfigured but OpenAI is.
+			// Without the first guard we'd clobber a user's saved choice
+			// (chat-rail loads it from localStorage before we mount) every
+			// time the picker boots.
+			const isEmpty = value.provider === '0g' && value.model === '';
+			if (isEmpty && !models.og && models.openai && models.openai.length > 0) {
 				onchange({ provider: 'openai', model: models.openai[0] });
 			}
 		} catch {
@@ -76,7 +83,7 @@
 		class="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 	>
 		{#if value.provider === '0g'}
-			<SparklesIcon class="size-3 text-amber-400" />
+			<SparklesIcon class="size-3 text-warning" />
 		{/if}
 		<span class="text-muted-foreground">{providerTag}</span>
 		<span class="max-w-24 truncate text-foreground">{label}</span>
@@ -104,10 +111,10 @@
 			{#if loading || models?.og}
 				<DropdownMenu.DropdownMenuGroup>
 					<DropdownMenu.DropdownMenuGroupHeading class="flex items-center gap-1.5 text-[10px]">
-						<SparklesIcon class="size-3 text-amber-400" />
+						<SparklesIcon class="size-3 text-warning" />
 						0G Compute
 						<span
-							class="ml-auto rounded px-1 py-px text-[9px] font-normal text-amber-400/80 ring-1 ring-amber-400/30"
+							class="ml-auto rounded px-1 py-px text-[9px] font-normal text-warning/80 ring-1 ring-warning/30"
 						>
 							testnet
 						</span>
@@ -126,7 +133,7 @@
 							>
 								<span class="truncate">{shortModelName(ogModel)}</span>
 								{#if value.provider === '0g'}
-									<CheckIcon class="ml-2 size-3 shrink-0 text-amber-400" />
+									<CheckIcon class="ml-2 size-3 shrink-0 text-warning" />
 								{/if}
 							</DropdownMenu.DropdownMenuItem>
 							<p class="px-2 pt-0.5 pb-1 text-[10px] text-muted-foreground/60">
@@ -159,7 +166,7 @@
 							</DropdownMenu.DropdownMenuItem>
 						{/if}
 						{#if recommended.length > 0}
-							<div class="flex items-center gap-1 px-2 pt-1 pb-0.5 text-[10px] text-amber-400/80">
+							<div class="flex items-center gap-1 px-2 pt-1 pb-0.5 text-[10px] text-warning/80">
 								<ZapIcon class="size-3" />
 								Recommended for coding
 							</div>
@@ -170,9 +177,9 @@
 								>
 									<span class="truncate">{shortModelName(m)}</span>
 									{#if value.provider === 'openai' && value.model === m}
-										<CheckIcon class="ml-2 size-3 shrink-0 text-amber-400" />
+										<CheckIcon class="ml-2 size-3 shrink-0 text-warning" />
 									{:else}
-										<ZapIcon class="ml-2 size-3 shrink-0 text-amber-400/40" />
+										<ZapIcon class="ml-2 size-3 shrink-0 text-warning/40" />
 									{/if}
 								</DropdownMenu.DropdownMenuItem>
 							{/each}

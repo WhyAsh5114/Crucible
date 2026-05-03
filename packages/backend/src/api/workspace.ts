@@ -19,7 +19,6 @@ import {
   FileWriteResponseSchema,
   ApiErrorSchema,
   MemoryPatternSchema,
-  StreamIdSchema,
   AgentEventSchema,
   ChatSessionListResponseSchema,
   ChatSessionCreateRequestSchema,
@@ -36,14 +35,19 @@ import { prisma } from '../lib/prisma';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../generated/prisma/client';
 import { createApiErrorBody } from '../lib/api-error';
-import { startPreview, stopPreview, getPreviewUrl, getPreviewState } from '../lib/preview-manager';
+import {
+  startPreview,
+  stopPreview,
+  getPreviewUrl,
+  getPreviewState,
+  setPreviewStarting,
+} from '../lib/preview-manager';
 import {
   ensureWorkspaceContainer,
   getWorkspaceContainerPorts,
   runtimeServiceBaseUrl,
   removeWorkspaceContainer,
 } from '../lib/runtime-docker';
-import { publishAgentEvent, nextAgentSeq, warmAgentSeq } from '../lib/agent-bus';
 import { readChatHistory, migrateLegacyChatLog, disposeChatLog } from '../lib/chat-log';
 import { requireSession } from '../lib/auth';
 import { cancelAgentTurn } from '../lib/agent-cancel';
@@ -215,6 +219,36 @@ const fileWriteRoute = createRoute({
 
 const ChatHistoryResponseSchema = z.object({
   events: z.array(AgentEventSchema),
+});
+
+// ── Preview restart route ────────────────────────────────────────────────────
+
+const PreviewRestartResponseSchema = z.object({
+  restarted: z.boolean(),
+});
+
+const restartPreviewRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/preview/restart',
+  request: { params: z.object({ id: WorkspaceIdSchema }) },
+  responses: {
+    202: {
+      content: { 'application/json': { schema: PreviewRestartResponseSchema } },
+      description: 'Preview restart accepted; poll GET /api/workspace/:id for state',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+    500: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Internal error',
+    },
+  },
 });
 
 // ── Session route definitions ────────────────────────────────────────────────
@@ -585,33 +619,52 @@ export function getTemplateState(workspaceId: string): TemplateState {
   return templateStates.get(workspaceId) ?? makeIdleTemplateState();
 }
 
-async function deployCounterTemplate(
+async function deployTemplate(
   workspaceId: string,
   workspaceDir: string,
   compilerPort: number,
   deployerPort: number,
+  templateId: string,
 ): Promise<void> {
   const path = await import('node:path');
   const { writeFile, stat } = await import('node:fs/promises');
+  const { resolveTemplate } = await import('../lib/template-registry');
+  const def = resolveTemplate(templateId);
 
-  // If the workspace's DemoVault.sol was removed (e.g. agent rewrote the
-  // contract layout), don't error out — mark template as unavailable so the
-  // boot overlay clears and the agent can take over.
-  try {
-    await stat(path.join(workspaceDir, 'contracts', 'DemoVault.sol'));
-  } catch {
+  if (def.autoDeploy === null) {
+    // Template doesn't deploy anything on boot (e.g. uniswap-v3 expects a
+    // mainnet fork). Surface as `unavailable` so the boot overlay clears
+    // without showing a failure state.
     setTemplateState(workspaceId, {
       phase: 'unavailable',
-      message: 'contracts/DemoVault.sol not present',
+      message: 'Template has no auto-deploy step — interact via the agent',
     });
     return;
   }
 
-  setTemplateState(workspaceId, { phase: 'compiling', message: 'Compiling DemoVault.sol…' });
+  const auto = def.autoDeploy;
+
+  // If the workspace's contract source was removed (e.g. agent rewrote the
+  // layout), don't error out — mark template as unavailable so the boot
+  // overlay clears and the agent can take over.
+  try {
+    await stat(path.join(workspaceDir, auto.sourcePath));
+  } catch {
+    setTemplateState(workspaceId, {
+      phase: 'unavailable',
+      message: `${auto.sourcePath} not present`,
+    });
+    return;
+  }
+
+  setTemplateState(workspaceId, {
+    phase: 'compiling',
+    message: `Compiling ${auto.contractName}…`,
+  });
   const compileRes = await loopbackFetch(`http://127.0.0.1:${compilerPort}/compile`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sourcePath: 'contracts/DemoVault.sol' }),
+    body: JSON.stringify({ sourcePath: auto.sourcePath }),
   });
   if (!compileRes.ok) {
     const message = `compile returned HTTP ${compileRes.status}`;
@@ -621,20 +674,29 @@ async function deployCounterTemplate(
   const compiled = (await compileRes.json()) as {
     contracts: Array<{ name: string; abi: unknown }>;
   };
-  const vault = compiled.contracts.find(
-    (c) => c.name === 'DemoVault' || c.name.endsWith(':DemoVault') || c.name.endsWith('/DemoVault'),
+  const target = compiled.contracts.find(
+    (c) =>
+      c.name === auto.contractName ||
+      c.name.endsWith(`:${auto.contractName}`) ||
+      c.name.endsWith(`/${auto.contractName}`),
   );
-  if (!vault) {
-    const message = `compile output missing "DemoVault" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
+  if (!target) {
+    const message = `compile output missing "${auto.contractName}" — got: ${compiled.contracts.map((c) => c.name).join(', ')}`;
     setTemplateState(workspaceId, { phase: 'failed', message });
     throw new Error(message);
   }
 
-  setTemplateState(workspaceId, { phase: 'deploying', message: 'Deploying DemoVault to chain…' });
+  setTemplateState(workspaceId, {
+    phase: 'deploying',
+    message: `Deploying ${auto.contractName} to chain…`,
+  });
   const deployRes = await loopbackFetch(`http://127.0.0.1:${deployerPort}/deploy_local`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ contractName: 'DemoVault', constructorData: '0x' }),
+    body: JSON.stringify({
+      contractName: auto.contractName,
+      constructorData: auto.constructorData,
+    }),
   });
   if (!deployRes.ok) {
     const message = `deploy_local returned HTTP ${deployRes.status}`;
@@ -643,13 +705,14 @@ async function deployCounterTemplate(
   }
   const deployed = (await deployRes.json()) as { address: string; txHash: string };
 
-  // Write the manifest the preview's React app fetches at boot. Using
-  // `frontend/public/` means Vite serves it at the iframe origin without
-  // bundler involvement; the path is `/contracts.json`.
+  // Write the manifest the preview's React app fetches at boot. The
+  // template-specific manifest key (`vault` for counter, `nft` for nft-mint,
+  // `swap` for uniswap-v3) lets each App.tsx wire up its own typed shape
+  // without needing a discriminator.
   const manifest = {
-    vault: {
+    [def.manifestKey]: {
       address: deployed.address,
-      abi: vault.abi,
+      abi: target.abi,
       deployTxHash: deployed.txHash,
       deployedAt: Date.now(),
     },
@@ -662,9 +725,9 @@ async function deployCounterTemplate(
   setTemplateState(workspaceId, {
     phase: 'ready',
     contractAddress: deployed.address,
-    message: `DemoVault deployed at ${deployed.address}`,
+    message: `${auto.contractName} deployed at ${deployed.address}`,
   });
-  console.log(`[workspace ${workspaceId}] DemoVault deployed at ${deployed.address}`);
+  console.log(`[workspace ${workspaceId}] ${auto.contractName} deployed at ${deployed.address}`);
 }
 
 // ── Background runtime bootstrap ─────────────────────────────────────────────
@@ -677,7 +740,11 @@ async function deployCounterTemplate(
  *
  * Status transitions: starting → ready | degraded | crashed.
  */
-async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: string): Promise<void> {
+async function spawnRuntimeForWorkspace(
+  workspaceId: string,
+  directoryPath: string,
+  template: string = 'counter',
+): Promise<void> {
   try {
     await prisma.workspaceRuntime.upsert({
       where: { workspaceId },
@@ -733,12 +800,12 @@ async function spawnRuntimeForWorkspace(workspaceId: string, directoryPath: stri
           );
           try {
             await Promise.race([
-              deployCounterTemplate(workspaceId, directoryPath, compilerPort, deployerPort),
+              deployTemplate(workspaceId, directoryPath, compilerPort, deployerPort, template),
               timeout,
             ]);
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
-            console.warn(`[workspace ${workspaceId}] counter deploy failed:`, message);
+            console.warn(`[workspace ${workspaceId}] template deploy failed:`, message);
             // Make sure the state ends in a settled phase so the boot overlay
             // doesn't spin indefinitely.
             const state = getTemplateState(workspaceId);
@@ -796,7 +863,7 @@ workspaceApiBase.use('*', requireSession);
 
 export const workspaceApi = workspaceApiBase
   .openapi(createWorkspaceRoute, async (c) => {
-    const { name } = c.req.valid('json');
+    const { name, template } = c.req.valid('json');
     const userId = c.get('userId');
 
     // Auto-generate a friendly name when the client sends the placeholder
@@ -807,6 +874,8 @@ export const workspaceApi = workspaceApiBase
         ? generateWorkspaceName()
         : name;
 
+    const effectiveTemplate = template ?? 'counter';
+
     let createdId: string | null = null;
 
     try {
@@ -816,12 +885,13 @@ export const workspaceApi = workspaceApiBase
           name: effectiveName,
           directoryPath: `pending://${randomUUID()}`,
           userId,
+          template: effectiveTemplate,
         },
         select: { id: true },
       });
       createdId = created.id;
 
-      const directoryPath = await provisionWorkspaceDirectory(created.id);
+      const directoryPath = await provisionWorkspaceDirectory(created.id, effectiveTemplate);
       await prisma.workspace.update({
         where: { id: created.id },
         data: { directoryPath },
@@ -832,7 +902,7 @@ export const workspaceApi = workspaceApiBase
       // background so the create response stays fast. Failures here are
       // surfaced via the runtime status (degraded/crashed) rather than
       // blocking the workspace from being created.
-      void spawnRuntimeForWorkspace(created.id, directoryPath);
+      void spawnRuntimeForWorkspace(created.id, directoryPath, effectiveTemplate);
 
       const response = WorkspaceCreateResponseSchema.parse({ id: created.id });
       return c.json(response, 201);
@@ -895,6 +965,7 @@ export const workspaceApi = workspaceApiBase
       files,
       id: row.id,
       name: row.name,
+      template: row.template as 'counter' | 'uniswap-v3' | 'nft-mint',
       createdAt: row.createdAt.getTime(),
       previewUrl: getPreviewUrl(id) ?? row.runtime?.previewUrl ?? null,
       previewState: getPreviewState(id),
@@ -920,6 +991,7 @@ export const workspaceApi = workspaceApiBase
         name: row.name,
         createdAt: row.createdAt.getTime(),
         runtimeStatus: row.runtime?.status ?? null,
+        template: row.template,
       })),
     });
 
@@ -1021,32 +1093,73 @@ export const workspaceApi = workspaceApiBase
     try {
       const wf = await writeWorkspaceFile(row.id, filePath, content, workspaceDir);
 
-      // Publish a file_write event to the most-recently-active session so SSE
-      // subscribers (e.g. the editor pane) see the change without polling.
-      const activeSession = await prisma.chatSession.findFirst({
-        where: { workspaceId: row.id },
-        orderBy: { updatedAt: 'desc' },
-        select: { id: true },
-      });
-      if (activeSession) {
-        await warmAgentSeq(row.id, activeSession.id);
-        const streamId = StreamIdSchema.parse(row.id);
-        publishAgentEvent(row.id, activeSession.id, {
-          streamId,
-          seq: nextAgentSeq(row.id, activeSession.id),
-          emittedAt: Date.now(),
-          type: 'file_write',
-          path: wf.path,
-          lang: wf.lang,
-          hash: wf.hash,
-          content: wf.content,
-        });
-      }
-
+      // Intentionally NOT publishing a file_write AgentEvent here. The agent
+      // bus is for agent-driven activity — surfacing user keystrokes there
+      // would (a) pollute the chat timeline with rows the user didn't ask
+      // for, (b) flip the agent-stream status to `streaming` on every save,
+      // and (c) round-trip the user's own bytes back to the editor, where
+      // a stale echo would clobber whatever the user typed during the save's
+      // network flight. The agent learns about user edits the next time it
+      // reads the file through its MCP `read_file` tool.
       return c.json(FileWriteResponseSchema.parse(wf), 200);
     } catch (error) {
       return c.json(
         createApiErrorBody('internal', error instanceof Error ? error.message : 'Write failed'),
+        500,
+      );
+    }
+  })
+  .openapi(restartPreviewRoute, async (c) => {
+    // Explicit, user-initiated preview restart. Stops the existing Vite
+    // process (if any) and kicks off a fresh `startPreview` in the
+    // background. The frontend should poll `GET /api/workspace/:id` after
+    // this returns to pick up the new `previewUrl` once the Vite process
+    // is listening. We do NOT block on the new server being ready —
+    // `bun install` cold-boot can take ~30s, so this is fire-and-forget.
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const row = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true, directoryPath: true },
+    });
+    if (!row) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+    if (row.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    try {
+      stopPreview(id);
+      // Null the persisted URL so the frontend doesn't briefly render the
+      // stale URL between the restart firing and the new Vite listening.
+      await prisma.workspaceRuntime
+        .updateMany({ where: { workspaceId: id }, data: { previewUrl: null } })
+        .catch(() => undefined);
+
+      // Force the phase to `starting` *before* spawning so the next
+      // frontend poll sees a loading state — never `idle`. The old
+      // Vite's SIGTERM exit handler is now closure-guarded (see
+      // preview-manager.ts) and won't clobber this; startPreview will
+      // continue advancing the phase as it progresses.
+      setPreviewStarting(id);
+
+      const directoryPath = row.directoryPath?.startsWith('pending://')
+        ? workspaceHostPath(row.id)
+        : (row.directoryPath ?? workspaceHostPath(row.id));
+
+      void startPreview(row.id, directoryPath).catch((err) => {
+        console.warn(`[workspace ${row.id}] preview restart failed:`, err);
+      });
+
+      return c.json(PreviewRestartResponseSchema.parse({ restarted: true }), 202);
+    } catch (error) {
+      return c.json(
+        createApiErrorBody(
+          'internal',
+          error instanceof Error ? error.message : 'Preview restart failed',
+        ),
         500,
       );
     }
