@@ -669,7 +669,7 @@
 									y1={s.y}
 									x2={t.x}
 									y2={t.y}
-									style="stroke: hsl(var(--foreground) / {(edge.weight * 0.25).toFixed(2)})"
+									style="stroke: hsl(var(--primary) / {Math.min(0.8, edge.weight * 0.65).toFixed(2)})"
 									stroke-width={edge.weight * 1.5}
 								/>
 							{/if}
