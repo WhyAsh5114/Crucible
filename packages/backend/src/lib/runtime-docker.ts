@@ -470,6 +470,7 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     'OG_STORAGE_MESH_STREAM_ID',
     'OG_DEPLOY_PRIVATE_KEY',
     'KEEPERHUB_API_KEY',
+    'SEPOLIA_DEPLOY_PRIVATE_KEY',
   ] as const;
 
   for (const key of ogPassthrough) {
