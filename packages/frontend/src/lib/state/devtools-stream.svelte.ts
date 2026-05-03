@@ -55,8 +55,21 @@ export class DevtoolsStream {
 		this.start(this.workspaceId, { resetEvents: false });
 	}
 
-	clear(): void {
-		this.events = [];
+	async clear(): Promise<void> {
+		if (!this.workspaceId) {
+			this.events = [];
+			return;
+		}
+		// Clear the server-side buffer first so the SSE replay on reconnect is empty
+		try {
+			await this.fetchImpl(`/api/workspace/${this.workspaceId}/devtools/events`, {
+				method: 'DELETE'
+			});
+		} catch {
+			// Best-effort
+		}
+		// Restart the stream — will reconnect to the now-empty buffer
+		this.start(this.workspaceId, { resetEvents: true });
 	}
 
 	stop(): void {

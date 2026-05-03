@@ -1625,6 +1625,30 @@ export const workspaceApi = workspaceApiBase
         'X-Accel-Buffering': 'no',
       },
     });
+  })
+  .delete('/workspace/:id/devtools/events', async (c) => {
+    const id = c.req.param('id');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const ports = await getWorkspaceContainerPorts(workspace.id).catch(() => null);
+    if (!ports?.devtools) {
+      return c.json({ ok: true, cleared: true }, 200);
+    }
+
+    try {
+      await fetch(`${runtimeServiceBaseUrl(ports.devtools)}/events`, { method: 'DELETE' });
+    } catch {
+      // Best-effort — if the container is unreachable the buffer is already gone
+    }
+    return c.json({ ok: true, cleared: true }, 200);
   });
 
 // ── Container-auth API ───────────────────────────────────────────────────────

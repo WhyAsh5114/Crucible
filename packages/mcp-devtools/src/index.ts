@@ -70,6 +70,11 @@ app.post('/event', async (c) => {
   return c.json({ ok: true });
 });
 
+app.delete('/events', (c) => {
+  buffer.splice(0, buffer.length);
+  return c.json({ ok: true, cleared: true });
+});
+
 app.get('/events', (c) => {
   const encoder = new TextEncoder();
   const snapshot = [...buffer];

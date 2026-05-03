@@ -220,7 +220,7 @@
 					variant="outline"
 					size="sm"
 					class="h-7 px-3 font-mono text-[10px] tracking-wide uppercase"
-					onclick={() => stream.clear()}
+					onclick={() => void stream.clear()}
 				>
 					<Trash2Icon class="mr-1 size-3" />
 					clear
