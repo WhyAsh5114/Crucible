@@ -1,11 +1,10 @@
 <script lang="ts">
 	import './layout.css';
 	import { ModeWatcher } from 'mode-watcher';
-	import favicon from '$lib/assets/favicon.svg';
-	import { setAgentStream, AgentStream } from '$lib/state/agent-stream.svelte';
-	import { setWalletStore, WalletStore } from '$lib/state/wallet.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 	import ModeToggle from '$lib/components/mode-toggle.svelte';
+	import { setWalletStore, WalletStore } from '$lib/state/wallet.svelte';
+	import { setAgentStream, AgentStream } from '$lib/state/agent-stream.svelte';
 
 	let { children } = $props();
 
@@ -15,11 +14,6 @@
 	const wallet = new WalletStore();
 	setWalletStore(wallet);
 </script>
-
-<svelte:head>
-	<link rel="icon" href={favicon} />
-	<title>Crucible</title>
-</svelte:head>
 
 <ModeWatcher defaultMode="dark" />
 
