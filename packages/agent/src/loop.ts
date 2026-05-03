@@ -276,6 +276,7 @@ export function filterOgTraceFromStream(
   const encoder = new TextEncoder();
   let buf = '';
 
+  // Cast: avoids cross-context ReadableStream structural mismatch (bun-types vs DOM lib)
   return body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
       transform(chunk, controller) {
@@ -321,7 +322,7 @@ export function filterOgTraceFromStream(
         controller.enqueue(encoder.encode(buf));
       },
     }),
-  );
+  ) as unknown as ReadableStream<Uint8Array>;
 }
 
 /**
@@ -355,12 +356,12 @@ export function ogFallbackReasonOf(err: unknown): FallbackReason | undefined {
 function makeOgRouterFetch(
   provider: AgentConfig['provider'],
   onOgTrace?: (t: OgTrace) => void,
-): typeof globalThis.fetch | undefined {
+): typeof fetch | undefined {
   if (provider !== '0g-compute') return undefined;
 
   const wrapped = async (
-    input: Parameters<typeof globalThis.fetch>[0],
-    init?: Parameters<typeof globalThis.fetch>[1],
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
   ): Promise<Response> => {
     let nextInit = init;
     if (init?.body && typeof init.body === 'string') {
@@ -408,7 +409,7 @@ function makeOgRouterFetch(
 
     return response;
   };
-  return wrapped as typeof globalThis.fetch;
+  return wrapped as typeof fetch;
 }
 
 // ── MCP schema registry ──────────────────────────────────────────────────────
