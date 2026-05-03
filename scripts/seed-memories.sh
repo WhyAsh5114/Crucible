@@ -137,7 +137,7 @@ fi
 # run concurrently with each other, but the 4 writes within each container
 # are sequential. This gives ~2x speedup with zero version conflicts.
 
-echo "=== Seeding patterns (containers in parallel, serial within each) ==="
+echo "=== Seeding patterns (sequential: A then B) ==="
 echo ""
 
 seed_container_a() {
@@ -291,24 +291,15 @@ seed_container_b() {
 LOG_A="$SEED_TMPDIR/a.log"
 LOG_B="$SEED_TMPDIR/b.log"
 
-seed_container_a "$LOG_A" &
-PID_A=$!
-
-if [[ -n "$B" ]]; then
-  seed_container_b "$LOG_B" &
-  PID_B=$!
-fi
-
-wait "$PID_A" || true
-[[ -n "$B" ]] && wait "$PID_B" || true
-
-echo "=== $A: local patterns ==="
-[[ -f "$LOG_A" ]] && cat "$LOG_A"
+echo "--- $A ---"
+seed_container_a "$LOG_A"
+cat "$LOG_A"
 
 if [[ -n "$B" ]]; then
   echo ""
-  echo "=== $B: local patterns ==="
-  [[ -f "$LOG_B" ]] && cat "$LOG_B"
+  echo "--- $B ---"
+  seed_container_b "$LOG_B"
+  cat "$LOG_B"
 fi
 
 echo ""
