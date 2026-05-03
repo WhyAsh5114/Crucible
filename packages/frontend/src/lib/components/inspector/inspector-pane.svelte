@@ -128,18 +128,16 @@
 	 * Find the most recent ship_confirmed event in the stream.
 	 * Returns null when no ship deployment has been confirmed.
 	 */
-	const shipDeployment = $derived.by<Extract<AgentEvent, { type: 'ship_confirmed' }> | null>(
-		() => {
-			const events = stream.events;
-			for (let i = events.length - 1; i >= 0; i--) {
-				const ev = events[i]!;
-				if (ev.type === 'ship_confirmed') {
-					return ev;
-				}
+	const shipDeployment = $derived.by<Extract<AgentEvent, { type: 'ship_confirmed' }> | null>(() => {
+		const events = stream.events;
+		for (let i = events.length - 1; i >= 0; i--) {
+			const ev = events[i]!;
+			if (ev.type === 'ship_confirmed') {
+				return ev;
 			}
-			return null;
 		}
-	);
+		return null;
+	});
 
 	// Extract tx hash from explorer URL
 	const shipTxHash = $derived.by(() => {
@@ -171,7 +169,7 @@
 		<!-- Ship deployment section -->
 		{#if shipDeployment}
 			<div class="border-b border-border/40 bg-green-500/5 p-3">
-				<div class="flex items-center gap-2 mb-3">
+				<div class="mb-3 flex items-center gap-2">
 					<RocketLaunchIcon class="size-4 text-green-500" weight="fill" />
 					<h3 class="text-sm font-medium text-green-500">Deployed to Sepolia</h3>
 					<Badge variant="outline" class="ml-auto font-mono text-[9px]">
@@ -181,7 +179,7 @@
 
 				<div class="flex flex-col gap-2 text-xs">
 					<div class="flex items-center gap-2">
-						<span class="font-mono text-[10px] text-muted-foreground w-20">Contract</span>
+						<span class="w-20 font-mono text-[10px] text-muted-foreground">Contract</span>
 						<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-live">
 							{shipDeployment.contractAddress}
 						</code>
@@ -195,7 +193,7 @@
 
 					{#if shipTxHash}
 						<div class="flex items-center gap-2">
-							<span class="font-mono text-[10px] text-muted-foreground w-20">Tx Hash</span>
+							<span class="w-20 font-mono text-[10px] text-muted-foreground">Tx Hash</span>
 							<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground">
 								{shipTxHash.slice(0, 14)}…
 							</code>
@@ -217,12 +215,12 @@
 					{/if}
 
 					<div class="flex items-center gap-2">
-						<span class="font-mono text-[10px] text-muted-foreground w-20">Gas Used</span>
+						<span class="w-20 font-mono text-[10px] text-muted-foreground">Gas Used</span>
 						<span class="font-mono text-[10px] text-foreground">{gasUsed}</span>
 					</div>
 
 					<div class="flex items-center gap-2">
-						<span class="font-mono text-[10px] text-muted-foreground w-20">Audit Trail</span>
+						<span class="w-20 font-mono text-[10px] text-muted-foreground">Audit Trail</span>
 						<a
 							href={`https://app.keeperhub.com/runs/${shipDeployment.auditTrailId}`}
 							target="_blank"
