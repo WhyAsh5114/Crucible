@@ -20,7 +20,7 @@
 	{@render children()}
 </div>
 
-<div class="fixed top-2 right-2 z-50">
+<div class="fixed top-1.75 right-2 z-50">
 	<ModeToggle class="size-8" />
 </div>
 

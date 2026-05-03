@@ -28,7 +28,7 @@ You spend more time wiring tools together than writing code. And none of these t
 
 **Crucible** is a browser-based **agentic development environment** for Web3. You describe what you want in natural language. A 0G-native open agent — built as a Web3-development extension to **OpenClaw**, with sealed inference on **0G Compute**, an OpenAI-compatible fallback path for degraded public-beta mode, and persistent memory on **0G Storage** — builds it in front of your eyes.
 
-The agent doesn't just write code. It **compiles contracts, spins up a local chain, deploys, renders a live preview, heals failed transactions, and ships to a real chain via KeeperHub** — all within a single unified workspace. Every action is visible, inspectable, and overridable.
+The agent doesn't just write code. It **compiles contracts, spins up a local chain, deploys (locally or to 0G Galileo), renders a live preview, heals failed transactions, and wires keepers and on-chain automation through KeeperHub** — all within a single unified workspace. Every action is visible, inspectable, and overridable.
 
 Crucible agents are also **peers**. Each instance is a node on the **Gensyn AXL** mesh: when your local agent hits a revert it has never seen, it can pull a verified fix from another developer's agent that solved it yesterday — and contribute its own fixes back.
 
@@ -44,9 +44,9 @@ Crucible is engineered around three structural commitments — each chosen becau
 
 1. **The agent is a 0G-native open agent**, not a closed SDK wrapper. It's built as a Web3-development extension to the **OpenClaw** framework, with sealed inference on **0G Compute** (e.g., `qwen3.6-plus` / `GLM-5-FP8`) and persistent memory on **0G Storage** (KV for hot state, Log for full history).
 2. **Every Crucible instance is an AXL node.** When the local agent hits an unfamiliar revert, it queries its own 0G Storage memory first; on miss, it broadcasts a structured help request over **Gensyn AXL** to peer Crucible nodes. Real cross-node communication, not in-process actor theater.
-3. **Local-first, ship via KeeperHub.** Hardhat handles the local dev loop. The moment the user clicks _Ship_, every onchain action — deployments, configuration calls, post-deploy verification txs — is routed through **KeeperHub** (simulation → gas → execution → retries → audit trail). KeeperHub is the only path from local to public chain.
+3. **KeeperHub is the agent's automation backplane.** Once a contract is deployed (locally or to 0G Galileo), the agent connects to **KeeperHub's hosted MCP** (`https://app.keeperhub.com/mcp`) per turn and uses its native tool surface — `keeperhub_ai_generate_workflow`, `keeperhub_create_workflow`, `keeperhub_execute_workflow`, `keeperhub_get_wallet_integration`, `keeperhub_list_action_schemas` — to wire keepers, scheduled actions, and on-chain reads/writes against that contract. No hand-rolled REST shim, no parallel data model: the model picks up KeeperHub's tools the moment they ship.
 
-The three integrations compose into one coherent narrative: **0G is where the agent thinks and remembers, AXL is how agents share what they've learned, KeeperHub is how the agent moves value when it matters.**
+The three integrations compose into one coherent narrative: **0G is where the agent thinks and remembers, AXL is how agents share what they've learned, KeeperHub is how the agent automates what it has built.**
 
 ---
 
@@ -144,32 +144,32 @@ When a transaction reverts, the agent doesn't just show an error. It **autonomou
 - Every interaction (mint, swap, transfer) is reflected in real-time in the **Transaction Inspector** pane — showing decoded function calls, gas usage, event logs, and state changes.
 - The agent watches the preview too — if a user action triggers a revert, the **Self-Healing Revert** loop kicks in automatically.
 
-### 6. Ship to Public Chains via KeeperHub
+### 6. Post-Deploy Automation via KeeperHub
 
-When the user is satisfied with the local build, they click **Ship**. This is the only place public-chain transactions happen — and they all flow through KeeperHub.
+Once a contract is live (locally or on 0G Galileo), the agent connects to KeeperHub's hosted MCP and drives the platform directly:
 
-- The agent picks a target (Sepolia, Base Sepolia, mainnet) and the user's signer.
-- `KeeperHub.simulate_bundle()` runs the deployment + initial configuration calls as a bundle. The Inspector shows decoded simulation output and a per-tx gas estimate.
-- `KeeperHub.execute_tx()` then submits each tx with retry logic, gas optimization, and private routing where available.
-- The Inspector shows live status (`pending → mined → confirmed`), retry count, and the KeeperHub **audit trail ID** for every shipped transaction.
-- Subsequent post-deploy interactions (the user clicking _Mint_ or _Swap_ on the live preview while pointed at the deployed testnet address) also route through KeeperHub — making the integration _load-bearing_, not a one-shot deploy button.
+- The agent calls `keeperhub_list_action_schemas` to discover what action types KeeperHub exposes (web3 reads/writes, schedules, HTTP, IPFS, …) — the schemas are the source of truth, not a frozen client.
+- For natural-language requests ("every hour, if `Vault.totalSupply()` > 1000, call `rebalance()`"), the agent uses `keeperhub_ai_generate_workflow` to draft a workflow, then `keeperhub_create_workflow` to persist it.
+- `keeperhub_execute_workflow` fires the keeper; the agent surfaces the `executionId` so the user can follow it in the KeeperHub dashboard.
+- For one-off calls or transfers, the direct-execution tools fire a single action without storing a workflow.
+- KeeperHub deliberately doesn't provide a contract-creation action, so deployments still go through Crucible's `deploy_local` (Hardhat) or `deploy_og_chain` (0G). The handoff is clean: Crucible deploys, KeeperHub automates.
 
 ---
 
 ## How It Compares
 
-|                             | Remix           | ChainIDE | v0 (Vercel)         | **Crucible**                                       |
-| :-------------------------- | :-------------- | :------- | :------------------ | :------------------------------------------------- |
-| **AI-Driven**               | No              | No       | Yes (frontend only) | **Yes (full-stack + chain)**                       |
-| **Local Chain**             | JS VM (limited) | Partial  | No                  | **Full Hardhat node (server-side)**                |
-| **Embedded Wallet**         | Yes (basic)     | No       | N/A                 | **Pre-funded, labeled, auto-synced**               |
-| **Live dApp Preview**       | No              | No       | Yes                 | **Yes, with chain injection**                      |
-| **Tx Inspector**            | Basic           | Basic    | No                  | **Decoded traces, events, KeeperHub audit trail**  |
-| **Agent has chain context** | No              | No       | No                  | **Yes, via MCP**                                   |
-| **Persistent agent memory** | No              | No       | No                  | **Yes, on 0G Storage (cross-session, cross-node)** |
-| **Peer knowledge mesh**     | No              | No       | No                  | **Yes, via Gensyn AXL**                            |
-| **Self-Healing Reverts**    | No              | No       | No                  | **Recall → mesh → patch → verify → remember**      |
-| **Ship to public chains**   | Manual          | Manual   | N/A                 | **One-click via KeeperHub (with audit trail)**     |
+|                             | Remix           | ChainIDE | v0 (Vercel)         | **Crucible**                                                   |
+| :-------------------------- | :-------------- | :------- | :------------------ | :------------------------------------------------------------- |
+| **AI-Driven**               | No              | No       | Yes (frontend only) | **Yes (full-stack + chain)**                                   |
+| **Local Chain**             | JS VM (limited) | Partial  | No                  | **Full Hardhat node (server-side)**                            |
+| **Embedded Wallet**         | Yes (basic)     | No       | N/A                 | **Pre-funded, labeled, auto-synced**                           |
+| **Live dApp Preview**       | No              | No       | Yes                 | **Yes, with chain injection**                                  |
+| **Tx Inspector**            | Basic           | Basic    | No                  | **Decoded traces, events, on-chain state diffs**               |
+| **Agent has chain context** | No              | No       | No                  | **Yes, via MCP**                                               |
+| **Persistent agent memory** | No              | No       | No                  | **Yes, on 0G Storage (cross-session, cross-node)**             |
+| **Peer knowledge mesh**     | No              | No       | No                  | **Yes, via Gensyn AXL**                                        |
+| **Self-Healing Reverts**    | No              | No       | No                  | **Recall → mesh → patch → verify → remember**                  |
+| **Ship to public chains**   | Manual          | Manual   | N/A                 | **Deploy to 0G Galileo or Sepolia + KeeperHub automation MCP** |
 
 ---
 
@@ -237,16 +237,16 @@ Every important system surface is visible:
 
 - **Editor:** current source files
 - **Preview:** live dApp UI
-- **Inspector:** decoded transactions, traces, events, KeeperHub status, active inference provider, and receipts when available
+- **Inspector:** decoded transactions, traces, events, active inference provider, and receipts when available
 - **Terminal:** compiler output, deploy logs, agent progress, and manual shell access
 
 ### 6. Recover from Failure
 
 If a transaction reverts, the agent traces it, checks shared memory, asks the mesh if needed, verifies a patch in a snapshot, updates the workspace files, and explains what changed. The user sees the full sequence in the inspector and terminal instead of a single magic success message.
 
-### 7. Ship to a Real Chain
+### 7. Automate It With KeeperHub
 
-When the user clicks **Ship**, the agent hands execution to KeeperHub. Simulation, gas estimation, execution, retry count, and audit trail IDs are shown in the Inspector. Once shipped, the preview can point at the deployed address and keep using KeeperHub for public-chain interactions.
+Once the contract is deployed (locally or to 0G Galileo), the agent uses KeeperHub's hosted MCP to wire keepers and on-chain automation. The user can ask in natural language — _"every hour, if `Vault.totalSupply()` > 1000, call `rebalance()`"_ — and the agent calls `keeperhub_ai_generate_workflow`, reviews the draft, and creates + executes the workflow against the deployed address. Execution IDs link back to the KeeperHub dashboard.
 
 ---
 
@@ -262,7 +262,7 @@ The narrative is one continuous build → break → heal → ship arc:
    - **Cut to a second laptop** running Crucible, also on AXL. Its agent solved this exact pattern yesterday. It responds with the patch + verification receipt.
    - Local agent verifies the patch in a snapshot. Withdraw succeeds.
    - `memory-mcp.remember()` writes the verified pattern back to 0G Storage. _"Now everyone benefits."_
-4. **(2:30–3:30)** **Ship.** User clicks **Ship to Sepolia**. KeeperHub takes over: bundle simulation, gas estimates, execution status with retry counter, audit trail IDs in the Inspector. User then clicks _Deposit_ on the live preview — pointed at the deployed Sepolia address — and that tx also routes through KeeperHub.
+4. **(2:30–3:30)** **Deploy + Automate.** User asks the agent to deploy to Sepolia. `deploy_sepolia` returns an Etherscan Sepolia link. Then: _"Set up a keeper that calls `harvest()` every hour."_ Agent calls `keeperhub_list_action_schemas`, then `keeperhub_get_wallet_integration` for chain `11155111`, then `keeperhub_ai_generate_workflow` with the natural-language description, then `keeperhub_create_workflow` and `keeperhub_execute_workflow`. The Inspector shows each `keeperhub_*` tool call and the returned `executionId` linked to the KeeperHub dashboard.
 5. **(3:30–4:00)** Architecture slide: **OpenClaw extension + 0G Compute/Storage** + **7 custom MCPs** + **AXL peer mesh** + **KeeperHub execution layer**.
 
 ---

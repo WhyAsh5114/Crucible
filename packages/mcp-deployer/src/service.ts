@@ -25,6 +25,19 @@ const OG_TESTNET_CHAIN = defineChain({
   },
 });
 
+/**
+ * Ethereum Sepolia testnet — chainId 11155111.
+ */
+const SEPOLIA_CHAIN = defineChain({
+  id: 11155111,
+  name: 'Sepolia',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.ankr.com/eth_sepolia'] } },
+  blockExplorers: {
+    default: { name: 'Etherscan', url: 'https://sepolia.etherscan.io' },
+  },
+});
+
 interface RpcErrorShape {
   message?: string;
   data?: unknown;
@@ -104,6 +117,13 @@ export interface DeployerService {
     chainId: 16602;
     explorerUrl: string;
   }>;
+  deploySepolia: (input: mcp.deployer.DeploySepoliaInput) => Promise<{
+    address: `0x${string}`;
+    txHash: `0x${string}`;
+    gasUsed: string;
+    chainId: 11155111;
+    explorerUrl: string;
+  }>;
   listDeployments: (
     input: mcp.deployer.ListDeploymentsInput,
   ) => Promise<{ deployments: mcp.deployer.DeploymentRecord[] }>;
@@ -113,7 +133,7 @@ export interface DeployerService {
    */
   getDeployment: (
     contractName: string,
-    network?: 'local' | '0g-galileo',
+    network?: 'local' | '0g-galileo' | 'sepolia',
   ) => mcp.deployer.DeploymentRecord | undefined;
   /**
    * Resolve a compiled contract's creation bytecode by bare name. Used by
@@ -318,8 +338,16 @@ export function createDeployerService(opts: {
   workspaceRoot: string;
   compilerUrl?: string;
   ogDeployPrivateKey?: string;
+  sepoliaDeployPrivateKey?: string;
+  sepoliaRpcUrl?: string;
 }): DeployerService {
-  const { chainRpcUrl, compilerUrl = 'http://localhost:3101', ogDeployPrivateKey } = opts;
+  const {
+    chainRpcUrl,
+    compilerUrl = 'http://localhost:3101',
+    ogDeployPrivateKey,
+    sepoliaDeployPrivateKey,
+    sepoliaRpcUrl = 'https://rpc.ankr.com/eth_sepolia',
+  } = opts;
 
   /**
    * In-memory deployment registry. Most-recent deploy per (network, contractName)
@@ -566,6 +594,65 @@ export function createDeployerService(opts: {
         gasUsed: encodeBigInt(receipt.gasUsed),
         chainId: 16602 as const,
         explorerUrl: `https://chainscan-galileo.0g.ai/tx/${txHash}`,
+      };
+    },
+
+    async deploySepolia(input) {
+      if (!sepoliaDeployPrivateKey) {
+        throw new Error(
+          'SEPOLIA_DEPLOY_PRIVATE_KEY is not set — cannot deploy to Sepolia. Set this on the deployer node.',
+        );
+      }
+
+      const bytecode = await getCompiledBytecode(input.contractName);
+      const data = `${bytecode}${input.constructorData.slice(2)}` as Hex;
+
+      const account = privateKeyToAccount(
+        (sepoliaDeployPrivateKey.startsWith('0x')
+          ? sepoliaDeployPrivateKey
+          : `0x${sepoliaDeployPrivateKey}`) as Hex,
+      );
+      const sepoliaChain = defineChain({
+        ...SEPOLIA_CHAIN,
+        rpcUrls: { default: { http: [sepoliaRpcUrl] } },
+      });
+      const wallet = createWalletClient({
+        account,
+        chain: sepoliaChain,
+        transport: http(),
+      });
+      const publicClient = createPublicClient({
+        chain: sepoliaChain,
+        transport: http(),
+      });
+
+      const txHash = await wallet.sendTransaction({
+        data,
+        ...(input.value !== undefined ? { value: BigInt(input.value) } : {}),
+      });
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      if (!receipt.contractAddress) {
+        throw new Error(`Sepolia deploy did not produce a contract address: ${txHash}`);
+      }
+
+      const shortName = input.contractName.includes(':')
+        ? input.contractName.split(':').pop()!
+        : input.contractName;
+      recordDeployment({
+        contractName: shortName,
+        address: receipt.contractAddress,
+        txHash,
+        network: 'sepolia',
+        deployedAt: new Date().toISOString(),
+      });
+
+      return {
+        address: receipt.contractAddress,
+        txHash,
+        gasUsed: encodeBigInt(receipt.gasUsed),
+        chainId: 11155111 as const,
+        explorerUrl: `https://sepolia.etherscan.io/tx/${txHash}`,
       };
     },
 

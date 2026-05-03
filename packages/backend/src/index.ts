@@ -23,7 +23,6 @@ import { workspaceApi, containerApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
 import { modelsApi } from './api/models';
-import { shipApi } from './api/ship';
 import { previewApi } from './api/preview';
 
 export { upgradeWebSocket };
@@ -74,7 +73,6 @@ const apiRoutes = app
   .route('/api', agentApi)
   .route('/api', inferenceApi)
   .route('/api', modelsApi)
-  .route('/api', shipApi)
   .route('/', terminalApi)
   .route('/', previewApi);
 

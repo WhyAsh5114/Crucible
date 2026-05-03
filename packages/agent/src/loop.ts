@@ -191,6 +191,20 @@ export interface AgentConfig {
    * Bun's keep-alive pool races docker-proxy idle timeouts.
    */
   mcpFetch?: typeof fetch;
+  /**
+   * KeeperHub remote MCP endpoint. When set together with `keeperHubApiKey`,
+   * the agent connects to KeeperHub's hosted MCP server and exposes its
+   * workflow / direct-execution / wallet-integration tools to the model.
+   * This is the only sanctioned path for public-chain writes — the agent
+   * never calls eth_sendRawTransaction directly when KH is wired.
+   *
+   * Default endpoint: https://app.keeperhub.com/mcp
+   * Tool discovery is automatic; we do NOT pre-declare schemas because the
+   * KeeperHub tool set evolves independently of Crucible.
+   */
+  keeperHubMcpUrl?: string;
+  /** KeeperHub organization API key (kh_ prefix) used as the MCP Bearer token. */
+  keeperHubApiKey?: string;
 }
 
 /**
@@ -441,14 +455,8 @@ function getMcpSchemas(server: McpServerKey): Record<string, { inputSchema: z.Zo
         trace: { inputSchema: mcp.deployer.TraceInputSchema },
         call: { inputSchema: mcp.deployer.CallInputSchema },
         deploy_og_chain: { inputSchema: mcp.deployer.DeployOgChainInputSchema },
+        deploy_sepolia: { inputSchema: mcp.deployer.DeploySepoliaInputSchema },
         list_deployments: { inputSchema: mcp.deployer.ListDeploymentsInputSchema },
-        // KeeperHub ship path (Sepolia public chain). Tools are advertised by
-        // the deployer MCP only when KEEPERHUB_API_KEY is set in-container;
-        // registering schemas client-side is harmless when unavailable
-        // (the call would simply fail with the configured-error response).
-        simulate_bundle: { inputSchema: mcp.deployer.SimulateBundleInputSchema },
-        execute_tx: { inputSchema: mcp.deployer.ExecuteTxInputSchema },
-        get_execution_status: { inputSchema: mcp.deployer.GetExecutionStatusInputSchema },
       };
     case 'wallet':
       // High-level tools only. encode_call and send_tx_local remain implemented
@@ -892,6 +900,40 @@ export async function runAgentTurn(
     } catch (err) {
       console.warn(
         `[agent] MCP client init failed for ${serverName}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  // ── KeeperHub remote MCP — public-chain execution layer ─────────────────
+  // Tools are namespace-prefixed with `keeperhub_` so they don't collide
+  // with workspace-local MCP tool names. We use 'automatic' schema discovery
+  // because KeeperHub's tool surface (workflows, direct execution, AI workflow
+  // generation, action schemas, wallet integrations, …) is large and evolves
+  // independently — pre-declaring schemas would mean shipping a fragile copy.
+  if (config.keeperHubMcpUrl && config.keeperHubApiKey) {
+    try {
+      const khClient = await createMCPClient({
+        transport: {
+          type: 'http',
+          url: config.keeperHubMcpUrl,
+          headers: { Authorization: `Bearer ${config.keeperHubApiKey}` },
+        },
+      });
+      mcpClients.push(khClient);
+      const khTools = await khClient.tools({ schemas: 'automatic' });
+      for (const [origName, toolDef] of Object.entries(khTools)) {
+        const namespaced = `keeperhub_${origName}`;
+        mcpToolNames.add(namespaced);
+        toolToServer.set(namespaced, 'keeperhub');
+        mcpToolsObj[namespaced] = toolDef;
+      }
+      console.log(
+        `[agent] KeeperHub MCP connected (${Object.keys(khTools).length} tools): ${config.keeperHubMcpUrl}`,
+      );
+    } catch (err) {
+      console.warn(
+        '[agent] KeeperHub MCP init failed:',
         err instanceof Error ? err.message : String(err),
       );
     }

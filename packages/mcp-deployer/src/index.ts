@@ -36,15 +36,6 @@ import {
 } from '@crucible/types/mcp/deployer';
 import { createDeployerServer } from './server.ts';
 import { createDeployerService } from './service.ts';
-import {
-  SimulateBundleInputSchema,
-  ExecuteTxInputSchema,
-  SimulateBundleOutputSchema,
-  ExecuteTxOutputSchema,
-  GetExecutionStatusOutputSchema,
-  createKeeperHubClient,
-  getKeeperHubConfig,
-} from './keeperhub-client.ts';
 
 const PORT = process.env['DEPLOYER_MCP_PORT']
   ? parseInt(process.env['DEPLOYER_MCP_PORT'], 10)
@@ -54,12 +45,12 @@ const CHAIN_RPC_URL = process.env['CHAIN_RPC_URL'] ?? 'http://localhost:3100/rpc
 const COMPILER_URL = process.env['COMPILER_URL'] ?? 'http://localhost:3101';
 const WORKSPACE_ROOT = process.env['WORKSPACE_ROOT'] ?? process.cwd();
 const OG_DEPLOY_PRIVATE_KEY = process.env['OG_DEPLOY_PRIVATE_KEY'];
-const KEEPERHUB_API_KEY = process.env['KEEPERHUB_API_KEY'];
-const KEEPERHUB_API_URL = process.env['KEEPERHUB_API_URL'] ?? 'https://app.keeperhub.com/api';
+const SEPOLIA_DEPLOY_PRIVATE_KEY = process.env['SEPOLIA_DEPLOY_PRIVATE_KEY'];
+const SEPOLIA_RPC_URL = process.env['SEPOLIA_RPC_URL'];
 const devtools = createDevtoolsReporter('deployer');
 
 console.log(
-  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL}, ogDeploy: ${OG_DEPLOY_PRIVATE_KEY ? 'enabled' : 'disabled'}, keeperHub: ${KEEPERHUB_API_KEY ? 'enabled' : 'disabled'})`,
+  `[mcp-deployer] starting on port ${PORT} (workspaceRoot: ${WORKSPACE_ROOT}, chainRpcUrl: ${CHAIN_RPC_URL}, compilerUrl: ${COMPILER_URL}, ogDeploy: ${OG_DEPLOY_PRIVATE_KEY ? 'enabled' : 'disabled'}, sepoliaDeploy: ${SEPOLIA_DEPLOY_PRIVATE_KEY ? 'enabled' : 'disabled'})`,
 );
 
 if (!existsSync(WORKSPACE_ROOT)) {
@@ -71,6 +62,8 @@ const service = createDeployerService({
   workspaceRoot: WORKSPACE_ROOT,
   compilerUrl: COMPILER_URL,
   ...(OG_DEPLOY_PRIVATE_KEY ? { ogDeployPrivateKey: OG_DEPLOY_PRIVATE_KEY } : {}),
+  ...(SEPOLIA_DEPLOY_PRIVATE_KEY ? { sepoliaDeployPrivateKey: SEPOLIA_DEPLOY_PRIVATE_KEY } : {}),
+  ...(SEPOLIA_RPC_URL ? { sepoliaRpcUrl: SEPOLIA_RPC_URL } : {}),
 });
 
 const ErrorSchema = z.object({ error: z.string() });
@@ -145,11 +138,7 @@ const DeployOgChainOutputWireSchema = z.object({
   explorerUrl: z.string(),
 });
 
-// ── KeeperHub wire schemas ───────────────────────────────────────────────────
-
-const SimulateBundleWireOutputSchema = SimulateBundleOutputSchema;
-const ExecuteTxWireOutputSchema = ExecuteTxOutputSchema;
-const ExecutionStatusWireOutputSchema = GetExecutionStatusOutputSchema;
+// ── list_deployments wire schema ─────────────────────────────────────────
 
 const ListDeploymentsOutputWireSchema = z.object({
   deployments: z.array(
@@ -157,7 +146,7 @@ const ListDeploymentsOutputWireSchema = z.object({
       contractName: z.string(),
       address: z.string(),
       txHash: z.string(),
-      network: z.enum(['local', '0g-galileo']),
+      network: z.enum(['local', '0g-galileo', 'sepolia']),
       deployedAt: z.string(),
     }),
   ),
@@ -244,66 +233,6 @@ const deployOgChainRoute = createRoute({
   },
 });
 
-const simulateBundleRoute = createRoute({
-  method: 'post',
-  path: '/simulate_bundle',
-  request: {
-    body: {
-      content: { 'application/json': { schema: SimulateBundleInputSchema } },
-      required: true,
-    },
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: SimulateBundleWireOutputSchema } },
-      description: 'KeeperHub bundle simulation result',
-    },
-    503: {
-      content: { 'application/json': { schema: ErrorSchema } },
-      description: 'KeeperHub not configured',
-    },
-    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
-  },
-});
-
-const executeTxRoute = createRoute({
-  method: 'post',
-  path: '/execute_tx',
-  request: {
-    body: { content: { 'application/json': { schema: ExecuteTxInputSchema } }, required: true },
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: ExecuteTxWireOutputSchema } },
-      description: 'KeeperHub bundle execution initiated',
-    },
-    503: {
-      content: { 'application/json': { schema: ErrorSchema } },
-      description: 'KeeperHub not configured',
-    },
-    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
-  },
-});
-
-const getExecutionStatusRoute = createRoute({
-  method: 'get',
-  path: '/execution_status/{executionId}',
-  request: {
-    params: z.object({ executionId: z.string().min(1) }),
-  },
-  responses: {
-    200: {
-      content: { 'application/json': { schema: ExecutionStatusWireOutputSchema } },
-      description: 'KeeperHub execution status',
-    },
-    503: {
-      content: { 'application/json': { schema: ErrorSchema } },
-      description: 'KeeperHub not configured',
-    },
-    500: { content: { 'application/json': { schema: ErrorSchema } }, description: 'Error' },
-  },
-});
-
 const listDeploymentsRoute = createRoute({
   method: 'post',
   path: '/list_deployments',
@@ -322,18 +251,7 @@ const listDeploymentsRoute = createRoute({
   },
 });
 
-const mcpServer = createDeployerServer({
-  service,
-  ...(KEEPERHUB_API_KEY
-    ? { keeperHubApiKey: KEEPERHUB_API_KEY, keeperHubBaseUrl: KEEPERHUB_API_URL }
-    : {}),
-});
-
-// KeeperHub REST client (shared with REST routes below)
-const khConfig = KEEPERHUB_API_KEY
-  ? { apiKey: KEEPERHUB_API_KEY, baseUrl: KEEPERHUB_API_URL }
-  : getKeeperHubConfig();
-const khRestClient = khConfig ? createKeeperHubClient(khConfig, service.resolveBytecode) : null;
+const mcpServer = createDeployerServer({ service });
 
 type Env = { Variables: { parsedBody: unknown } };
 
@@ -382,9 +300,6 @@ function deployerToolForPath(path: string): string | null {
   if (path === '/trace') return 'trace';
   if (path === '/call') return 'call';
   if (path === '/deploy_og_chain') return 'deploy_og_chain';
-  if (path === '/simulate_bundle') return 'simulate_bundle';
-  if (path === '/execute_tx') return 'execute_tx';
-  if (path.startsWith('/execution_status/')) return 'get_execution_status';
   if (path === '/list_deployments') return 'list_deployments';
   return null;
 }
@@ -498,46 +413,6 @@ app.openapi(deployOgChainRoute, async (c) => {
   }
 });
 
-app.openapi(simulateBundleRoute, async (c) => {
-  if (!khRestClient) {
-    return c.json({ error: 'KEEPERHUB_API_KEY not configured' }, 503);
-  }
-  try {
-    const output = await khRestClient.simulateBundle(c.req.valid('json'));
-    return c.json(output, 200);
-  } catch (err) {
-    console.error(`[mcp-deployer] simulate_bundle error: ${String(err)}`);
-    return c.json({ error: String(err) }, 500);
-  }
-});
-
-app.openapi(executeTxRoute, async (c) => {
-  if (!khRestClient) {
-    return c.json({ error: 'KEEPERHUB_API_KEY not configured' }, 503);
-  }
-  try {
-    const output = await khRestClient.executeTx(c.req.valid('json'));
-    return c.json(output, 200);
-  } catch (err) {
-    console.error(`[mcp-deployer] execute_tx error: ${String(err)}`);
-    return c.json({ error: String(err) }, 500);
-  }
-});
-
-app.openapi(getExecutionStatusRoute, async (c) => {
-  if (!khRestClient) {
-    return c.json({ error: 'KEEPERHUB_API_KEY not configured' }, 503);
-  }
-  try {
-    const { executionId } = c.req.valid('param');
-    const output = await khRestClient.getExecutionStatus({ executionId });
-    return c.json(output, 200);
-  } catch (err) {
-    console.error(`[mcp-deployer] get_execution_status error: ${String(err)}`);
-    return c.json({ error: String(err) }, 500);
-  }
-});
-
 app.openapi(listDeploymentsRoute, async (c) => {
   try {
     const output = await service.listDeployments(c.req.valid('json'));
@@ -553,7 +428,8 @@ app.openapi(listDeploymentsRoute, async (c) => {
 app.get('/deployments/:contractName', (c) => {
   const contractName = c.req.param('contractName');
   const network = c.req.query('network');
-  const validNetwork = network === 'local' || network === '0g-galileo' ? network : undefined;
+  const validNetwork =
+    network === 'local' || network === '0g-galileo' || network === 'sepolia' ? network : undefined;
   const record = service.getDeployment(contractName, validNetwork);
   if (!record) {
     return c.json({ error: `No deployment found for "${contractName}"` }, 404);

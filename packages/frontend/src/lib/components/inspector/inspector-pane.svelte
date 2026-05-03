@@ -20,9 +20,7 @@
 	 *      invoked `trace` directly (outside the repair loop). The MCP raw
 	 *      output is decoded back into a `TxTrace` via the schema.
 	 *
-	 * Phase 1: only the most recent trace is shown — no history list. The
-	 * `mode` prop is reserved for a future Phase 4 KeeperHub/public-chain
-	 * variant; for now it's effectively a no-op tag the page passes through.
+	 * Phase 1: only the most recent trace is shown — no history list.
 	 */
 	import { TxTraceSchema, type TxTrace, type AgentEvent } from '@crucible/types';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -32,11 +30,7 @@
 	import TraceView from './trace-view.svelte';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
 
-	// Phase 1 takes no props. Phase 4 will add `mode: 'local' | 'keeperhub'`
-	// here to switch the pane into a public-chain variant with explorer
-	// links. Intentionally not declaring the Props interface yet — adding it
-	// would force every call site to spell `<InspectorPane mode="local" />`
-	// for no current benefit.
+	// Phase 1 takes no props.
 
 	const stream = getAgentStream();
 
@@ -136,6 +130,7 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
+		<!-- Trace section -->
 		{#if trace}
 			<div class="p-3">
 				<TraceView {trace} />

@@ -102,7 +102,7 @@ Crucible as a **persistent autonomous developer agent** — a Digital Twin for s
 - The agent uses 0G Compute for sealed inference with verifiable receipts on every turn.
 - The agent deploys to 0G Chain directly via `deploy_og_chain`.
 
-**Why this framing (not swarm):** `mcp-mesh` / AXL is not implemented. The swarm angle requires cross-node AXL communication, which is a hard Gensyn requirement and a Crucible stretch goal. The Digital Twin angle requires only what is already shipped: 0G Storage KV persistence + 0G Compute inference + 0G Chain deployment. No extra code needed to qualify.
+**Why this framing (not swarm):** The Digital Twin angle requires only what is already shipped: 0G Storage KV persistence + 0G Compute inference + 0G Chain deployment. The swarm angle adds AXL, which is now fully implemented (`mcp-mesh` is shipped), but framing the submission around Digital Twin is safer — it works without needing a two-laptop demo.
 
 **Model guidance:** The repair loop has been validated end-to-end on **glm-5**, **minimax-b2.5**, and **deepseek-v4-pro** via the OpenAI-compatible fallback path; these are marked as recommended in the model picker. The 0G Compute testnet serves qwen2.5 7b — if it fails repair reasoning in demo conditions, switch to one of the validated models and ensure the fallback receipt badge is visible.
 
@@ -122,9 +122,9 @@ Crucible as a **persistent autonomous developer agent** — a Digital Twin for s
 
 ## Gensyn — Best Application of Agent eXchange Layer (AXL)
 
-**Fit:** High in theory. **Status: `mcp-mesh` not implemented — stretch goal for Day 8.**
+**Fit:** High. **Status: `mcp-mesh` fully shipped.**
 
-**Current state:** The AXL type contracts are frozen in `packages/types/src/mcp/mesh.ts` and the `mcp-mesh` package directory exists but is empty. AXL binary is not running.
+**Current state:** `packages/mcp-mesh` is fully implemented — `AXLNodeManager` handles ed25519 identity key generation, AXL binary lifecycle, background recv-poll loop, and in-memory response queuing. `server.ts` exposes all five MCP tools (`list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`). In-container MCP server on port 3105; `tool-exec.ts` MESH_ROUTES proxy wired. Backend AXL key registry persists per-workspace AXL public keys. **Remaining:** same-machine dual-workspace AXL connectivity proof, two-laptop proof, POV-3 demo video.
 
 **Why AXL is structural, not decorative:** Crucible doesn't use AXL for "agent chat" or "agent social network" — the two most common hackathon AXL projects. It uses AXL to solve a concrete, measurable problem: **reducing time-to-fix for unfamiliar smart contract reverts.** When the local agent hits a revert it has never seen, AXL is how it finds a peer that has. Remove AXL → the self-healing revert loop loses its mesh fallback and degrades to LLM-only reasoning from traces (unreliable).
 
@@ -149,10 +149,10 @@ Crucible as a **persistent autonomous developer agent** — a Digital Twin for s
 
 **Submission requirements checklist:**
 
-- [ ] `mcp-mesh` package implemented (AXL node binary lifecycle, peer discovery, structured messaging)
-- [ ] Uses AXL for inter-agent communication (no centralized message broker)
+- [x] `mcp-mesh` package implemented (AXL node binary lifecycle, peer discovery, structured messaging)
+- [x] Uses AXL for inter-agent communication (no centralized message broker)
 - [ ] Demonstrates communication across separate AXL nodes (same-machine dual-workspace minimum)
-- [ ] Project built during the hackathon (fresh repo, incremental commits)
+- [x] Project built during the hackathon (fresh repo, incremental commits)
 
 **Judge's likely questions & our answers:**
 
@@ -174,37 +174,39 @@ The agent falls back to LLM reasoning from the trace. The mesh is an accelerator
 
 **Builder Feedback Bounty ($250 per winner, 2 winners):** Requires only a `FEEDBACK.md` in the repo root documenting real friction encountered during KeeperHub integration. Essentially free money if any KeeperHub integration ships. Write it during integration, not after.
 
-**Depth of KeeperHub integration (target):**
+**Depth of KeeperHub integration (shipped):**
 
-| Flow            | What happens                                                                                                                                                                                                 |
-| :-------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Pre-flight**  | Agent calls `simulate_bundle()` via the KeeperHub tools registered in `mcp-deployer`. Returns `bundleId` + per-tx gas estimates.                                                                             |
-| **Execution**   | Agent calls `execute_tx(bundleId)`. KeeperHub handles retry logic, gas optimization, and private routing. Backend polls `get_execution_status` until `confirmed`. Inspector shows live `ship_status` events. |
-| **Audit**       | `ship_confirmed` event carries `auditTrailId` + `explorerUrl`. Inspector should display as a clickable link to the KeeperHub provenance record (frontend UI pending).                                        |
-| **Post-deploy** | User clicks _Deposit_ on the live preview (pointed at the deployed Sepolia address). That interaction also routes through KeeperHub — not a one-shot deploy button.                                          |
+| Flow                | What happens                                                                                                                                                                                                                    |
+| :------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Discovery**       | Agent calls `keeperhub_list_action_schemas` to learn what action types are available and what fields each requires. Schemas are authoritative — no frozen client knowledge.                                                     |
+| **Deploy**          | Agent deploys to Sepolia via `deployer.deploy_sepolia` (chainId 11155111, viem, Etherscan explorer URL). KeeperHub does not support contract creation as an action type — deployment is always through Crucible's own deployer. |
+| **Wallet setup**    | Agent calls `keeperhub_get_wallet_integration` for chain `11155111` to retrieve the `walletId` needed for on-chain write actions.                                                                                               |
+| **AI authoring**    | For natural-language keeper requests, agent calls `keeperhub_ai_generate_workflow` to draft a workflow, reviews it, then `keeperhub_create_workflow` to persist.                                                                |
+| **Execution**       | `keeperhub_execute_workflow` fires the keeper; the returned `executionId` links to the KeeperHub audit trail. For one-off calls the direct-execution tools fire without storing a workflow.                                     |
+| **Discovery-first** | Every interaction starts with schema/wallet discovery so the agent never hard-codes assumptions about the KeeperHub tool surface.                                                                                               |
 
 **How this maps to the judging criteria:**
 
-| Criterion                          | How we satisfy it                                                                                                                                                          |
-| :--------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Does it work?**                  | The demo shows a full Ship flow: simulate → execute → audit trail. Then a post-deploy interaction also through KeeperHub.                                                  |
-| **Would someone actually use it?** | Every Web3 developer needs to go from local to testnet. Today it's manual. Crucible makes it one click with full provenance.                                               |
-| **Depth of KeeperHub integration** | KeeperHub is the _only_ public-chain path. Not a wrapper, not a checkbox — an architectural commitment.                                                                    |
-| **Mergeable quality**              | Clean MCP client integration. `POST /api/ship` is a thin endpoint that calls KeeperHub MCP tools. The agent doesn't know about KeeperHub — it just calls `ship` as a tool. |
+| Criterion                          | How we satisfy it                                                                                                                                                                                                                                                                        |
+| :--------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Does it work?**                  | The demo shows: deploy to Sepolia via `deploy_sepolia`, then `keeperhub_list_action_schemas` → `keeperhub_get_wallet_integration` → `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow`, Inspector shows each tool call and the `executionId`. |
+| **Would someone actually use it?** | Every Web3 developer needs to go from local to testnet and wire on-chain automation. KeeperHub wraps retry logic, gas optimization, and audit trails. Crucible makes it conversational.                                                                                                  |
+| **Depth of KeeperHub integration** | KeeperHub is the only automation path. Connected as a real hosted MCP with automatic schema discovery — not a wrapper, not a frozen client. Agent picks up new KeeperHub tools the moment they ship.                                                                                     |
+| **Mergeable quality**              | Clean `createMCPClient({ transport: { type: 'http', headers: { Authorization: 'Bearer kh_…' } } })` integration in the agent loop. Tools are namespaced `keeperhub_*`. No Crucible code changes needed when KeeperHub adds tools.                                                        |
 
 **Submission requirements checklist:**
 
-- [x] Working demo (backend ship flow implemented; frontend UI pending — demo will show `ship_*` SSE events)
-- [x] `FEEDBACK.md` in repo root with 4 specific items (qualifies for Builder Feedback Bounty)
+- [x] Working demo (KeeperHub hosted MCP wired; agent connects to `https://app.keeperhub.com/mcp` with Bearer auth; `keeperhub_*` tools auto-discovered)
+- [x] `FEEDBACK.md` in repo root with 5 specific items (qualifies for Builder Feedback Bounty)
 - [ ] Public GitHub repo with README covering setup + architecture
 - [ ] Brief write-up explaining approach + how KeeperHub is used (this doc + ARCHITECTURE.md)
 - [ ] Project name, team members, contact info
 
 **Judge's likely questions & our answers:**
 
-> _"Why KeeperHub instead of just `eth_sendRawTransaction`?"_
+> _"Why KeeperHub instead of just calling the chain directly?"_
 
-Because raw RPC calls give you none of: retry logic when gas spikes, gas optimization, private routing to avoid MEV extraction, or audit trails for provenance. KeeperHub is a production-grade execution layer. Crucible is a tool for building real dApps — the execution layer should match.
+Because raw `eth_sendRawTransaction` gives you none of: retry logic when gas spikes, gas optimization, private routing to avoid MEV extraction, or audit trails for provenance. KeeperHub is a production-grade automation and execution layer. The agent uses it for post-deploy keepers and on-chain interactions — not for contract deployment (which goes through Crucible's own `deploy_sepolia`).
 
 > _"Does the user need a KeeperHub account?"_
 
@@ -216,12 +218,13 @@ The free tier is sufficient for the demo (Sepolia testnet). For production use, 
 
 **Fit:** Very high. Free roll — same integration work, different deliverable.
 
-**What we filed:** `FEEDBACK.md` in repo root documents 4 specific items encountered during the non-LangChain integration:
+**What we filed:** `FEEDBACK.md` in repo root documents 5 specific items encountered during the hosted MCP integration:
 
-1. **SDK gap (UX):** No official typed client — had to hand-roll HTTP client with status enum normalization (~4 hours of trial-and-error). Requested `@keeperhub/client` npm package.
-2. **Documentation gap:** No `POST /api/execute/deploy` endpoint; had to use the Workflow API with undocumented `contractWrite` node schema. The `contractAddress: "0x000..."` workaround was reverse-engineered.
-3. **Documentation gap:** No end-to-end "agentic ship" walkthrough — `execute` is non-idempotent and uses singular `/api/workflow/` vs plural `/api/workflows/`; `runId` as audit trail not documented.
-4. **Feature request:** No simulation endpoint — local gas estimate is off by 2-3x vs actual. Requested `dryRun: true` flag on workflow execute.
+1. **UX friction:** Bearer auth vs OAuth onboarding docs — the "Getting started → MCP" page leads with Claude Desktop / OAuth, not the server-side Bearer flow used by programmatic clients.
+2. **Documentation gap:** `network` field expects a chainId string (e.g. `"11155111"`) but docs use names ("sepolia"); API rejects names with a generic error.
+3. **Documentation gap:** `web3/write-contract` requires `walletId` but docs don’t say where to get it; answer is `keeperhub_get_wallet_integration`, but the cross-link is missing.
+4. **Feature request:** No documented `web3/deploy-contract` action type — builders need to know explicitly that KeeperHub handles automation, not deployment.
+5. **Feature request:** `keeperhub_list_action_schemas` returns input schemas but not output schemas — agents must probe-execute to discover output key names.
 
 **Key to qualifying:** Feedback is specific and actionable with repro steps — qualifies for the feedback bounty.
 
@@ -278,9 +281,10 @@ The 3-sponsor cap forces a choice. Here's the tradeoff analysis:
 
 ### KeeperHub Main
 
-- Write-up must show **exactly where KeeperHub sits** — the _Ship_ path.
-- Screenshots of the Inspector's **audit trail panel** with `auditTrailId` visible.
-- Note that KeeperHub is the **only path** to public chains — no `eth_sendRawTransaction` anywhere.
+- Write-up must show **exactly where KeeperHub sits** — the post-deploy automation layer (workflow CRUD, AI generation, direct execution).
+- Screenshots of the Inspector showing `keeperhub_*` tool calls and the returned `executionId`.
+- Note that KeeperHub is the **only automation path** for on-chain interactions after deployment — no `eth_sendRawTransaction` for write calls.
+- Clarify: contract deployment goes through Crucible's `deploy_sepolia` (Sepolia) or `deploy_og_chain` (0G Galileo); KeeperHub handles everything after.
 
 ### KeeperHub Feedback
 
