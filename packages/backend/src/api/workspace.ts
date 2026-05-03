@@ -1403,12 +1403,32 @@ export const workspaceApi = workspaceApiBase
     type RawPattern = { id: string; revertSignature: string; patch: string };
     type RawPage = { patterns: RawPattern[] };
 
-    const [localRes, meshRes] = await Promise.all([
-      loopbackFetch(`${memBase}/patterns?scope=local&limit=200`),
-      loopbackFetch(`${memBase}/patterns?scope=mesh&limit=200`),
-    ]);
+    // Fetch local patterns from THIS workspace's container.
+    const localRes = await loopbackFetch(`${memBase}/patterns?scope=local&limit=200`);
     const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
-    const mesh = meshRes.ok ? ((await meshRes.json()) as RawPage).patterns : [];
+
+    // Fetch mesh patterns from ALL peer workspace containers (same approach as
+    // listMemoryPatternsRoute) — the container's own scope=mesh KV stream is
+    // unused in the aggregation model, so we must query peers directly.
+    const siblings = await prisma.workspace.findMany({
+      where: { id: { not: id } },
+      select: { id: true },
+    });
+    const meshLists = await Promise.all(
+      siblings.map(async (w) => {
+        const peerPorts = await getWorkspaceContainerPorts(w.id).catch(() => null);
+        if (!peerPorts?.memory) return [] as RawPattern[];
+        const url = `http://127.0.0.1:${peerPorts.memory}/patterns?scope=local&limit=200`;
+        try {
+          const res = await loopbackFetch(url);
+          if (!res.ok) return [] as RawPattern[];
+          return ((await res.json()) as RawPage).patterns;
+        } catch {
+          return [] as RawPattern[];
+        }
+      }),
+    );
+    const mesh = meshLists.flat();
     const allPatterns = [...local, ...mesh];
 
     if (allPatterns.length === 0) {

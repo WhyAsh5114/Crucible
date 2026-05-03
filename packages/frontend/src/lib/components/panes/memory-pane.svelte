@@ -93,21 +93,19 @@
 
 	function deriveEdges(patterns: MemoryPattern[], vecs: Map<string, number[]>): SimEdge[] {
 		const edges: SimEdge[] = [];
-		if (vecs.size > 0) {
-			for (let i = 0; i < patterns.length; i++) {
-				for (let j = i + 1; j < patterns.length; j++) {
-					const va = vecs.get(patterns[i]!.id);
-					const vb = vecs.get(patterns[j]!.id);
-					if (!va || !vb) continue;
+		for (let i = 0; i < patterns.length; i++) {
+			for (let j = i + 1; j < patterns.length; j++) {
+				const va = vecs.get(patterns[i]!.id);
+				const vb = vecs.get(patterns[j]!.id);
+				if (va && vb) {
+					// Both have embedding vectors — use cosine similarity.
 					const sim = cosine(va, vb);
 					if (sim >= 0.72) {
 						edges.push({ source: patterns[i]!.id, target: patterns[j]!.id, weight: sim });
 					}
-				}
-			}
-		} else {
-			for (let i = 0; i < patterns.length; i++) {
-				for (let j = i + 1; j < patterns.length; j++) {
+				} else {
+					// One or both patterns lack an embedding (e.g. mesh patterns whose
+					// vectors weren't fetched) — fall back to exact revertSignature match.
 					if (patterns[i]!.revertSignature === patterns[j]!.revertSignature) {
 						edges.push({ source: patterns[i]!.id, target: patterns[j]!.id, weight: 1.0 });
 					}
