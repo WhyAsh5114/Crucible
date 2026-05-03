@@ -2,6 +2,7 @@ import path from 'node:path';
 import Docker from 'dockerode';
 import { Writable } from 'node:stream';
 import { finished } from 'node:stream/promises';
+import { computeAddress, keccak256, toUtf8Bytes, zeroPadValue } from 'ethers';
 
 export type DockerCommandResult = {
   code: number;
@@ -47,6 +48,7 @@ const CONTAINER_COMPILER_PORT = 3101;
 const CONTAINER_DEPLOYER_PORT = 3102;
 const CONTAINER_WALLET_PORT = 3103;
 const CONTAINER_MEMORY_PORT = 3104;
+const CONTAINER_MESH_PORT = 3105;
 const CONTAINER_TERMINAL_PORT = 3106;
 const CONTAINER_DEVTOOLS_PORT = 3107;
 
@@ -355,6 +357,7 @@ export type WorkspaceRuntimePorts = {
   deployer: number | null;
   wallet: number | null;
   memory: number | null;
+  mesh: number | null;
   terminal: number | null;
   devtools: number | null;
 };
@@ -435,10 +438,27 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     `DEPLOYER_MCP_PORT=${CONTAINER_DEPLOYER_PORT}`,
     `WALLET_MCP_PORT=${CONTAINER_WALLET_PORT}`,
     `MEMORY_MCP_PORT=${CONTAINER_MEMORY_PORT}`,
+    `MESH_MCP_PORT=${CONTAINER_MESH_PORT}`,
     `TERMINAL_MCP_PORT=${CONTAINER_TERMINAL_PORT}`,
     `DEVTOOLS_MCP_PORT=${CONTAINER_DEVTOOLS_PORT}`,
     `WORKSPACE_ROOT=${workspaceDir}`,
   ];
+
+  // Allow in-container services (e.g. mcp-mesh) to call back to the host
+  // backend API.  On macOS/Windows Docker Desktop `host.docker.internal`
+  // resolves to the host; on Linux with `--add-host` it also works.
+  // Operators can override with CRUCIBLE_BACKEND_URL if the backend is not
+  // on the Docker host (e.g. in a Compose network).
+  const backendUrl =
+    process.env['CRUCIBLE_BACKEND_URL'] ??
+    `http://host.docker.internal:${process.env['PORT'] ?? 3000}`;
+  env.push(`CRUCIBLE_BACKEND_URL=${backendUrl}`);
+
+  // Shared secret used by in-container services to authenticate callbacks to
+  // the backend's internal container API routes.  If not set the feature
+  // degrades gracefully (mcp-mesh will log a warning and skip registration).
+  const runtimeSecret = process.env['CRUCIBLE_RUNTIME_SECRET'];
+  if (runtimeSecret) env.push(`CRUCIBLE_RUNTIME_SECRET=${runtimeSecret}`);
 
   // Forward 0G credentials when set so in-container services can use 0G
   // Storage (mcp-memory) and 0G Chain (mcp-deployer) without a custom image.
@@ -447,7 +467,6 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     'OG_STORAGE_KV_URL',
     'OG_STORAGE_RPC_URL',
     'OG_STORAGE_INDEXER_URL',
-    'OG_STORAGE_LOCAL_STREAM_ID',
     'OG_STORAGE_MESH_STREAM_ID',
     'OG_DEPLOY_PRIVATE_KEY',
     'KEEPERHUB_API_KEY',
@@ -456,6 +475,26 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
   for (const key of ogPassthrough) {
     const val = process.env[key];
     if (val) env.push(`${key}=${val}`);
+  }
+
+  // All containers sharing the same OG_STORAGE_PRIVATE_KEY share one 0G KV
+  // stream so that patterns written from any deployment (local dev, CI, a
+  // production droplet) are immediately visible everywhere. The stream ID is
+  // derived from just the signer address — not from the workspace ID — so
+  // seeding locally and reading on the droplet both hit the same on-chain data.
+  //   keccak256(signerAddress) → 32-byte stream ID
+  // Cross-user / cross-deployment visibility is achieved via the backend's
+  // container-to-container aggregation layer (listMemoryPatternsRoute).
+  // If the operator has already set OG_STORAGE_LOCAL_STREAM_ID explicitly we
+  // respect that override (useful for isolated single-workspace testing).
+  const privateKey = process.env['OG_STORAGE_PRIVATE_KEY'];
+  const explicitLocalStreamId = process.env['OG_STORAGE_LOCAL_STREAM_ID'];
+  if (privateKey && !explicitLocalStreamId) {
+    const signerAddress = computeAddress(privateKey);
+    const localStreamId = zeroPadValue(keccak256(toUtf8Bytes(signerAddress)), 32);
+    env.push(`OG_STORAGE_LOCAL_STREAM_ID=${localStreamId}`);
+  } else if (explicitLocalStreamId) {
+    env.push(`OG_STORAGE_LOCAL_STREAM_ID=${explicitLocalStreamId}`);
   }
 
   return env;
@@ -493,12 +532,17 @@ export async function ensureWorkspaceContainer(
             [`${CONTAINER_DEPLOYER_PORT}/tcp`]: {},
             [`${CONTAINER_WALLET_PORT}/tcp`]: {},
             [`${CONTAINER_MEMORY_PORT}/tcp`]: {},
+            [`${CONTAINER_MESH_PORT}/tcp`]: {},
             [`${CONTAINER_TERMINAL_PORT}/tcp`]: {},
             [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: {},
           },
           HostConfig: {
             RestartPolicy: { Name: 'unless-stopped' },
             Binds: [bind],
+            // On Linux, Docker does not add host.docker.internal automatically.
+            // host-gateway resolves to the host's Docker bridge IP so containers
+            // can reach the backend even when it binds to 127.0.0.1.
+            ExtraHosts: ['host.docker.internal:host-gateway'],
             // Empty HostPort = Docker assigns a free port on the host.
             PortBindings: {
               [`${CONTAINER_CHAIN_PORT}/tcp`]: [{ HostPort: '' }],
@@ -506,6 +550,7 @@ export async function ensureWorkspaceContainer(
               [`${CONTAINER_DEPLOYER_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_WALLET_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_MEMORY_PORT}/tcp`]: [{ HostPort: '' }],
+              [`${CONTAINER_MESH_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_TERMINAL_PORT}/tcp`]: [{ HostPort: '' }],
               [`${CONTAINER_DEVTOOLS_PORT}/tcp`]: [{ HostPort: '' }],
             },
@@ -541,6 +586,7 @@ export async function ensureWorkspaceContainer(
     deployer: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEPLOYER_PORT) : null,
     wallet: freshInspect ? extractHostPort(freshInspect, CONTAINER_WALLET_PORT) : null,
     memory: freshInspect ? extractHostPort(freshInspect, CONTAINER_MEMORY_PORT) : null,
+    mesh: freshInspect ? extractHostPort(freshInspect, CONTAINER_MESH_PORT) : null,
     terminal: freshInspect ? extractHostPort(freshInspect, CONTAINER_TERMINAL_PORT) : null,
     devtools: freshInspect ? extractHostPort(freshInspect, CONTAINER_DEVTOOLS_PORT) : null,
   };
@@ -568,6 +614,7 @@ export async function getWorkspaceContainerPorts(
     deployer: extractHostPort(inspect, CONTAINER_DEPLOYER_PORT),
     wallet: extractHostPort(inspect, CONTAINER_WALLET_PORT),
     memory: extractHostPort(inspect, CONTAINER_MEMORY_PORT),
+    mesh: extractHostPort(inspect, CONTAINER_MESH_PORT),
     terminal: extractHostPort(inspect, CONTAINER_TERMINAL_PORT),
     devtools: extractHostPort(inspect, CONTAINER_DEVTOOLS_PORT),
   };

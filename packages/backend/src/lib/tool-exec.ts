@@ -103,7 +103,13 @@ const MEMORY_ROUTES: Record<string, RouteSpec> = {
   },
 };
 
-const MESH_ROUTES: Record<string, RouteSpec> = {};
+const MESH_ROUTES: Record<string, RouteSpec> = {
+  list_peers: { method: 'GET', path: () => '/peers', withBody: false },
+  broadcast_help: { method: 'POST', path: () => '/broadcast_help', withBody: true },
+  collect_responses: { method: 'POST', path: () => '/collect_responses', withBody: true },
+  respond: { method: 'POST', path: () => '/respond', withBody: true },
+  verify_peer_patch: { method: 'POST', path: () => '/verify_peer_patch', withBody: true },
+};
 
 const TERMINAL_ROUTES: Record<string, RouteSpec> = {
   create_session: { method: 'POST', path: () => '/create_session', withBody: true },
@@ -197,7 +203,7 @@ export async function executeRuntimeTool(input: ToolExecInput): Promise<ToolExec
     wallet: ports.wallet,
     memory: ports.memory,
     terminal: ports.terminal,
-    mesh: null,
+    mesh: ports.mesh,
   };
 
   const port = portMap[input.server] ?? null;

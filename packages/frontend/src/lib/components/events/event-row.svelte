@@ -15,6 +15,8 @@
 	import ShipSimulatedRow from './ship-simulated-row.svelte';
 	import ShipStatusRow from './ship-status-row.svelte';
 	import ShipConfirmedRow from './ship-confirmed-row.svelte';
+	import MeshHelpBroadcastRow from './mesh-help-broadcast-row.svelte';
+	import MeshHelpReceivedRow from './mesh-help-received-row.svelte';
 
 	interface Props {
 		event: ChatEvent;
@@ -48,6 +50,10 @@
 	<ShipStatusRow {event} />
 {:else if event.type === 'ship_confirmed'}
 	<ShipConfirmedRow {event} />
+{:else if event.type === 'mesh_help_broadcast'}
+	<MeshHelpBroadcastRow {event} />
+{:else if event.type === 'mesh_help_received'}
+	<MeshHelpReceivedRow {event} />
 {:else if event.type === 'error'}
 	<ErrorRow {event} />
 {:else if event.type === 'done'}

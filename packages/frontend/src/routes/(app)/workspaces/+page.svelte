@@ -79,7 +79,7 @@
 
 	async function openIde(): Promise<void> {
 		if (!selected) return;
-		await goto(resolve('/workspaces/[id]', { id: selected.id }));
+		await goto(resolve(`/workspaces/${selected.id}`));
 	}
 
 	// ── Inline template picker ───────────────────────────────────────────────
@@ -103,7 +103,7 @@
 			templatePickerOpen = false;
 			// Navigate straight into the new workspace — that's what the user
 			// actually wants 99% of the time after picking a template.
-			await goto(resolve('/workspaces/[id]', { id: created.id }));
+			await goto(resolve(`/workspaces/${created.id}`));
 		} catch (err) {
 			toast.error('Failed to create workspace', {
 				description: err instanceof Error ? err.message : String(err)

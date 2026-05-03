@@ -41,6 +41,18 @@
 
 	const workspaceId = $derived(workspace?.id ?? null);
 
+	function focusTerminal(): void {
+		if (!host || !liveTerm) return;
+		// xterm renders an offscreen textarea inside the host that captures
+		// keystrokes. Focusing it directly is more reliable than xterm's
+		// wrapping `.focus()` API, which silently no-ops on some browsers
+		// when the textarea is positioned off-screen and a native focus
+		// shift is racing in the same tick.
+		const ta = host.querySelector<HTMLTextAreaElement>('textarea.xterm-helper-textarea');
+		if (ta) ta.focus();
+		else liveTerm.focus();
+	}
+
 	// Repaint the xterm canvas whenever the theme mode flips. The first run
 	// races the connect effect (terminal not yet created), in which case
 	// `liveTerm` is null and we no-op — the connect effect picks up the
@@ -72,7 +84,7 @@
 			// (mode toggle clicks, workspace status reloads, etc.) often do —
 			// re-asserting focus here means typing always picks up where the
 			// user left off without an explicit click.
-			term.focus();
+			focusTerminal();
 		});
 		return () => cancelAnimationFrame(handle);
 	});
@@ -222,7 +234,7 @@
 						active.tagName !== 'TEXTAREA' &&
 						active.tagName !== 'INPUT';
 					if (userHasFocusedSomethingElse) return;
-					term.focus();
+					focusTerminal();
 					if (attemptsLeft > 0) {
 						setTimeout(() => tryFocus(attemptsLeft - 1), 60);
 					}
@@ -329,18 +341,20 @@
 			{/if}
 		</div>
 		<!--
-			Click anywhere in the host div forwards focus into xterm. Without
-			this, clicking on the padded margin around the textarea (or after
-			any UI event that pulled focus away) leaves the terminal looking
-			"alive" but ignoring keystrokes.
-			role/tabindex satisfy a11y for the click target — xterm itself
-			holds the real focusable textarea.
+			Use mousedown + preventDefault to forward focus into xterm: it
+			suppresses the native focus shift to <body> that races xterm's
+			offscreen helper textarea, where a plain onclick would silently
+			no-op. onclick remains as a defensive fallback.
 		-->
 		<div
 			bind:this={host}
 			role="presentation"
-			onclick={() => liveTerm?.focus()}
-			class="size-full overflow-hidden bg-background p-2"
+			onmousedown={(event) => {
+				event.preventDefault();
+				focusTerminal();
+			}}
+			onclick={focusTerminal}
+			class="min-h-0 flex-1 overflow-hidden bg-background p-2"
 		></div>
 	{/if}
 </section>

@@ -18,11 +18,15 @@ import {
   FileWriteRequestSchema,
   FileWriteResponseSchema,
   ApiErrorSchema,
+  MemoryPatternSchema,
   AgentEventSchema,
   ChatSessionListResponseSchema,
   ChatSessionCreateRequestSchema,
   ChatSessionRenameRequestSchema,
   ChatSessionDeleteResponseSchema,
+  AxlKeyRegisterRequestSchema,
+  AxlKeyRegisterResponseSchema,
+  MeshPeersResponseSchema,
   type TemplateState,
 } from '@crucible/types';
 import { OpenAPIHono, createRoute } from '@hono/zod-openapi';
@@ -393,6 +397,144 @@ const getChatHistoryRoute = createRoute({
   },
 });
 
+const PurgeMemoryResponseSchema = z.object({ deleted: z.number().int().nonnegative() });
+
+const MemoryPatternsResponseSchema = z.object({
+  patterns: z.array(MemoryPatternSchema),
+});
+
+const listMemoryPatternsRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/memory/patterns',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    query: z.object({ scope: z.enum(['local', 'mesh']).optional() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MemoryPatternsResponseSchema } },
+      description: 'Memory patterns for this workspace',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready',
+    },
+  },
+});
+
+const EmbedMemoryResponseSchema = z.object({
+  embeddings: z.array(z.object({ id: z.string(), vector: z.array(z.number()) })),
+});
+
+const embedMemoryRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/memory/embed',
+  request: { params: z.object({ id: WorkspaceIdSchema }) },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: EmbedMemoryResponseSchema } },
+      description: 'Embedding vectors for all patterns',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready or embeddings unavailable',
+    },
+  },
+});
+
+const purgeMemoryRoute = createRoute({
+  method: 'delete',
+  path: '/workspace/{id}/memory',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    query: z.object({ scope: z.enum(['local', 'mesh']).optional() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: PurgeMemoryResponseSchema } },
+      description: 'Patterns purged',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: { content: { 'application/json': { schema: ApiErrorSchema } }, description: 'Not found' },
+    503: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Memory service not ready',
+    },
+  },
+});
+
+// ── AXL key registry ─────────────────────────────────────────────────────────
+
+/** mcp-mesh calls this once on startup (from inside the container) to
+ *  publish its AXL public key.  The route is protected by
+ *  `requireContainerAuth` (X-Container-Secret header) rather than a user
+ *  session, because the container does not hold user credentials. */
+const registerAxlKeyRoute = createRoute({
+  method: 'post',
+  path: '/workspace/{id}/axl-key',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    headers: z.object({ 'x-container-secret': z.string() }),
+    body: {
+      content: { 'application/json': { schema: AxlKeyRegisterRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: AxlKeyRegisterResponseSchema } },
+      description: 'AXL key registered',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace runtime not found',
+    },
+  },
+});
+
+/** Returns the AXL public keys of all other workspace containers that belong
+ *  to the same operator user.  Only workspaces that have already registered
+ *  a key are included.  The calling workspace's own entry is excluded. */
+const getMeshPeersRoute = createRoute({
+  method: 'get',
+  path: '/workspace/{id}/mesh-peers',
+  request: {
+    params: z.object({ id: WorkspaceIdSchema }),
+    headers: z.object({ 'x-container-secret': z.string() }),
+  },
+  responses: {
+    200: {
+      content: { 'application/json': { schema: MeshPeersResponseSchema } },
+      description: 'Peer AXL public keys',
+    },
+    401: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Unauthorized',
+    },
+    404: {
+      content: { 'application/json': { schema: ApiErrorSchema } },
+      description: 'Workspace not found',
+    },
+  },
+});
+
 // ── Chain auto-boot ──────────────────────────────────────────────────────────
 
 /**
@@ -628,6 +770,7 @@ async function spawnRuntimeForWorkspace(
         deployerPort: container.ports.deployer,
         walletPort: container.ports.wallet,
         memoryPort: container.ports.memory,
+        meshPort: container.ports.mesh,
         terminalPort: container.ports.terminal,
         devtoolsPort: container.ports.devtools,
       },
@@ -1214,6 +1357,233 @@ export const workspaceApi = workspaceApiBase
 
     return c.json(ChatSessionDeleteResponseSchema.parse({ id: sessionId, deleted: true }), 200);
   })
+  .openapi(purgeMemoryRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { scope } = c.req.valid('query');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+    if (!ports?.memory) {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    }
+
+    const url = new URL(`http://127.0.0.1:${ports.memory}/patterns`);
+    if (scope) url.searchParams.set('scope', scope);
+    const res = await loopbackFetch(url.toString(), { method: 'DELETE' });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return c.json(createApiErrorBody('runtime_unavailable', `Memory purge failed: ${text}`), 503);
+    }
+    const body = (await res.json()) as { deleted: number };
+    return c.json(PurgeMemoryResponseSchema.parse(body), 200);
+  })
+  .openapi(listMemoryPatternsRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { scope } = c.req.valid('query');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    type RawPattern = z.infer<typeof MemoryPatternSchema>;
+    type RawPage = { patterns: RawPattern[] };
+
+    // Fetch the LOCAL patterns from a single workspace's memory service.
+    // Returns an empty array if the container is not running or the service
+    // is unreachable — never throws, so a single offline peer can't break
+    // the whole pane.
+    async function fetchLocalPatterns(workspaceId: string): Promise<RawPattern[]> {
+      const ports = await getWorkspaceContainerPorts(workspaceId).catch(() => null);
+      if (!ports?.memory) return [];
+      const url = `http://127.0.0.1:${ports.memory}/patterns?scope=local&limit=200`;
+      try {
+        const res = await loopbackFetch(url);
+        if (!res.ok) return [];
+        const body = (await res.json()) as RawPage;
+        return Array.isArray(body.patterns) ? body.patterns : [];
+      } catch {
+        return [];
+      }
+    }
+
+    const wantsLocal = scope === undefined || scope === 'local';
+    const wantsMesh = scope === undefined || scope === 'mesh';
+
+    // "local" = patterns this workspace itself has remembered.
+    const localPromise = wantsLocal ? fetchLocalPatterns(id) : Promise.resolve([] as RawPattern[]);
+
+    // "mesh" = patterns from OTHER workspaces owned by the same user.
+    // Each peer workspace's locals are re-tagged scope:'mesh' so the pane
+    // can visually separate own discoveries from peer discoveries without
+    // requiring producers to write into a separate KV stream.
+    let meshPromise: Promise<RawPattern[]> = Promise.resolve([]);
+    if (wantsMesh) {
+      // Mesh = locals from ALL other workspaces across ALL users. 0G KV is a
+      // shared decentralised store — patterns are globally visible by design.
+      const siblings = await prisma.workspace.findMany({
+        where: { id: { not: id } },
+        select: { id: true },
+      });
+      meshPromise = Promise.all(siblings.map((w) => fetchLocalPatterns(w.id))).then((lists) =>
+        lists.flat().map((p) => ({ ...p, scope: 'mesh' as const })),
+      );
+    }
+
+    const [local, mesh] = await Promise.all([localPromise, meshPromise]);
+
+    // The local memory service may also still hold patterns explicitly written
+    // with scope='mesh' (e.g. via the agent's mesh.collect_responses path).
+    // Include those when the caller asked for mesh, so we don't silently lose
+    // anything that producers actively pushed into the mesh stream.
+    if (wantsMesh) {
+      const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+      if (ports?.memory) {
+        try {
+          const res = await loopbackFetch(
+            `http://127.0.0.1:${ports.memory}/patterns?scope=mesh&limit=200`,
+          );
+          if (res.ok) {
+            const body = (await res.json()) as RawPage;
+            if (Array.isArray(body.patterns)) mesh.push(...body.patterns);
+          }
+        } catch {
+          // ignore — already returning peer-derived mesh patterns
+        }
+      }
+    }
+
+    // Deduplicate by pattern ID — local takes priority over mesh.
+    // This is necessary because all containers share the same 0G KV stream
+    // (same OG_STORAGE_PRIVATE_KEY → same stream ID), so fetching locals from
+    // multiple workspaces returns overlapping pattern sets.
+    const seen = new Set<string>();
+    const deduplicated: RawPattern[] = [];
+    for (const p of [...local, ...mesh]) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        deduplicated.push(p);
+      }
+    }
+
+    return c.json(
+      { patterns: deduplicated } as unknown as {
+        patterns: z.infer<typeof MemoryPatternSchema>[];
+      },
+      200,
+    );
+  })
+  .openapi(embedMemoryRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const userId = c.get('userId');
+
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!workspace || workspace.userId !== userId) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    const baseUrl = process.env['OPENAI_BASE_URL']?.replace(/\/+$/u, '');
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!baseUrl || !apiKey) {
+      return c.json(
+        createApiErrorBody(
+          'runtime_unavailable',
+          'Embeddings unavailable: OPENAI_BASE_URL and OPENAI_API_KEY required',
+        ),
+        503,
+      );
+    }
+
+    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+    if (!ports?.memory) {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    }
+
+    const memBase = `http://127.0.0.1:${ports.memory}`;
+    type RawPattern = { id: string; revertSignature: string; patch: string };
+    type RawPage = { patterns: RawPattern[] };
+
+    // Fetch local patterns from THIS workspace's container.
+    const localRes = await loopbackFetch(`${memBase}/patterns?scope=local&limit=200`);
+    const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
+
+    // Fetch mesh patterns from ALL peer workspace containers across all users
+    // (same approach as listMemoryPatternsRoute) — the container's own scope=mesh
+    // KV stream is unused in the aggregation model, so we must query peers directly.
+    const siblings = await prisma.workspace.findMany({
+      where: { id: { not: id } },
+      select: { id: true },
+    });
+    const meshLists = await Promise.all(
+      siblings.map(async (w) => {
+        const peerPorts = await getWorkspaceContainerPorts(w.id).catch(() => null);
+        if (!peerPorts?.memory) return [] as RawPattern[];
+        const url = `http://127.0.0.1:${peerPorts.memory}/patterns?scope=local&limit=200`;
+        try {
+          const res = await loopbackFetch(url);
+          if (!res.ok) return [] as RawPattern[];
+          return ((await res.json()) as RawPage).patterns;
+        } catch {
+          return [] as RawPattern[];
+        }
+      }),
+    );
+    const mesh = meshLists.flat();
+    const allPatterns = [...local, ...mesh];
+
+    if (allPatterns.length === 0) {
+      return c.json({ embeddings: [] }, 200);
+    }
+
+    const texts = allPatterns.map((p) => `${p.revertSignature}\n${p.patch.slice(0, 500)}`);
+    const model = process.env['OPENAI_EMBED_MODEL'] ?? 'text-embedding-3-small';
+
+    let embedResponse: Response;
+    try {
+      embedResponse = await fetch(`${baseUrl}/embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model, input: texts }),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (err) {
+      console.warn('[workspace] embeddings request failed:', err);
+      return c.json(createApiErrorBody('runtime_unavailable', 'Embeddings request failed'), 503);
+    }
+
+    if (!embedResponse.ok) {
+      const text = await embedResponse.text().catch(() => '');
+      console.warn(`[workspace] embeddings API ${embedResponse.status}: ${text}`);
+      return c.json(
+        createApiErrorBody('runtime_unavailable', `Embeddings API error: ${embedResponse.status}`),
+        503,
+      );
+    }
+
+    const embedData = (await embedResponse.json()) as {
+      data: { index: number; embedding: number[] }[];
+    };
+    const embeddings = embedData.data.map((item) => ({
+      id: allPatterns[item.index]!.id,
+      vector: item.embedding,
+    }));
+    return c.json({ embeddings }, 200);
+  })
   .get('/workspace/:id/devtools/events', async (c) => {
     const id = c.req.param('id');
     const userId = c.get('userId');
@@ -1255,4 +1625,101 @@ export const workspaceApi = workspaceApiBase
         'X-Accel-Buffering': 'no',
       },
     });
+  });
+
+// ── Container-auth API ───────────────────────────────────────────────────────
+// These routes are called by mcp-mesh processes running INSIDE workspace
+// containers.  They are NOT protected by `requireSession` (no user session is
+// available inside a container).  Instead they require an
+// `X-Container-Secret` header that matches the `CRUCIBLE_RUNTIME_SECRET` env
+// var shared between the host backend process and every container it spawns.
+// If the operator has not set `CRUCIBLE_RUNTIME_SECRET` the routes return 401
+// so the feature degrades gracefully rather than becoming an open API.
+
+function requireContainerAuth(
+  c: { req: { header: (k: string) => string | undefined } },
+  next: () => Promise<Response | undefined>,
+): Response | Promise<Response | undefined> {
+  const secret = process.env['CRUCIBLE_RUNTIME_SECRET'];
+  if (!secret) {
+    return new Response(JSON.stringify({ error: 'container auth not configured' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const provided = c.req.header('x-container-secret');
+  if (!provided || provided !== secret) {
+    return new Response(JSON.stringify({ error: 'invalid container secret' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return next();
+}
+
+const containerApiBase = new OpenAPIHono();
+// Scope the container-auth guard to ONLY the container-only endpoints. Using
+// `'*'` here would intercept every request that falls through from earlier
+// sub-apps mounted at `/api` (e.g. `/api/workspace/:id/rpc`, `/api/agent/*`)
+// and return 401 "container auth not configured" in dev where
+// CRUCIBLE_RUNTIME_SECRET is unset — masking the real route as unauthorized.
+containerApiBase.use(
+  '/workspace/:id/axl-key',
+  requireContainerAuth as Parameters<typeof containerApiBase.use>[1],
+);
+containerApiBase.use(
+  '/workspace/:id/mesh-peers',
+  requireContainerAuth as Parameters<typeof containerApiBase.use>[1],
+);
+
+export const containerApi = containerApiBase
+  .openapi(registerAxlKeyRoute, async (c) => {
+    const { id } = c.req.valid('param');
+    const { axlPublicKey } = c.req.valid('json');
+
+    // Ensure the workspace runtime row exists (container is running, so it should).
+    const runtime = await prisma.workspaceRuntime.findUnique({ where: { workspaceId: id } });
+    if (!runtime) {
+      return c.json(createApiErrorBody('not_found', 'Workspace runtime not found'), 404);
+    }
+
+    await prisma.workspaceRuntime.update({
+      where: { workspaceId: id },
+      data: { axlPublicKey },
+    });
+
+    return c.json({ ok: true as const }, 200);
+  })
+  .openapi(getMeshPeersRoute, async (c) => {
+    const { id } = c.req.valid('param');
+
+    // Verify workspace exists
+    const workspace = await prisma.workspace.findUnique({
+      where: { id },
+      select: { userId: true },
+    });
+    if (!workspace) {
+      return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
+    }
+
+    // Return all other workspaces belonging to the same user that have
+    // registered an AXL public key.
+    const peers = await prisma.workspaceRuntime.findMany({
+      where: {
+        workspace: { userId: workspace.userId },
+        axlPublicKey: { not: null },
+        NOT: { workspaceId: id },
+      },
+      select: { workspaceId: true, axlPublicKey: true },
+    });
+
+    return c.json(
+      {
+        peers: peers.map((p) => ({
+          workspaceId: p.workspaceId as z.infer<typeof WorkspaceIdSchema>,
+          axlPublicKey: p.axlPublicKey!,
+        })),
+      },
+      200,
+    );
   });

@@ -22,7 +22,8 @@ import type {
 	ChatSessionRenameRequest,
 	ChatSessionDeleteResponse,
 	FileWriteRequest,
-	FileWriteResponse
+	FileWriteResponse,
+	MemoryPattern
 } from '@crucible/types';
 
 // Use window.location.origin so Hono RPC can construct absolute URLs
@@ -223,6 +224,44 @@ export class WorkspaceClient {
 			throw new Error(`deleteSession failed: ${res.status} ${await res.text()}`);
 		}
 		return (await res.json()) as ChatSessionDeleteResponse;
+	}
+
+	// ── Memory ───────────────────────────────────────────────────────────────
+
+	async listMemoryPatterns(
+		workspaceId: string,
+		scope?: 'local' | 'mesh'
+	): Promise<MemoryPattern[]> {
+		const res = await apiClient.api.workspace[':id'].memory.patterns.$get({
+			param: { id: workspaceId },
+			query: scope ? { scope } : {}
+		});
+		// 503 means the memory service isn't up yet (normal during container boot).
+		// Return an empty list silently so the pane shows an empty state instead
+		// of a toast error that will self-resolve on the next refresh.
+		if (res.status === 503) return [];
+		if (!res.ok) throw new Error(`listMemoryPatterns failed: ${res.status} ${await res.text()}`);
+		const body = (await res.json()) as { patterns: MemoryPattern[] };
+		return body.patterns;
+	}
+
+	async embedMemoryPatterns(workspaceId: string): Promise<{ id: string; vector: number[] }[]> {
+		const res = await apiClient.api.workspace[':id'].memory.embed.$get({
+			param: { id: workspaceId }
+		});
+		if (!res.ok) return []; // graceful degradation — embeddings unavailable
+		const body = (await res.json()) as { embeddings: { id: string; vector: number[] }[] };
+		return body.embeddings;
+	}
+
+	async purgeMemory(workspaceId: string, scope?: 'local' | 'mesh'): Promise<number> {
+		const res = await apiClient.api.workspace[':id'].memory.$delete({
+			param: { id: workspaceId },
+			query: scope ? { scope } : {}
+		});
+		if (!res.ok) throw new Error(`purgeMemory failed: ${res.status} ${await res.text()}`);
+		const body = (await res.json()) as { deleted: number };
+		return body.deleted;
 	}
 }
 

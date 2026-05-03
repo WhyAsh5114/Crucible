@@ -305,7 +305,13 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
 
   const frontendDir = path.join(workspaceDir, 'frontend');
   const port = await getFreePort();
-  const previewUrl = `http://localhost:${port}`;
+
+  // When CRUCIBLE_APP_URL is set (production), serve the preview through the
+  // backend's path-based proxy at /preview/:workspaceId so the browser can
+  // reach it from the real domain instead of a raw localhost port.
+  const appUrl = process.env['CRUCIBLE_APP_URL'];
+  const viteBase = appUrl ? `/preview/${workspaceId}/` : '/';
+  const previewUrl = appUrl ? `${appUrl}/preview/${workspaceId}` : `http://localhost:${port}`;
 
   // Ensure the workspace frontend's dependencies are installed before starting
   // Vite. `writeIfAbsent` only writes package.json — bun install is not run
@@ -371,6 +377,7 @@ export async function startPreview(workspaceId: string, workspaceDir: string): P
       FORCE_COLOR: '0',
       CRUCIBLE_BRIDGE_SCRIPT: buildBridgeScript(),
       CRUCIBLE_VITE_PORT: String(port),
+      CRUCIBLE_VITE_BASE: viteBase,
     },
     stdio: 'pipe',
   });
@@ -428,4 +435,8 @@ export function stopPreview(workspaceId: string): void {
 
 export function getPreviewUrl(workspaceId: string): string | null {
   return previews.get(workspaceId)?.previewUrl ?? null;
+}
+
+export function getPreviewPort(workspaceId: string): number | null {
+  return previews.get(workspaceId)?.port ?? null;
 }

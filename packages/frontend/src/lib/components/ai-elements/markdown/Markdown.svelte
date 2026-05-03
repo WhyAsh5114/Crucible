@@ -23,7 +23,15 @@
 	let { content, class: className }: Props = $props();
 </script>
 
-<div class={cn('prose prose-sm max-w-none', className)}>
+<div
+	class={cn(
+		'prose prose-xs max-w-none',
+		'[&_table]:my-2',
+		'[&_th]:px-2 [&_th]:py-1 [&_th]:text-xs',
+		'[&_td]:px-2 [&_td]:py-1 [&_td]:text-xs',
+		className
+	)}
+>
 	<Streamdown
 		{content}
 		parseIncompleteMarkdown

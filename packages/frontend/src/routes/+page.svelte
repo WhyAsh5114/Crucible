@@ -1,4 +1,5 @@
 <script lang="ts">
+	// @ts-expect-error - Font package doesn't provide type declarations
 	import '@fontsource-variable/jetbrains-mono';
 	import { ModeWatcher } from 'mode-watcher';
 	import Header from '$lib/components/landing/Header.svelte';

@@ -94,6 +94,10 @@ log "starting mcp-memory on port ${MEMORY_MCP_PORT}"
 supervise mcp-memory mcp-memory &
 memory_pid=$!
 
+log "starting mcp-mesh on port ${MESH_MCP_PORT}"
+supervise mcp-mesh mcp-mesh &
+mesh_pid=$!
+
 log "starting mcp-terminal on port ${TERMINAL_MCP_PORT}"
 supervise mcp-terminal mcp-terminal &
 terminal_pid=$!
@@ -103,8 +107,8 @@ emit_container_event "runtime_start" "services booted"
 shutdown() {
     log "received shutdown — terminating supervisors"
     emit_container_event "runtime_shutdown" "received shutdown signal"
-    kill -TERM "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" "${terminal_pid}" 2>/dev/null || true
-    wait "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" "${terminal_pid}" 2>/dev/null || true
+    kill -TERM "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" "${mesh_pid}" "${terminal_pid}" 2>/dev/null || true
+    wait "${devtools_pid}" "${chain_pid}" "${compiler_pid}" "${deployer_pid}" "${wallet_pid}" "${memory_pid}" "${mesh_pid}" "${terminal_pid}" 2>/dev/null || true
     exit 0
 }
 trap shutdown TERM INT

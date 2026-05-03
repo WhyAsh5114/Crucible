@@ -140,7 +140,7 @@ async function runInference(
 
   // Build MCP server URLs from the live container port map.
   const mcpServerUrls: Partial<
-    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal', string>
+    Record<'chain' | 'compiler' | 'deployer' | 'wallet' | 'memory' | 'terminal' | 'mesh', string>
   > = {};
   try {
     const ports = await getWorkspaceContainerPorts(workspaceId);
@@ -152,6 +152,7 @@ async function runInference(
         'wallet',
         'memory',
         'terminal',
+        'mesh',
       ] as const) {
         const port = ports[key];
         if (port !== null) mcpServerUrls[key] = `${runtimeServiceBaseUrl(port)}/mcp`;

@@ -19,8 +19,11 @@
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThreeIcon';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
 	import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+	import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
+	import CheckIcon from 'phosphor-svelte/lib/CheckIcon';
 	import { toast } from 'svelte-sonner';
 	import { cn } from '$lib/utils';
+	import { UseClipboard } from '$lib/hooks/use-clipboard.svelte';
 
 	// Per-template icon shorthand. The picker dialog already declares the
 	// mapping; we just look it up by id rather than duplicating the table.
@@ -50,6 +53,13 @@
 			.join('')
 			.slice(0, 2) || 'U'
 	);
+
+	const clipboard = new UseClipboard();
+	const isWalletAddress = $derived(/^0x[a-fA-F0-9]{40}$/.test(user.name));
+
+	function shortAddress(addr: string) {
+		return addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+	}
 
 	$effect(() => {
 		void refresh();
@@ -311,22 +321,45 @@
 							</Sidebar.MenuButton>
 						{/snippet}
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Content side="top" align="end" class="w-56">
-						<DropdownMenu.Group>
-							<DropdownMenu.Label class="flex items-center gap-2">
-								<Avatar.Root class="size-8">
-									<Avatar.Image src={avatarUrl} alt={user.name} />
-									<Avatar.Fallback>{initials}</Avatar.Fallback>
-								</Avatar.Root>
-								<div class="flex min-w-0 flex-col gap-0.5 text-left leading-tight">
+					<DropdownMenu.Content side="top" align="end" class="w-72 p-0">
+						<div class="flex items-center gap-3 bg-muted/40 px-3 py-3">
+							<Avatar.Root class="size-11 ring-1 ring-border/60">
+								<Avatar.Image src={avatarUrl} alt={user.name} />
+								<Avatar.Fallback>{initials}</Avatar.Fallback>
+							</Avatar.Root>
+							<div class="flex min-w-0 flex-1 flex-col gap-1 text-left leading-tight">
+								<span
+									class="text-[10px] font-medium tracking-wider text-muted-foreground uppercase"
+								>
+									{isWalletAddress ? 'Connected wallet' : 'Account'}
+								</span>
+								{#if isWalletAddress}
+									<div class="flex items-center gap-1.5">
+										<span class="font-mono text-sm">{shortAddress(user.name)}</span>
+										<button
+											type="button"
+											aria-label="Copy address"
+											onclick={() => {
+												void clipboard.copy(user.name);
+											}}
+											class="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+										>
+											{#if clipboard.copied}
+												<CheckIcon class="size-3.5" />
+											{:else}
+												<CopyIcon class="size-3.5" />
+											{/if}
+										</button>
+									</div>
+								{:else}
 									<span class="truncate text-sm font-medium">{user.name}</span>
 									{#if user.email}
 										<span class="truncate text-xs text-muted-foreground">{user.email}</span>
 									{/if}
-								</div>
-							</DropdownMenu.Label>
-						</DropdownMenu.Group>
-						<DropdownMenu.Separator />
+								{/if}
+							</div>
+						</div>
+						<DropdownMenu.Separator class="m-0" />
 						<DropdownMenu.Item onclick={signOut}>
 							<SignOutIcon />
 							Sign out
