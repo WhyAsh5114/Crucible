@@ -20,12 +20,15 @@ MEMORY_PORT=3104
 VERIFY_TIMEOUT=60   # seconds to wait per container for patterns to appear
 VERIFY_INTERVAL=3   # poll interval in seconds
 
-# ── Discover containers ───────────────────────────────────────────────────────
+# ── Discover containers (bash 3.2 compatible) ────────────────────────────────
 
+CONTAINERS=()
 if [[ $# -ge 2 ]]; then
-  mapfile -t CONTAINERS < <(printf '%s\n' "$@")
+  CONTAINERS=("$@")
 else
-  mapfile -t CONTAINERS < <(docker ps --filter 'name=crucible-ws-' --format '{{.Names}}' | sort)
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && CONTAINERS+=("$line")
+  done < <(docker ps --filter 'name=crucible-ws-' --format '{{.Names}}' | sort)
 fi
 
 if [[ ${#CONTAINERS[@]} -eq 0 ]]; then
@@ -38,13 +41,15 @@ if [[ ${#CONTAINERS[@]} -lt 2 ]]; then
   CONTAINERS+=("crucible-ws-peer-demo")
 fi
 
-echo "Containers: ${CONTAINERS[*]}"
+A="${CONTAINERS[0]}"
+B="${CONTAINERS[1]}"
+
+echo "Containers: $A  $B"
 echo ""
 
-# ── Track expected IDs per container ─────────────────────────────────────────
-# Associative array: container → space-separated list of pattern IDs to verify.
-
-declare -A EXPECTED_IDS
+# Per-container ID lists (space-separated strings, bash 3.2 compatible)
+IDS_A=""
+IDS_B=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,13 +63,11 @@ remember() {
 
   local payload
   if [[ -n "$from_peer" ]]; then
-    payload=$(printf '{"revertSignature":"%s","patch":"%s","traceRef":"%s","verificationReceipt":"%s","fromPeerId":"%s"}' \
-      "$revert_sig" "$patch" "$trace_ref" "$receipt" "$from_peer")
-    echo "  [mesh ← $from_peer]  $revert_sig"
+    payload="{\"revertSignature\":\"${revert_sig}\",\"patch\":\"${patch}\",\"traceRef\":\"${trace_ref}\",\"verificationReceipt\":\"${receipt}\",\"fromPeerId\":\"${from_peer}\"}"
+    echo "  [mesh ← ${from_peer:0:16}…]  $revert_sig"
   else
-    payload=$(printf '{"revertSignature":"%s","patch":"%s","traceRef":"%s","verificationReceipt":"%s"}' \
-      "$revert_sig" "$patch" "$trace_ref" "$receipt")
-    echo "  [local]              $revert_sig"
+    payload="{\"revertSignature\":\"${revert_sig}\",\"patch\":\"${patch}\",\"traceRef\":\"${trace_ref}\",\"verificationReceipt\":\"${receipt}\"}"
+    echo "  [local]                    $revert_sig"
   fi
 
   local response
@@ -78,14 +81,17 @@ remember() {
   id=$(printf '%s' "$response" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "    → $id"
 
-  # Accumulate for later verification
-  EXPECTED_IDS["$container"]="${EXPECTED_IDS[$container]:-} $id"
+  if [[ "$container" == "$A" ]]; then
+    IDS_A="$IDS_A $id"
+  else
+    IDS_B="$IDS_B $id"
+  fi
 }
 
 # Poll GET /patterns until all expected IDs for a container appear, or timeout.
 verify_container() {
   local container="$1"
-  local ids="${EXPECTED_IDS[$container]:-}"
+  local ids="$2"
 
   if [[ -z "${ids// }" ]]; then
     echo "  (no patterns to verify)"
@@ -104,12 +110,12 @@ verify_container() {
 
     if [[ -n "$response" ]]; then
       local visible_count=0
-      local missing=""
+      local missing_count=0
       for id in $ids; do
-        if echo "$response" | grep -qF "\"$id\""; then
-          (( visible_count++ )) || true
+        if printf '%s' "$response" | grep -qF "\"$id\""; then
+          visible_count=$((visible_count + 1))
         else
-          missing="$missing $id"
+          missing_count=$((missing_count + 1))
         fi
       done
 
@@ -118,15 +124,13 @@ verify_container() {
         return 0
       fi
 
-      local still_missing
-      still_missing=$(echo "$missing" | wc -w | tr -d ' ')
-      echo "  … ${elapsed}s: ${visible_count}/${expected_count} visible, ${still_missing} still propagating"
+      echo "  … ${elapsed}s: ${visible_count}/${expected_count} visible, ${missing_count} still propagating"
     else
       echo "  … ${elapsed}s: memory service not responding yet"
     fi
 
     sleep "$VERIFY_INTERVAL"
-    (( elapsed += VERIFY_INTERVAL )) || true
+    elapsed=$((elapsed + VERIFY_INTERVAL))
   done
 
   echo "  ✗ Timed out after ${VERIFY_TIMEOUT}s — 0G KV indexer may still be catching up."
@@ -211,9 +215,9 @@ echo ""
 echo "Done seeding. Verifying patterns are readable via the 0G KV indexer…"
 echo ""
 echo "=== Verifying $A ==="
-verify_container "$A"
+verify_container "$A" "$IDS_A"
 echo ""
 echo "=== Verifying $B ==="
-verify_container "$B"
+verify_container "$B" "$IDS_B"
 echo ""
 echo "All done."
