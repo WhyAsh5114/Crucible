@@ -59,11 +59,7 @@
 >
 	<!-- ── Brand ─────────────────────────────────────────────────────────── -->
 	<div class="flex items-center gap-2">
-		<div
-			class="flex size-5 items-center justify-center rounded-md bg-primary text-primary-foreground"
-		>
-			<img src="/icon.svg" alt="Crucible" class="size-3" />
-		</div>
+		<img src="/icon.svg" alt="Crucible" class="size-5" />
 		<span class="font-medium tracking-tight text-foreground">Crucible</span>
 	</div>
 

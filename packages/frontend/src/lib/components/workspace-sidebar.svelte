@@ -192,11 +192,7 @@
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton size="lg" class="cursor-default">
-					<div
-						class="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground"
-					>
-						<img src="/icon.svg" alt="Crucible" class="size-5" />
-					</div>
+					<img src="/icon.svg" alt="Crucible" class="size-8" />
 					<div class="flex flex-col gap-0.5 leading-none">
 						<span class="font-semibold">Crucible</span>
 						<span class="text-xs text-muted-foreground">Web3 dev sandbox</span>
