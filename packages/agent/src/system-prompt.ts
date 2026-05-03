@@ -279,7 +279,10 @@ Step 4 — Apply verified patch
   → deployer.deploy_local → redeploy and verify no revert
 
 Step 5 — memory.remember
-  → Store the successful patch with source: 'mesh' so future sessions benefit
+  → Store the successful patch with fromPeerId: <response.peerId> so future sessions
+    benefit and the pattern is correctly attributed to the peer that supplied it.
+    The service derives scope='mesh' and provenance.authorNode automatically from
+    fromPeerId — never set scope manually.
 \`\`\`
 
 **Fallback:** If mesh.collect_responses returns an empty array (no peers, or no responses within

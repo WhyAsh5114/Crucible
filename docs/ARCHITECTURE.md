@@ -584,7 +584,8 @@ send_tx_local(tx): { txHash, receipt }
 recall(query: { revert_signature?, contract_pattern?, freeform? }): {
   hits: { id, summary, patch, trace_ref, verification_receipt, provenance }[]
 }
-remember(pattern: { revert_signature, trace, patch, verification_receipt, scope: 'local' | 'mesh' }): { id }
+remember(pattern: { revert_signature, trace, patch, verification_receipt, fromPeerId? }): { id }
+// scope and provenance.authorNode are derived: fromPeerId set ⇒ scope='mesh', authorNode=peerId; otherwise scope='local', authorNode=ownNodeId
 list_patterns(filter?): { patterns: PatternMeta[] }
 provenance(id): { author_node, original_session, derived_from?: id[] }
 ```

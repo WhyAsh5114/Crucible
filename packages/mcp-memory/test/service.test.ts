@@ -24,7 +24,6 @@ describe('mcp-memory service', () => {
       patch: 'diff --git a/contracts/Token.sol b/contracts/Token.sol',
       traceRef: 'trace://abc123',
       verificationReceipt: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      scope: 'local',
     });
 
     expect(remembered.id.startsWith('pattern-')).toBe(true);
@@ -43,7 +42,6 @@ describe('mcp-memory service', () => {
       patch: 'update withdraw guard',
       traceRef: 'trace://cooldown',
       verificationReceipt: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      scope: 'local',
     });
 
     await service.remember({
@@ -51,7 +49,7 @@ describe('mcp-memory service', () => {
       patch: 'add admin role assignment',
       traceRef: 'trace://role',
       verificationReceipt: '0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
-      scope: 'mesh',
+      fromPeerId: 'peer-pubkey-aaaa' as never,
     });
 
     const out = await service.recall({
@@ -72,14 +70,12 @@ describe('mcp-memory service', () => {
       patch: 'patch A',
       traceRef: 'trace://a',
       verificationReceipt: '0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
-      scope: 'local',
     });
     await service.remember({
       revertSignature: 'Error B',
       patch: 'patch B',
       traceRef: 'trace://b',
       verificationReceipt: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-      scope: 'local',
     });
 
     const first = await service.listPatterns({ limit: 1 });
@@ -98,14 +94,13 @@ describe('mcp-memory service', () => {
       patch: 'local patch',
       traceRef: 'trace://local',
       verificationReceipt: `0x${'aa'.repeat(32)}` as `0x${string}`,
-      scope: 'local',
     });
     await service.remember({
       revertSignature: 'Mesh error',
       patch: 'mesh patch',
       traceRef: 'trace://mesh',
       verificationReceipt: `0x${'bb'.repeat(32)}` as `0x${string}`,
-      scope: 'mesh',
+      fromPeerId: 'peer-pubkey-bbbb' as never,
     });
 
     const result = await service.purge({ scope: 'local' });
@@ -124,13 +119,13 @@ describe('mcp-memory service', () => {
   it('purge without scope deletes all patterns', async () => {
     const service = createMemoryService({ workspaceRoot });
 
-    for (const scope of ['local', 'mesh', 'local'] as const) {
+    for (const fromPeer of [false, true, false] as const) {
       await service.remember({
-        revertSignature: `Error ${scope}`,
-        patch: `patch ${scope}`,
-        traceRef: `trace://${scope}`,
+        revertSignature: `Error ${fromPeer ? 'mesh' : 'local'}`,
+        patch: `patch ${fromPeer ? 'mesh' : 'local'}`,
+        traceRef: `trace://${fromPeer ? 'mesh' : 'local'}`,
         verificationReceipt: `0x${'cc'.repeat(32)}` as `0x${string}`,
-        scope,
+        ...(fromPeer ? { fromPeerId: 'peer-pubkey-cccc' as never } : {}),
       });
     }
 
