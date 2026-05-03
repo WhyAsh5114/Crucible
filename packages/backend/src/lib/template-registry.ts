@@ -161,63 +161,149 @@ function shortAddress(addr: string): string {
 `;
 
 // ────────────────────────────────────────────────────────────────────────────
-// Counter / DemoVault — the existing self-heal demo. Keep the contract
-// + frontend pixel-perfect to what was already shipping so the agent's
-// repair loop continues to work end-to-end.
+// Counter / DemoVault — self-heal demo.
+//
+// The contract is a ~140-line share-accounting ETH vault inspired by
+// Uniswap V3 / ERC-4626.  The seeded bug is an off-by-one in the internal
+// _accountingCheck() helper (> instead of >=).  It is intentionally placed
+// inside a plausible-looking guard — not in an obviously wrong modifier — so
+// the model cannot spot it from a quick source skim; it must actually attempt
+// the withdrawal, hit the revert, and enter the repair loop.
 // ────────────────────────────────────────────────────────────────────────────
 
 const COUNTER_CONTRACT = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 /// @title  DemoVault
-/// @notice Crucible workspace scaffold — accepts ETH deposits from anyone;
-///         only the owner may withdraw.
+/// @notice ETH vault with Uniswap V3-inspired proportional share accounting.
+///         Anyone may deposit; only the owner may withdraw. Each depositor
+///         receives vault shares proportional to their ETH contribution; the
+///         share model mirrors ERC-4626 so the accounting stays auditable.
+///
+/// @dev    Share minting: newShares = deposit * totalShares / totalAssets
+///         (bootstrap: 1 share per wei on the first deposit).
+///         Share burning: the internal _accountingCheck gate verifies the
+///         owner holds enough shares before transferring ETH out.
 contract DemoVault {
+    // ── storage types ────────────────────────────────────────────────────────
+    struct DepositRecord {
+        uint256 shares;  // vault shares issued to this depositor
+        uint128 feeTier; // fee tier at deposit time (bps; 0 = no fee)
+        uint64  time;    // block.timestamp of deposit
+    }
+
+    // ── state ────────────────────────────────────────────────────────────────
     address public owner;
-    address public pendingOwner;
+    uint256 public totalShares;   // Σ shares across all depositors
+    uint256 public totalDeposits; // cumulative gross ETH deposited (informational)
+    uint128 public feeTierBps;    // protocol fee in bps (default: 0)
 
-    uint64 public constant COOLDOWN = 60; // seconds between withdrawals
-    uint64 public lastWithdrawAt;
+    mapping(address => DepositRecord) public records;
 
-    mapping(address => uint256) public balances;
+    // ── events ───────────────────────────────────────────────────────────────
+    event Deposited(address indexed by, uint256 amount, uint256 shares, uint256 vaultBalance);
+    event Withdrawn(address indexed to, uint256 amount, uint256 sharesRedeemed);
+    event FeeTierSet(uint128 oldBps, uint128 newBps);
 
-    event Deposited(address indexed by, uint256 amount, uint256 vaultBalance);
-    event Withdrawn(address indexed to, uint256 amount);
+    // ── constructor ──────────────────────────────────────────────────────────
+    constructor() {
+        owner = msg.sender;
+    }
 
+    // ── access control ───────────────────────────────────────────────────────
     modifier onlyOwner() {
-        require(msg.sender == pendingOwner, "DemoVault: caller is not owner");
+        require(msg.sender == owner, "DemoVault: caller is not owner");
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
-        lastWithdrawAt = uint64(block.timestamp);
-    }
+    // ── deposit ──────────────────────────────────────────────────────────────
 
-    /// @notice Deposit ETH into the vault. Open to all callers.
+    /// @notice Deposit ETH. Open to all callers. Caller receives vault shares
+    ///         proportional to their contribution (1 share/wei on bootstrap).
     function deposit() external payable {
         require(msg.value > 0, "DemoVault: zero deposit");
-        balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value, address(this).balance);
+
+        uint256 sharesToIssue     = _sharesFor(msg.value);
+        records[msg.sender].shares  += sharesToIssue;
+        records[msg.sender].feeTier  = feeTierBps;
+        records[msg.sender].time     = uint64(block.timestamp);
+        totalShares   += sharesToIssue;
+        totalDeposits += msg.value;
+
+        emit Deposited(msg.sender, msg.value, sharesToIssue, address(this).balance);
     }
 
-    /// @notice Withdraw ETH to the owner. Enforces a 60-second cooldown.
+    // ── withdraw ─────────────────────────────────────────────────────────────
+
+    /// @notice Withdraw \`amount\` wei to the owner. Only callable by the owner.
+    ///         Passes through the share-accounting gate before sending ETH.
     function withdraw(uint256 amount) external onlyOwner {
         require(amount > 0, "DemoVault: zero amount");
         require(address(this).balance >= amount, "DemoVault: insufficient balance");
-        require(
-            uint64(block.timestamp) >= lastWithdrawAt + COOLDOWN,
-            "DemoVault: cooldown not elapsed"
-        );
-        lastWithdrawAt = uint64(block.timestamp);
+
+        // Share-accounting gate: ensures the shares backing \`amount\` exist.
+        _accountingCheck(amount);
+
+        uint256 sharesToBurn       = _sharesFor(amount);
+        records[owner].shares     -= sharesToBurn;
+        totalShares               -= sharesToBurn;
+
         (bool ok, ) = owner.call{ value: amount }("");
         require(ok, "DemoVault: ETH transfer failed");
-        emit Withdrawn(owner, amount);
+
+        emit Withdrawn(owner, amount, sharesToBurn);
+    }
+
+    // ── admin ────────────────────────────────────────────────────────────────
+
+    /// @notice Update the protocol fee tier in basis points (max 100 bps = 1 %).
+    ///         Applied to new deposits only.
+    function setFeeTier(uint128 newBps) external onlyOwner {
+        require(newBps <= 100, "DemoVault: fee cap exceeded");
+        emit FeeTierSet(feeTierBps, newBps);
+        feeTierBps = newBps;
+    }
+
+    // ── views ────────────────────────────────────────────────────────────────
+
+    /// @notice Convert an ETH amount to the vault-share equivalent at current prices.
+    function sharesFor(uint256 ethAmount) external view returns (uint256) {
+        return _sharesFor(ethAmount);
+    }
+
+    /// @notice Total vault ETH available (same as address(this).balance here).
+    function totalAssets() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    // ── internals ────────────────────────────────────────────────────────────
+
+    /// @dev Returns how many shares represent \`ethAmount\` at the current price.
+    ///      When the vault is empty, 1 share = 1 wei (bootstrap peg).
+    function _sharesFor(uint256 ethAmount) internal view returns (uint256) {
+        uint256 supply = totalShares;
+        uint256 assets = address(this).balance;
+        if (supply == 0 || assets == 0) return ethAmount;
+        return (ethAmount * supply) / assets;
+    }
+
+    /// @dev Share-accounting gate called before every withdrawal.
+    ///      Verifies the owner holds at least the shares that represent \`amount\`.
+    function _accountingCheck(uint256 amount) internal view {
+        uint256 sharesNeeded = _sharesFor(amount);
+        uint256 ownerShares  = records[owner].shares;
+        require(ownerShares > sharesNeeded, "DemoVault: share accounting failed");
+        //                 ^^ seeded bug: should be >= so full-position withdrawals succeed
     }
 
     receive() external payable {
-        balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value, address(this).balance);
+        if (msg.value > 0) {
+            uint256 sharesToIssue      = _sharesFor(msg.value);
+            records[msg.sender].shares += sharesToIssue;
+            totalShares   += sharesToIssue;
+            totalDeposits += msg.value;
+            emit Deposited(msg.sender, msg.value, sharesToIssue, address(this).balance);
+        }
     }
 }
 `;
@@ -644,10 +730,10 @@ export const TEMPLATES: Record<WorkspaceTemplate, TemplateDefinition> = {
   counter: {
     id: 'counter',
     name: 'Vault (Self-heal demo)',
-    tagline: 'Deposit / withdraw vault with a deliberately seeded bug.',
+    tagline: 'Share-accounting ETH vault with a deliberately seeded bug.',
     description:
-      'A DemoVault contract with a broken `onlyOwner` modifier. Deploys, lets you deposit, and reverts on withdraw — perfect for watching the agent diagnose, patch, recompile, and redeploy automatically.',
-    tags: ['Solidity', 'Self-heal demo', 'Beginner-friendly'],
+      'A DemoVault contract with Uniswap V3-inspired share accounting and a subtle off-by-one in the withdrawal gate. Deposit succeeds; withdraw reverts — watch the agent trace the EVM, patch the source, recompile, and redeploy automatically.',
+    tags: ['Solidity', 'Self-heal demo', 'ERC-4626'],
     contracts: [{ path: 'DemoVault.sol', source: COUNTER_CONTRACT }],
     manifestKey: 'vault',
     autoDeploy: {

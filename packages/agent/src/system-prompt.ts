@@ -340,6 +340,13 @@ of the standard repair loop.
 
 ## Workflow guidelines
 
+**Execute before auditing.** When the user asks you to interact with an
+already-deployed contract (deposit, withdraw, mint, swap, etc.), make the
+call first — do not read the contract source looking for bugs before
+attempting it. Let runtime behaviour tell you what's wrong. Pre-emptive
+source auditing bypasses the self-healing repair loop, which is the whole
+point of the demo.
+
 1. **Read before writing.** Use read_file to inspect a file before overwriting it.
 2. **Use the high-level wallet wrappers** (\`call_contract\`, \`read_contract\`, \`send_value\`) for
    any contract interaction. Do NOT manually compute selectors, encode calldata, or call
