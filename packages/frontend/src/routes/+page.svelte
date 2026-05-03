@@ -1,21 +1,53 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button';
-	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
-	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRightIcon';
+	import '@fontsource-variable/jetbrains-mono';
+	import { ModeWatcher } from 'mode-watcher';
+	import Header from '$lib/components/landing/Header.svelte';
+	import Hero from '$lib/components/landing/Hero.svelte';
+	import Features from '$lib/components/landing/Features.svelte';
+	import HowItWorks from '$lib/components/landing/HowItWorks.svelte';
+	import TechStack from '$lib/components/landing/TechStack.svelte';
+	import Comparison from '$lib/components/landing/Comparison.svelte';
+	import Footer from '$lib/components/landing/Footer.svelte';
 </script>
 
-<main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 p-6">
-	<header class="flex flex-col items-center gap-3 text-center">
-		<div
-			class="flex size-14 items-center justify-center rounded-md bg-primary text-primary-foreground"
-		>
-			<CubeIcon weight="bold" />
-		</div>
-		<h1 class="text-2xl font-semibold tracking-tight text-foreground">landing page goes here</h1>
-		<p class="max-w-md text-sm text-muted-foreground">
-			Crucible is a chat-driven Web3 IDE — agent writes Solidity + frontend, runs a local chain,
-			previews live, ships through KeeperHub.
-		</p>
-	</header>
-</main>
+<ModeWatcher defaultMode="dark" />
+
+<div class="flex min-h-screen flex-col bg-background text-foreground">
+	<Header />
+	<main class="flex-1">
+		<Hero />
+		<Features />
+		<HowItWorks />
+		<TechStack />
+		<Comparison />
+	</main>
+	<Footer />
+</div>
+
+<style>
+	:global(.reveal) {
+		opacity: 0;
+		transform: translateY(16px);
+		transition:
+			opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1),
+			transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	:global(.reveal.is-visible) {
+		opacity: 1;
+		transform: translateY(0);
+	}
+
+	:global(html) {
+		scroll-behavior: smooth;
+	}
+
+	:global(*) {
+		transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	:global(a, button) {
+		transition-property: color, background-color, border-color, transform, box-shadow;
+		transition-duration: 300ms;
+	}
+</style>
