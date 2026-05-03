@@ -205,7 +205,7 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- KeeperHub `ship` frontend button — `POST /api/ship`, all MCP tools, Sepolia end-to-end validation, and frontend event rows (`ship-simulated-row`, `ship-status-row`, `ship-confirmed-row`) are all wired and rendered; what is missing is a `workspaceClient.ship()` call and a Ship button on the workspace page so the user can trigger a ship from the UI.
+- KeeperHub end-to-end demo run — the agent loop now connects to KeeperHub's hosted MCP (`https://app.keeperhub.com/mcp`) on every turn when `KEEPERHUB_API_KEY` is set in the backend env, and the system prompt teaches it the post-deploy automation workflow (`keeperhub_list_action_schemas` → `keeperhub_get_wallet_integration` → `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow`); what's still needed is a recorded demo run where the agent deploys a Counter via `deploy_og_chain` and then wires a keeper around it through KeeperHub.
 - AXL cross-process proof — `mcp-mesh` is fully implemented inside each workspace runner container (port 3105); what remains is a same-machine dual-workspace AXL connectivity proof (two containers, `list_peers` shows mutual discovery) and a two-laptop proof.
 - Frontend mesh panel — the memory pane has a mesh scope filter and the chat inspector renders `mesh_help_broadcast` / `mesh_help_received` event rows, but there is no dedicated pane showing live peer list, active help requests, and received responses.
 - Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
@@ -395,18 +395,18 @@ Each workspace also gets its own isolated Hardhat process and snapshot stack. Th
 
 ## MCP Servers
 
-The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. All custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments.
+The agent's power comes from **eight MCP servers** — seven custom + KeeperHub's hosted MCP — that give it deep chain awareness, persistent memory, a peer mesh, and shared terminal/runtime control. The seven custom MCP servers run on the backend, communicate with the agent over HTTP, and accept Zod-validated tool arguments. KeeperHub's MCP is connected from the agent loop (per turn, when `KEEPERHUB_API_KEY` is set) directly to `https://app.keeperhub.com/mcp` with `Authorization: Bearer kh_…`; its tools are surfaced under the `keeperhub_*` namespace via `@ai-sdk/mcp` with `schemas: 'automatic'`, so the agent always sees KeeperHub's current tool surface without client-side rebuilds.
 
-| MCP Server        | Port       | Tools                                                                                                                                                                               | Purpose                                                                                                                |
-| :---------------- | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------- |
-| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine` (`blocks` and/or `seconds`), `fork`                                                                                         | Manage the local chain lifecycle and state                                                                             |
-| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts` (returns contract names + ABI summaries with function signatures)                                                            | Compile Solidity source files, extract artifacts                                                                       |
-| **deployer-mcp**  | 3102       | `deploy_local` (returns `abi` + `functions`), `deploy_og_chain`, `simulate_local`, `trace`, `call`, `list_deployments`, `simulate_bundle`, `execute_tx`, `get_execution_status`     | Deploy compiled contracts, simulate & trace locally, recall deployments, ship to public chains via KeeperHub           |
-| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `switch_account`, `call_contract`, `read_contract`, `send_value` (high-level); `encode_call`, `sign_tx`, `send_tx_local` (low-level escape hatches) | Manage accounts and interact with deployed contracts by name                                                           |
-| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                                                                                                                 | Store and retrieve learned debugging patterns on 0G Storage                                                            |
-| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                                                                                 | Discover peer Crucible nodes and exchange fix candidates over the Gensyn AXL P2P network                               |
-| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                                                                                                                         | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY              |
-| **KeeperHub MCP** | (external) | `simulate_bundle`, `execute_tx`, `get_execution_status`                                                                                                                             | Production-grade tx execution — the only path to public chains; integrated via `keeperhub-client.ts` in `mcp-deployer` |
+| MCP Server        | Port       | Tools                                                                                                                                                                                                                                                                                                                   | Purpose                                                                                                                                                                                                                                                          |
+| :---------------- | :--------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **chain-mcp**     | 3100       | `start_node`, `get_state`, `snapshot`, `revert`, `mine` (`blocks` and/or `seconds`), `fork`                                                                                                                                                                                                                             | Manage the local chain lifecycle and state                                                                                                                                                                                                                       |
+| **compiler-mcp**  | 3101       | `compile`, `get_abi`, `get_bytecode`, `list_contracts` (returns contract names + ABI summaries with function signatures)                                                                                                                                                                                                | Compile Solidity source files, extract artifacts                                                                                                                                                                                                                 |
+| **deployer-mcp**  | 3102       | `deploy_local` (returns `abi` + `functions`), `deploy_og_chain`, `simulate_local`, `trace`, `call`, `list_deployments`                                                                                                                                                                                                  | Deploy compiled contracts, simulate & trace locally, recall deployments                                                                                                                                                                                          |
+| **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `switch_account`, `call_contract`, `read_contract`, `send_value` (high-level); `encode_call`, `sign_tx`, `send_tx_local` (low-level escape hatches)                                                                                                                                     | Manage accounts and interact with deployed contracts by name                                                                                                                                                                                                     |
+| **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                                                                                                                                                                                                                                                     | Store and retrieve learned debugging patterns on 0G Storage                                                                                                                                                                                                      |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                                                                                                                                                                                                                     | Discover peer Crucible nodes and exchange fix candidates over the Gensyn AXL P2P network                                                                                                                                                                         |
+| **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                                                                                                                                                                                                                                                             | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY                                                                                                                                                        |
+| **KeeperHub MCP** | (external) | `keeperhub_list_workflows`, `keeperhub_create_workflow`, `keeperhub_execute_workflow`, `keeperhub_get_execution_status`, `keeperhub_get_execution_logs`, `keeperhub_ai_generate_workflow`, `keeperhub_list_action_schemas`, `keeperhub_get_wallet_integration`, `keeperhub_search_plugins`, plus direct-execution tools | Hosted MCP at `https://app.keeperhub.com/mcp` connected per-turn from the agent loop with `Authorization: Bearer kh_…`; used for **post-deploy automation** (keepers, scheduled actions, workflow execution against contracts already deployed locally or to 0G) |
 
 > **Devtools sidecar (port 3107, in-runner, not in the table above):** `packages/mcp-devtools` is an observability service the other in-runner MCPs report `tool_call` / `tool_result` / `container` events to via `POST /event`. The control plane proxies those events to the browser as SSE on `GET /api/workspace/:id/devtools/events`. It is intentionally not part of `McpServerName` — the agent never calls it.
 
@@ -486,13 +486,14 @@ We do **not** need COOP/COEP for this wallet bridge. Those headers are only nece
 
 ## HTTP REST API
 
-| Endpoint             | Method | Request                                                                                                    | Response                                                                                        |
-| :------------------- | :----- | :--------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------- |
-| `/api/prompt`        | POST   | `{ prompt, workspaceId }`                                                                                  | `{ streamId }` — then connect WS with this id                                                   |
-| `/api/workspace`     | POST   | `{ name }`                                                                                                 | `{ id }`                                                                                        |
-| `/api/workspace/:id` | GET    | —                                                                                                          | `WorkspaceState`                                                                                |
-| `/api/chain/fork`    | POST   | `{ rpcUrl, blockNumber? }`                                                                                 | `{ rpcUrl, chainId }`                                                                           |
-| `/api/ship`          | POST   | `{ workspaceId, artifactName, deployerAddress, execute?: boolean, bundleId?: string, sessionId?: string }` | `{ phase: 'simulated', bundleId, gasEstimates[] }` or `{ phase: 'executed', executionId, ... }` |
+| Endpoint             | Method | Request                    | Response                                      |
+| :------------------- | :----- | :------------------------- | :-------------------------------------------- |
+| `/api/prompt`        | POST   | `{ prompt, workspaceId }`  | `{ streamId }` — then connect WS with this id |
+| `/api/workspace`     | POST   | `{ name }`                 | `{ id }`                                      |
+| `/api/workspace/:id` | GET    | —                          | `WorkspaceState`                              |
+| `/api/chain/fork`    | POST   | `{ rpcUrl, blockNumber? }` | `{ rpcUrl, chainId }`                         |
+
+> **KeeperHub** is consumed via MCP, not via a Crucible REST endpoint. The agent loop opens an `@ai-sdk/mcp` HTTP transport to `https://app.keeperhub.com/mcp` per turn (when `KEEPERHUB_API_KEY` is set on the backend) and the model invokes `keeperhub_*` tools directly.
 
 ---
 
@@ -537,12 +538,6 @@ trace(txHash): { decodedCalls, storageReads, storageWrites, events, revertReason
 call(to: Address, data: Hex, from?: Address): { result }
 list_deployments(network?: 'local' | '0g-galileo'):
   { deployments: { contractName, address, txHash, network, deployedAt }[] }
-
-// KeeperHub tools — only available when KEEPERHUB_API_KEY is set.
-// These are the exclusive path to public-chain execution.
-simulate_bundle(txs): { bundleId, gasEstimates: { contractName, gasEstimate, note? }[] }
-execute_tx(bundleId, options?): { executionId, txHash, contractAddress?, auditTrailId?, explorerUrl? }
-get_execution_status(executionId): { status: 'pending'|'mined'|'confirmed'|'failed', retries, auditTrailId? }
 
 // HTTP discovery (used by wallet-mcp to resolve contractName → address):
 //   GET /deployments/:contractName?network=local
@@ -622,17 +617,22 @@ exec(sessionId: string, command: string, cwd?: string): { stdout, stderr, exitCo
 resize(sessionId: string, cols: number, rows: number): { success }
 ```
 
-### KeeperHub MCP (External)
+### KeeperHub MCP (External, hosted)
 
-Integrated via `packages/mcp-deployer/src/keeperhub-client.ts` — the tools are registered directly in the deployer MCP server. **The exclusive path for public-chain transactions.**
+Connected from the agent loop (`packages/agent/src/loop.ts`) per turn when `KEEPERHUB_API_KEY` is set in the backend env. Transport is plain HTTP MCP at `https://app.keeperhub.com/mcp` with `Authorization: Bearer kh_…`. Tools are surfaced to the model under the `keeperhub_*` namespace via `@ai-sdk/mcp` with `schemas: 'automatic'`, so the agent always sees KeeperHub's current tool surface without client-side rebuilds. **Used for post-deploy automation, not for contract creation** — deploy via `deployer.deploy_local` or `deployer.deploy_og_chain`, then drive keepers / scheduled actions / on-chain reads & writes against the deployed contract through the KeeperHub workflow API.
 
-```typescript
-// Tools registered in mcp-deployer/server.ts when KEEPERHUB_API_KEY is set
-simulate_bundle(txs): { bundleId, gasEstimates: { contractName, gasEstimate, note? }[] }
-execute_tx(bundleId, opts?: { retryOnFailure?: boolean }):
-  { executionId, txHash, contractAddress?, auditTrailId?, explorerUrl?, pollUrl? }
-get_execution_status(executionId):
-  { status: 'pending'|'mined'|'confirmed'|'failed', retries, auditTrailId? }
+```text
+# Representative tools (KeeperHub is authoritative — the agent discovers the live set at runtime)
+keeperhub_list_action_schemas()
+keeperhub_get_wallet_integration({ chainId })
+keeperhub_ai_generate_workflow({ description, ... })
+keeperhub_create_workflow({ name, nodes, ... })
+keeperhub_execute_workflow({ workflowId, ... })
+keeperhub_get_execution_status({ executionId })
+keeperhub_get_execution_logs({ executionId })
+keeperhub_list_workflows()
+keeperhub_search_plugins({ query })
+# plus direct-execution tools for one-off contract calls / value transfers
 ```
 
 ---
@@ -715,15 +715,6 @@ export interface ForkRequest {
 export interface ForkResponse {
   rpcUrl: string;
   chainId: number;
-}
-
-// POST /api/ship
-export interface ShipRequest {
-  network: 'sepolia' | 'base-sepolia';
-  signerAddress: Address;
-}
-export interface ShipResponse {
-  deployments: KeeperHubExecution[];
 }
 ```
 

@@ -103,21 +103,14 @@
 
 ---
 
-## Phase 4 — Prove POV-4: Ship Path (KeeperHub)
+## Phase 4 — Prove POV-4: KeeperHub MCP Integration
 
-- [x] `packages/mcp-deployer` KeeperHub path — `simulate_bundle`, `execute_tx`, `get_execution_status` implemented in `keeperhub-client.ts` + wired as MCP tools in `server.ts` + REST routes in `index.ts`
-- [x] `POST /api/ship` endpoint — wired to KeeperHub only; no direct `eth_sendRawTransaction` to public RPC (`ship.ts` + `backend/src/index.ts`)
-- [x] `ship_simulated` / `ship_status` / `ship_confirmed` `AgentEvent` types defined in `packages/types/src/agent-events.ts`
-- [x] `ship_*` events published from `POST /api/ship` with correct seq/streamId
-- [x] Sepolia contract address persisted to workspace `deployments` JSON column on confirmed deploy
-- [x] Auth-gated: `requireSession` + workspace ownership check in `POST /api/ship`
-- [x] `0` `eth_sendRawTransaction` calls in KeeperHub path (grep confirmed)
-- [x] Simulation output surfaced in frontend inspector (decoded per-tx gas estimate) — `ship-simulated-row.svelte` shows gas estimates table with bundle ID and will-succeed badge
-- [x] Execution status shown live in frontend: `pending → mined → confirmed` — `ship-status-row.svelte` with colour-coded status and Sepolia Etherscan tx link
-- [x] Audit trail IDs visible and clickable in frontend inspector — `ship-confirmed-row.svelte` with clickable KeeperHub `https://app.keeperhub.com/runs/{auditTrailId}` link
-- [x] Sepolia deployment end-to-end validated with a real `KEEPERHUB_API_KEY` on testnet
-- [x] Contract deployment addresses recorded on 0G Chain (required for 0G track submission)
-- [ ] POV-4 demo: user clicks Ship → KeeperHub simulation → execution status → audit trail for same artifact that ran locally
+- [x] Agent loop connects to KeeperHub hosted MCP (`https://app.keeperhub.com/mcp`) per turn when `KEEPERHUB_API_KEY` is set; tools surfaced under `keeperhub_*` namespace via `@ai-sdk/mcp` with `schemas: 'automatic'` (`packages/agent/src/loop.ts`)
+- [x] Backend reads `KEEPERHUB_API_KEY` + optional `KEEPERHUB_MCP_URL` from env and forwards to agent (`packages/backend/src/api/inference.ts`)
+- [x] System prompt teaches the agent that public-chain CONTRACT DEPLOYMENT goes through `deploy_og_chain` (KH has no CREATE action) and KH is for post-deploy automation: workflows, AI workflow generation, action-schema discovery, wallet integrations, direct execution (`packages/agent/src/system-prompt.ts` Workflow C)
+- [x] All broken hand-rolled REST/contractWrite hack code removed: deleted `packages/backend/src/api/ship.ts`, `packages/mcp-deployer/src/keeperhub-client.ts`, frontend `ship-{simulated,status,confirmed}-row.svelte`; stripped `simulate_bundle`/`execute_tx`/`get_execution_status` MCP tools and REST routes from `mcp-deployer`; removed `Ship*` agent-event schemas from `@crucible/types`
+- [x] `FEEDBACK.md` rewritten around the actual hosted-MCP integration: 5 honest items (Bearer-vs-OAuth onboarding, chainId-string vs name, walletId discovery, no CREATE action documented, missing `outputSchema`)
+- [ ] End-to-end demo: agent deploys Counter via `deploy_og_chain` → calls `keeperhub_ai_generate_workflow` to draft a keeper → `keeperhub_create_workflow` → `keeperhub_execute_workflow` → surfaces the executionId to the user
 
 ---
 
@@ -187,18 +180,12 @@
 
 ## KeeperHub Track — Best Use + Builder Feedback Bounty
 
-- [x] KeeperHub MCP client integrated in `mcp-deployer` (`keeperhub-client.ts`)
-- [x] `simulate_bundle()` — deployment pre-flight, returns `bundleId` + decoded gas estimates per tx
-- [x] `execute_tx()` — with exponential back-off retry + private routing via KeeperHub; no direct RPC
-- [x] `get_execution_status()` — polls `pending → mined → confirmed`; `auditTrailId` captured when confirmed
-- [x] `POST /api/ship` backend endpoint — phases: simulate → (optional) execute → background poll → persist
-- [x] `ship_confirmed` event carries `auditTrailId` + `explorerUrl` — surfaceable by frontend
-- [x] Sepolia contract address written to workspace `deployments` DB column on confirmed deploy
-- [x] No `eth_sendRawTransaction` to a public RPC anywhere in the KeeperHub path (grep confirmed)
-- [x] `FEEDBACK.md` in repo root — 4 specific items: SDK gap (UX), `willSucceed` bug (repro), doc gap, feature request
-- [x] Audit trail IDs rendered as clickable link in frontend inspector — `ship-confirmed-row.svelte` links `https://app.keeperhub.com/runs/{auditTrailId}`
-- [ ] Post-deploy interactions also routed through KeeperHub (scope cut per docs/TRACKS.md)
-- [ ] Sepolia path validated end-to-end with a live `KEEPERHUB_API_KEY`
+- [x] Agent connects to KeeperHub's hosted MCP (`https://app.keeperhub.com/mcp`) on every turn; KH tools surface under `keeperhub_*` and the model can call them directly via `@ai-sdk/mcp` (`packages/agent/src/loop.ts`)
+- [x] System prompt teaches the agent the right division of labor: Crucible deploys (local Hardhat or 0G), KeeperHub automates (workflows, keepers, scheduled actions, web3 reads/writes against the deployed contract)
+- [x] Single sanctioned path — no hand-rolled REST shim, no fake `contractWrite` deploy hack; all broken intermediate code removed
+- [x] `FEEDBACK.md` in repo root — 5 grounded items based on the actual hosted-MCP integration (auth onboarding, network field type, walletId discovery, missing CREATE action, missing `outputSchema` in action discovery)
+- [ ] Live demo of agent calling `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow` against a freshly deployed Counter on 0G Galileo
+- [ ] Backend env (`KEEPERHUB_API_KEY`) wired in demo deployment so the KH tool surface is actually loaded at demo time
 
 ---
 
@@ -218,22 +205,22 @@
 
 ## Integration Checkpoints (Go/No-Go Gates)
 
-| Day                 | Gate                                                                                        | Status                                                                      |
-| ------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Day 0 (Apr 24)      | Contracts frozen                                                                            | ✅ done                                                                     |
-| Day 2 (Apr 26)      | Stub loop visible — UI renders fixture events, mock workspace opens                         | ✅ done                                                                     |
-| Day 4 (Apr 28)      | **POV-1 green** — Prompt → files → compile → deploy → preview click                         | ✅ done                                                                     |
-| Day 5 (Apr 29)      | **Local heal green** — Revert → trace → patch → verify → remember, no mesh                  | ✅ done                                                                     |
-| Day 6 (Apr 30)      | **0G inference visible** — 0G Compute receipt shown in UI; `x_0g_trace` click-to-expand     | ✅ done                                                                     |
-| Day 6 (Apr 30)      | **0G Storage code** — `mcp-memory` KV backend wired; awaiting demo env creds                | ✅ code done                                                                |
-| Day 6 (Apr 30)      | **0G Chain deploy** — `deploy_og_chain` tool wired and tool-name fix applied                | ✅ done                                                                     |
-| Day 7 (May 1, now)  | **Demo scaffold** — richer contract with seeded revert; self-heal arc validated locally     | ✅ done                                                                     |
-| Day 7 (May 1, now)  | **0G demo arc** — local heal → deploy_og_chain → chainscan URL → memory cross-session proof | ⬜ not started                                                              |
-| Day 7 (May 1, now)  | **FEEDBACK.md** — KeeperHub builder feedback (quick win, ~30 min)                           | ✅ done                                                                     |
-| Day 8 (May 2)       | **KeeperHub green** — simulate_bundle + execute_tx + audit trail in inspector               | 🟡 backend + Sepolia E2E done; Ship button in frontend UI still pending     |
-| Day 8 (May 2)       | **Full arc green** — Build → break → heal → deploy_og_chain in one sitting                  | ⬜ not started                                                              |
-| Day 8 (May 2)       | **AXL stretch** — same-machine dual-workspace mesh proof (only if KeeperHub ships early)    | 🟡 mcp-mesh fully shipped; dual-workspace cross-process proof still pending |
-| Day 9 (May 3, noon) | **Record and submit** — demo video (2–4 min) + 0G cut (≤ 3 min) + submission form           | ⬜ not started                                                              |
+| Day                 | Gate                                                                                                                       | Status                                                                      |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Day 0 (Apr 24)      | Contracts frozen                                                                                                           | ✅ done                                                                     |
+| Day 2 (Apr 26)      | Stub loop visible — UI renders fixture events, mock workspace opens                                                        | ✅ done                                                                     |
+| Day 4 (Apr 28)      | **POV-1 green** — Prompt → files → compile → deploy → preview click                                                        | ✅ done                                                                     |
+| Day 5 (Apr 29)      | **Local heal green** — Revert → trace → patch → verify → remember, no mesh                                                 | ✅ done                                                                     |
+| Day 6 (Apr 30)      | **0G inference visible** — 0G Compute receipt shown in UI; `x_0g_trace` click-to-expand                                    | ✅ done                                                                     |
+| Day 6 (Apr 30)      | **0G Storage code** — `mcp-memory` KV backend wired; awaiting demo env creds                                               | ✅ code done                                                                |
+| Day 6 (Apr 30)      | **0G Chain deploy** — `deploy_og_chain` tool wired and tool-name fix applied                                               | ✅ done                                                                     |
+| Day 7 (May 1, now)  | **Demo scaffold** — richer contract with seeded revert; self-heal arc validated locally                                    | ✅ done                                                                     |
+| Day 7 (May 1, now)  | **0G demo arc** — local heal → deploy_og_chain → chainscan URL → memory cross-session proof                                | ⬜ not started                                                              |
+| Day 7 (May 1, now)  | **FEEDBACK.md** — KeeperHub builder feedback (quick win, ~30 min)                                                          | ✅ done                                                                     |
+| Day 8 (May 2)       | **KeeperHub green** — agent uses `keeperhub_*` MCP tools to author + execute a keeper workflow against a deployed contract | 🟡 agent + system prompt wired; live demo run still pending                 |
+| Day 8 (May 2)       | **Full arc green** — Build → break → heal → deploy_og_chain in one sitting                                                 | ⬜ not started                                                              |
+| Day 8 (May 2)       | **AXL stretch** — same-machine dual-workspace mesh proof (only if KeeperHub ships early)                                   | 🟡 mcp-mesh fully shipped; dual-workspace cross-process proof still pending |
+| Day 9 (May 3, noon) | **Record and submit** — demo video (2–4 min) + 0G cut (≤ 3 min) + submission form                                          | ⬜ not started                                                              |
 
 ---
 
