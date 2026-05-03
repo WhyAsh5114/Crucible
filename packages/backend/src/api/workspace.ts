@@ -1295,7 +1295,12 @@ export const workspaceApi = workspaceApiBase
     type RawPage = { patterns: unknown[] };
 
     if (scope) {
-      const res = await loopbackFetch(`${base}/patterns?scope=${scope}&limit=200`);
+      let res: Response;
+      try {
+        res = await loopbackFetch(`${base}/patterns?scope=${scope}&limit=200`);
+      } catch {
+        return c.json(createApiErrorBody('runtime_unavailable', 'Memory service unreachable'), 503);
+      }
       if (!res.ok)
         return c.json(createApiErrorBody('runtime_unavailable', 'Memory fetch failed'), 503);
       const body = (await res.json()) as RawPage;
@@ -1307,10 +1312,16 @@ export const workspaceApi = workspaceApiBase
       );
     }
 
-    const [localRes, meshRes] = await Promise.all([
-      loopbackFetch(`${base}/patterns?scope=local&limit=200`),
-      loopbackFetch(`${base}/patterns?scope=mesh&limit=200`),
-    ]);
+    let localRes: Response;
+    let meshRes: Response;
+    try {
+      [localRes, meshRes] = await Promise.all([
+        loopbackFetch(`${base}/patterns?scope=local&limit=200`),
+        loopbackFetch(`${base}/patterns?scope=mesh&limit=200`),
+      ]);
+    } catch {
+      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service unreachable'), 503);
+    }
     const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
     const mesh = meshRes.ok ? ((await meshRes.json()) as RawPage).patterns : [];
     return c.json(
@@ -1473,7 +1484,19 @@ function requireContainerAuth(
 }
 
 const containerApiBase = new OpenAPIHono();
-containerApiBase.use('*', requireContainerAuth as Parameters<typeof containerApiBase.use>[1]);
+// Scope the container-auth guard to ONLY the container-only endpoints. Using
+// `'*'` here would intercept every request that falls through from earlier
+// sub-apps mounted at `/api` (e.g. `/api/workspace/:id/rpc`, `/api/agent/*`)
+// and return 401 "container auth not configured" in dev where
+// CRUCIBLE_RUNTIME_SECRET is unset — masking the real route as unauthorized.
+containerApiBase.use(
+  '/workspace/:id/axl-key',
+  requireContainerAuth as Parameters<typeof containerApiBase.use>[1],
+);
+containerApiBase.use(
+  '/workspace/:id/mesh-peers',
+  requireContainerAuth as Parameters<typeof containerApiBase.use>[1],
+);
 
 export const containerApi = containerApiBase
   .openapi(registerAxlKeyRoute, async (c) => {
