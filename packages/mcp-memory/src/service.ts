@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import {
   Batcher,
   Indexer,
@@ -12,20 +13,22 @@ import {
 import { JsonRpcProvider, Wallet, computeAddress, hexlify, zeroPadValue } from 'ethers';
 import { type mcp } from '@crucible/types';
 
-interface StoredPattern {
-  id: string;
-  revertSignature: string;
-  patch: string;
-  traceRef: string;
-  verificationReceipt: `0x${string}`;
-  provenance: {
-    authorNode: string;
-    originalSession: string;
-    derivedFrom?: string[];
-  };
-  scope: 'local' | 'mesh';
-  createdAt: number;
-}
+const StoredPatternSchema = z.object({
+  id: z.string(),
+  revertSignature: z.string(),
+  patch: z.string(),
+  traceRef: z.string(),
+  verificationReceipt: z.string().regex(/^0x[0-9a-fA-F]+$/),
+  provenance: z.object({
+    authorNode: z.string(),
+    originalSession: z.string(),
+    derivedFrom: z.array(z.string()).optional(),
+  }),
+  scope: z.enum(['local', 'mesh']),
+  createdAt: z.number(),
+});
+
+type StoredPattern = z.infer<typeof StoredPatternSchema>;
 
 export interface MemoryService {
   recall: (
@@ -36,6 +39,7 @@ export interface MemoryService {
     input: mcp.memory.ListPatternsInput,
   ) => Promise<{ patterns: StoredPattern[]; nextCursor: string | null }>;
   provenance: (input: mcp.memory.ProvenanceInput) => Promise<StoredPattern['provenance']>;
+  purge: (input: mcp.memory.PurgeInput) => Promise<{ deleted: number }>;
 }
 
 function normalize(text: string | undefined | null): string {
@@ -118,17 +122,21 @@ async function readPatternsFs(filePath: string): Promise<StoredPattern[]> {
   try {
     const raw = await readFile(filePath, 'utf8');
     const parsed: unknown = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed as StoredPattern[];
+    const items: unknown[] = Array.isArray(parsed)
+      ? parsed
+      : parsed &&
+          typeof parsed === 'object' &&
+          Array.isArray((parsed as { patterns?: unknown }).patterns)
+        ? (parsed as { patterns: unknown[] }).patterns
+        : [];
+    const valid: StoredPattern[] = [];
+    for (const item of items) {
+      const result = StoredPatternSchema.safeParse(item);
+      if (result.success) {
+        valid.push(result.data);
+      }
     }
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      Array.isArray((parsed as { patterns?: unknown }).patterns)
-    ) {
-      return (parsed as { patterns: StoredPattern[] }).patterns;
-    }
-    return [];
+    return valid;
   } catch {
     return [];
   }
@@ -144,7 +152,7 @@ function createFsService(opts: {
   authorNode: string;
   originalSession: string;
 }): MemoryService {
-  const { patternsPath, authorNode, originalSession } = opts;
+  const { patternsPath, authorNode: ownNodeId, originalSession } = opts;
   return {
     async recall(input) {
       const patterns = await readPatternsFs(patternsPath);
@@ -154,14 +162,17 @@ function createFsService(opts: {
     async remember(input) {
       const patterns = await readPatternsFs(patternsPath);
       const id = newPatternId();
+      // Derive scope + authorNode from fromPeerId presence. The agent must NOT
+      // pass these directly — see the schema docstring for rationale.
+      const fromPeer = input.fromPeerId !== undefined;
       patterns.push({
         id,
         revertSignature: input.revertSignature,
         patch: input.patch,
         traceRef: input.traceRef,
         verificationReceipt: input.verificationReceipt,
-        provenance: { authorNode, originalSession },
-        scope: input.scope,
+        provenance: { authorNode: fromPeer ? input.fromPeerId! : ownNodeId, originalSession },
+        scope: fromPeer ? 'mesh' : 'local',
         createdAt: Date.now(),
       });
       await writePatternsFs(patternsPath, patterns);
@@ -169,9 +180,8 @@ function createFsService(opts: {
     },
     async listPatterns(input) {
       const patterns = await readPatternsFs(patternsPath);
-      const filtered = input.scope
-        ? patterns.filter((pattern) => pattern.scope === input.scope)
-        : patterns;
+      const scope = input.scope ?? 'local';
+      const filtered = patterns.filter((pattern) => pattern.scope === scope);
       const offset = safeParseCursor(input.cursor);
       const limit = input.limit ?? 50;
       const page = filtered.slice(offset, offset + limit);
@@ -186,6 +196,12 @@ function createFsService(opts: {
       const found = patterns.find((pattern) => pattern.id === input.id);
       if (!found) throw new Error(`Pattern not found: ${input.id}`);
       return found.provenance;
+    },
+    async purge(input) {
+      const all = await readPatternsFs(patternsPath);
+      const remaining = input.scope ? all.filter((p) => p.scope !== input.scope) : [];
+      await writePatternsFs(patternsPath, remaining);
+      return { deleted: all.length - remaining.length };
     },
   };
 }
@@ -220,6 +236,10 @@ function createKvService(cfg: KvConfig): MemoryService {
   const signer = new Wallet(cfg.privateKey, provider);
   const indexer = new Indexer(cfg.indexerUrl);
   const kvClient = new KvClient(cfg.kvUrl);
+
+  // Write-through cache: patterns are stored here immediately on `remember` so
+  // that reads are instant even before the 0G KV indexer propagates the block.
+  const writeCache = new Map<string, StoredPattern>();
 
   let cachedNodes: StorageNode[] | null = null;
   let cachedFlowAddress: string | null = null;
@@ -284,7 +304,14 @@ function createKvService(cfg: KvConfig): MemoryService {
       if (pair) {
         try {
           const json = decodeBase64ToString(pair.data);
-          out.push(JSON.parse(json) as StoredPattern);
+          const result = StoredPatternSchema.safeParse(JSON.parse(json));
+          if (result.success) {
+            out.push(result.data);
+          } else {
+            console.warn(
+              `[mcp-memory] KV entry failed schema validation for scope="${scope}", skipping`,
+            );
+          }
         } catch {
           // Malformed entry — skip and continue iteration.
         }
@@ -304,6 +331,14 @@ function createKvService(cfg: KvConfig): MemoryService {
       }
     }
 
+    // Merge: KV results + any cached patterns for this scope not yet indexed.
+    const kvIds = new Set(out.map((p) => p.id));
+    for (const p of writeCache.values()) {
+      if (p.scope === scope && !kvIds.has(p.id)) {
+        out.push(p);
+      }
+    }
+
     return out;
   }
 
@@ -313,6 +348,8 @@ function createKvService(cfg: KvConfig): MemoryService {
   }
 
   async function findById(id: string): Promise<StoredPattern | null> {
+    // Check in-memory cache first for instant lookup.
+    if (writeCache.has(id)) return writeCache.get(id)!;
     for (const scope of ['local', 'mesh'] as const) {
       const streamId = streamIdForScope(cfg, scope);
       const value = await kvClient.getValue(streamId, hexlify(encodeKey(id)));
@@ -331,16 +368,24 @@ function createKvService(cfg: KvConfig): MemoryService {
     },
     async remember(input) {
       const id = newPatternId();
+      // Derive scope + authorNode from fromPeerId presence. The agent must NOT
+      // pass these directly — see the schema docstring for rationale.
+      const fromPeer = input.fromPeerId !== undefined;
       const pattern: StoredPattern = {
         id,
         revertSignature: input.revertSignature,
         patch: input.patch,
         traceRef: input.traceRef,
         verificationReceipt: input.verificationReceipt,
-        provenance: { authorNode: cfg.authorNode, originalSession: cfg.originalSession },
-        scope: input.scope,
+        provenance: {
+          authorNode: fromPeer ? input.fromPeerId! : cfg.authorNode,
+          originalSession: cfg.originalSession,
+        },
+        scope: fromPeer ? 'mesh' : 'local',
         createdAt: Date.now(),
       };
+      // Cache immediately so reads don't have to wait for 0G KV indexer propagation.
+      writeCache.set(id, pattern);
       await writePattern(pattern);
       return { id };
     },
@@ -359,6 +404,28 @@ function createKvService(cfg: KvConfig): MemoryService {
       const found = await findById(input.id);
       if (!found) throw new Error(`Pattern not found: ${input.id}`);
       return found.provenance;
+    },
+    async purge(input) {
+      const scopes: ('local' | 'mesh')[] = input.scope ? [input.scope] : ['local', 'mesh'];
+      let deleted = 0;
+      for (const scope of scopes) {
+        const patterns = await readAllPatterns(scope);
+        if (patterns.length === 0) continue;
+        const nodes = await getNodes();
+        const flowAddress = await getFlowAddress();
+        const flow = getFlowContract(flowAddress, signer);
+        const batcher = new Batcher(Date.now(), nodes, flow, cfg.rpcUrl);
+        const streamId = streamIdForScope(cfg, scope);
+        for (const pattern of patterns) {
+          batcher.streamDataBuilder.set(streamId, encodeKey(pattern.id), new Uint8Array(0));
+        }
+        const [, err] = await batcher.exec();
+        if (err) throw new Error(`0G KV purge failed for scope="${scope}": ${err.message}`);
+        // Clear purged entries from the write-through cache.
+        for (const pattern of patterns) writeCache.delete(pattern.id);
+        deleted += patterns.length;
+      }
+      return { deleted };
     },
   };
 }

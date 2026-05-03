@@ -74,6 +74,35 @@ export const WorkspaceListResponseSchema = z.object({
 });
 export type WorkspaceListResponse = z.infer<typeof WorkspaceListResponseSchema>;
 
+// --- POST /api/workspace/:id/axl-key (internal — called by mcp-mesh) --------
+
+/** mcp-mesh calls this once on startup to publish its AXL public key so other
+ *  workspace containers can discover it.  The route is unauthenticated but
+ *  requires `workspaceId` in the path AND a matching `WORKSPACE_ID` env var
+ *  forwarded from the container env — it is only reachable from inside the
+ *  Docker network (host.docker.internal). */
+export const AxlKeyRegisterRequestSchema = z.object({
+  /** 64-char hex ed25519 public key produced by `axl-node`. */
+  axlPublicKey: z.string().regex(/^[0-9a-f]{64}$/i),
+});
+export type AxlKeyRegisterRequest = z.infer<typeof AxlKeyRegisterRequestSchema>;
+
+export const AxlKeyRegisterResponseSchema = z.object({ ok: z.literal(true) });
+export type AxlKeyRegisterResponse = z.infer<typeof AxlKeyRegisterResponseSchema>;
+
+// --- GET /api/workspace/:id/mesh-peers (internal — called by mcp-mesh) ------
+
+export const MeshPeerEntrySchema = z.object({
+  workspaceId: WorkspaceIdSchema,
+  axlPublicKey: z.string().regex(/^[0-9a-f]{64}$/i),
+});
+export type MeshPeerEntry = z.infer<typeof MeshPeerEntrySchema>;
+
+export const MeshPeersResponseSchema = z.object({
+  peers: z.array(MeshPeerEntrySchema),
+});
+export type MeshPeersResponse = z.infer<typeof MeshPeersResponseSchema>;
+
 // --- PUT /api/workspace/:id/file ---------------------------------------------
 
 export const FileWriteRequestSchema = z.object({

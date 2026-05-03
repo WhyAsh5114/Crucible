@@ -14,6 +14,7 @@
  * Environment variables (set by preview-manager.ts):
  *   CRUCIBLE_BRIDGE_SCRIPT  — the preview-bridge.js IIFE content (in-memory)
  *   CRUCIBLE_VITE_PORT      — port for the Vite dev server
+ *   CRUCIBLE_VITE_BASE      — Vite base path (e.g. /preview/<id>/ when proxied)
  */
 
 import { pathToFileURL } from 'node:url';
@@ -28,6 +29,9 @@ const { createServer } = await import(
 
 const bridgeScript = process.env['CRUCIBLE_BRIDGE_SCRIPT'] ?? '';
 const port = Number(process.env['CRUCIBLE_VITE_PORT'] ?? '5174');
+// When serving behind the path-based proxy, base is /preview/<workspaceId>/.
+// Defaults to '/' for local development (direct iframe to localhost:<port>).
+const base = process.env['CRUCIBLE_VITE_BASE'] ?? '/';
 
 /** Crucible bridge plugin — serves the EIP-1193 bridge script from memory
  *  and injects the <script> tag into every HTML response via transformIndexHtml.
@@ -45,10 +49,12 @@ const crucibleBridgePlugin = {
 
   transformIndexHtml(html) {
     // Idempotent — skip if already injected (e.g. user added it manually).
-    if (html.includes('/__crucible/preview-bridge.js')) return html;
+    if (html.includes('crucible-preview-bridge')) return html;
+    // Inline the script rather than referencing a file path so it works
+    // correctly regardless of the Vite base path when running behind the proxy.
     return html.replace(
       /<head>/i,
-      '<head>\n    <script src="/__crucible/preview-bridge.js"></script>',
+      `<head>\n    <script>/* crucible-preview-bridge */\n${bridgeScript}\n</script>`,
     );
   },
 };
@@ -56,7 +62,17 @@ const crucibleBridgePlugin = {
 const server = await createServer({
   // root defaults to process.cwd() — preview-manager.ts sets cwd to the
   // workspace's frontend/ dir, so Vite picks up vite.config.ts from there.
-  server: { port, host: '127.0.0.1', strictPort: true },
+  base,
+  server: {
+    port,
+    host: '127.0.0.1',
+    strictPort: true,
+    // Disable HMR when running behind the path-based proxy — the Vite WS
+    // endpoint is on an internal port the browser can't reach. The preview
+    // still loads and functions correctly; file changes require a manual
+    // reload. HMR can be re-enabled once WS proxying is implemented.
+    hmr: base !== '/' ? { overlay: true } : undefined,
+  },
   plugins: [crucibleBridgePlugin],
 });
 

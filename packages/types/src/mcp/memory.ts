@@ -9,7 +9,7 @@ import {
   MemoryProvenanceSchema,
   MemoryScopeSchema,
 } from '../memory.ts';
-import { HashSchema, PatternIdSchema } from '../primitives.ts';
+import { HashSchema, PatternIdSchema, PeerIdSchema } from '../primitives.ts';
 
 export const RecallInputSchema = z
   .object({
@@ -32,7 +32,17 @@ export const RememberInputSchema = z.object({
   /** Reference to the trace stored in the Log layer. */
   traceRef: z.string().min(1),
   verificationReceipt: HashSchema,
-  scope: MemoryScopeSchema,
+  /**
+   * AXL public key of the peer this pattern was received from.
+   * Set this ONLY when storing a patch obtained from `mesh.collect_responses`
+   * (i.e. Workflow D / mesh collaboration). Leave unset for patterns the agent
+   * derived locally itself.
+   *
+   * The service derives both `scope` (mesh vs local) and provenance.authorNode
+   * from the presence/value of this field — callers MUST NOT try to set scope
+   * or authorNode manually.
+   */
+  fromPeerId: PeerIdSchema.optional(),
 });
 export const RememberOutputSchema = z.object({ id: PatternIdSchema });
 export type RememberInput = z.infer<typeof RememberInputSchema>;
@@ -40,7 +50,8 @@ export type RememberOutput = z.infer<typeof RememberOutputSchema>;
 
 export const ListPatternsInputSchema = z.object({
   scope: MemoryScopeSchema.optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  // coerce so query-string "200" → 200; the schema is shared between HTTP handlers and MCP tool calls
+  limit: z.coerce.number().int().positive().max(200).optional(),
   /** Opaque pagination cursor returned in the previous page. */
   cursor: z.string().min(1).optional(),
 });
@@ -56,9 +67,17 @@ export const ProvenanceOutputSchema = MemoryProvenanceSchema;
 export type ProvenanceInput = z.infer<typeof ProvenanceInputSchema>;
 export type ProvenanceOutput = z.infer<typeof ProvenanceOutputSchema>;
 
+export const PurgeInputSchema = z.object({
+  scope: MemoryScopeSchema.optional(),
+});
+export const PurgeOutputSchema = z.object({ deleted: z.number().int().nonnegative() });
+export type PurgeInput = z.infer<typeof PurgeInputSchema>;
+export type PurgeOutput = z.infer<typeof PurgeOutputSchema>;
+
 export const tools = {
   recall: { input: RecallInputSchema, output: RecallOutputSchema },
   remember: { input: RememberInputSchema, output: RememberOutputSchema },
   list_patterns: { input: ListPatternsInputSchema, output: ListPatternsOutputSchema },
   provenance: { input: ProvenanceInputSchema, output: ProvenanceOutputSchema },
+  purge: { input: PurgeInputSchema, output: PurgeOutputSchema },
 } as const;

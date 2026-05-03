@@ -1,16 +1,30 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
+import { randomBytes } from 'node:crypto';
 import { prisma } from './lib/prisma';
 import { upgradeWebSocket, websocket } from 'hono/bun';
 import { auth, requireSession } from './lib/auth';
+
+// Ensure CRUCIBLE_RUNTIME_SECRET is always set so in-container services
+// (mcp-mesh) can authenticate back to the host. In production operators
+// should supply an explicit value; in dev we generate one per process so
+// containers launched by this process share the same secret automatically.
+if (!process.env['CRUCIBLE_RUNTIME_SECRET']) {
+  process.env['CRUCIBLE_RUNTIME_SECRET'] = randomBytes(32).toString('hex');
+  console.warn(
+    '[runtime] CRUCIBLE_RUNTIME_SECRET not set — generated an ephemeral secret for this session. ' +
+      'Set CRUCIBLE_RUNTIME_SECRET explicitly for persistent deployments.',
+  );
+}
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { rpcApi } from './api/rpc';
-import { workspaceApi } from './api/workspace';
+import { workspaceApi, containerApi } from './api/workspace';
 import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
 import { modelsApi } from './api/models';
 import { shipApi } from './api/ship';
+import { previewApi } from './api/preview';
 
 export { upgradeWebSocket };
 
@@ -53,6 +67,7 @@ app.use('/api/prompt', requireSession);
 app.use('/api/models', requireSession);
 
 const apiRoutes = app
+  .route('/api', containerApi)
   .route('/api', workspaceApi)
   .route('/api', runtimeApi)
   .route('/api', rpcApi)
@@ -60,7 +75,8 @@ const apiRoutes = app
   .route('/api', inferenceApi)
   .route('/api', modelsApi)
   .route('/api', shipApi)
-  .route('/', terminalApi);
+  .route('/', terminalApi)
+  .route('/', previewApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
 
@@ -77,8 +93,10 @@ export type AppType = typeof apiRoutes;
 prisma.workspaceRuntime.updateMany({ data: { previewUrl: null } }).catch(() => undefined);
 
 const port = Number(process.env['PORT'] ?? 3000);
+const hostname = process.env['HOST'] ?? '127.0.0.1';
 export default {
   port,
+  hostname,
   idleTimeout: 0,
   fetch: apiRoutes.fetch,
   websocket,

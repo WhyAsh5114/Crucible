@@ -175,6 +175,7 @@ This section describes the real runtime on `main` today. The rest of this docume
                 │  │   • mcp-deployer (in-container 3102, host port published dynamically)    │            │
                 │  │   • mcp-wallet   (in-container 3103, host port published dynamically)    │            │
                 │  │   • mcp-memory   (in-container 3104, host port published dynamically)    │            │
+                │  │   • mcp-mesh     (in-container 3105, host port published dynamically)    │            │
                 │  │   • bash shell   (via docker exec hijack, TTY mode, browser PTY only)   │            │
                 │  │   • mcp-terminal (in-container 3106, host port published dynamically)    │            │
                 │  │   • mcp-devtools (in-container 3107, host port published dynamically)    │            │
@@ -204,7 +205,6 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-mesh` — control-plane / sidecar (cross-workspace, deployment-scoped).
 - `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` frontend UI — `POST /api/ship` and all MCP tools are wired; the inspector panel showing simulation output, live execution status, and clickable audit trail links is still pending.
 - Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
@@ -291,8 +291,8 @@ For the hackathon MVP, the simplest correct stateful runtime is:
   This serves the frontend shell, API routes, and WebSocket endpoints.
 - **One persistent local disk or mounted volume**
   This stores workspace files, artifacts, logs, and workspace metadata.
-- **One AXL node process per Crucible backend instance**
-  The node belongs to the backend instance, not to each workspace.
+- **One AXL node process per workspace container**
+  `mcp-mesh` starts and supervises the AXL binary inside each workspace runner. The node is torn down when the container exits.
 - **One workspace runtime per workspace**
   In trusted mode this is a set of child processes inside the backend host. In public deployment this becomes a dedicated workspace runner container. Each workspace runtime owns the local Hardhat chain, PTY shell, and preview server for that workspace.
 
@@ -403,7 +403,7 @@ The agent's power comes from **eight MCP servers** — seven custom + KeeperHub'
 | **deployer-mcp**  | 3102       | `deploy_local` (returns `abi` + `functions`), `deploy_og_chain`, `simulate_local`, `trace`, `call`, `list_deployments`, `simulate_bundle`, `execute_tx`, `get_execution_status`     | Deploy compiled contracts, simulate & trace locally, recall deployments, ship to public chains via KeeperHub           |
 | **wallet-mcp**    | 3103       | `list_accounts`, `get_balance`, `switch_account`, `call_contract`, `read_contract`, `send_value` (high-level); `encode_call`, `sign_tx`, `send_tx_local` (low-level escape hatches) | Manage accounts and interact with deployed contracts by name                                                           |
 | **memory-mcp**    | 3104       | `recall`, `remember`, `list_patterns`, `provenance`                                                                                                                                 | Store and retrieve learned debugging patterns on 0G Storage                                                            |
-| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                                                                                 | Discover peer Crucible nodes and exchange fix candidates over AXL _(planned)_                                          |
+| **mesh-mcp**      | 3105       | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                                                                                 | Discover peer Crucible nodes and exchange fix candidates over the Gensyn AXL P2P network                               |
 | **terminal-mcp**  | 3106       | `create_session`, `write`, `exec`, `resize`                                                                                                                                         | Agent-callable shell inside the runner — transient `bash -c` subprocesses, independent of the browser PTY              |
 | **KeeperHub MCP** | (external) | `simulate_bundle`, `execute_tx`, `get_execution_status`                                                                                                                             | Production-grade tx execution — the only path to public chains; integrated via `keeperhub-client.ts` in `mcp-deployer` |
 
@@ -584,7 +584,8 @@ send_tx_local(tx): { txHash, receipt }
 recall(query: { revert_signature?, contract_pattern?, freeform? }): {
   hits: { id, summary, patch, trace_ref, verification_receipt, provenance }[]
 }
-remember(pattern: { revert_signature, trace, patch, verification_receipt, scope: 'local' | 'mesh' }): { id }
+remember(pattern: { revert_signature, trace, patch, verification_receipt, fromPeerId? }): { id }
+// scope and provenance.authorNode are derived: fromPeerId set ⇒ scope='mesh', authorNode=peerId; otherwise scope='local', authorNode=ownNodeId
 list_patterns(filter?): { patterns: PatternMeta[] }
 provenance(id): { author_node, original_session, derived_from?: id[] }
 ```
@@ -592,12 +593,22 @@ provenance(id): { author_node, original_session, derived_from?: id[] }
 ### mesh-mcp (Gensyn AXL)
 
 ```typescript
-// Wraps the local AXL node. All comms are end-to-end encrypted, no central broker.
-list_peers(): { peers: { node_id, last_seen, reputation }[] }
-broadcast_help(req: { revert_signature, trace, ctx, ttl_ms }): { req_id }
-collect_responses(req_id): { responses: { peer_id, patch, verification_receipt }[] }
-respond(req_id, patch): { ack }
-verify_peer_patch(patch): { result: 'verified' | 'failed', local_receipt }
+// One AXL node per workspace container. All comms end-to-end encrypted via AXL; no central broker.
+// Full types: packages/types/src/mcp/mesh.ts
+list_peers(): { peers: { nodeId: string, endpoint?: string, lastSeen: number, reputation: number }[] }
+broadcast_help(req: {
+  revertSignature: string,
+  trace: TxTrace,
+  ctx: { contractSource: string, solcVersion: string },
+  ttlMs: number
+}): { reqId: string }
+collect_responses(input: { reqId: string, waitMs?: number }): {
+  responses: { reqId: string, peerId: string, patch: string, verificationReceipt: string, respondedAt: number }[]
+}
+respond(input: { reqId: string, patch: string }): { ack: true }
+verify_peer_patch(input: { response: MeshHelpResponse }):
+  | { result: 'verified', localReceipt: string }
+  | { result: 'failed', reason: string }
 ```
 
 ### terminal-mcp
