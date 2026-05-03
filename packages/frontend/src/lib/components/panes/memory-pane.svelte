@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import type { MemoryPattern } from '@crucible/types';
 	import { workspaceClient } from '$lib/api/workspace';
 	import { Button } from '$lib/components/ui/button';
@@ -254,25 +255,55 @@
 
 	// ── Reactive effects ─────────────────────────────────────────────────────
 
+	// Load once when the pane first mounts.
+	onMount(() => void load());
+
+	// Silent refresh: update allPatterns in-place with no clear or spinner.
+	// Called when the agent writes a new pattern to memory.
+	async function silentRefresh(): Promise<void> {
+		try {
+			allPatterns = await workspaceClient.listMemoryPatterns(workspaceId);
+		} catch {
+			// silent — don't toast on background refresh
+		}
+	}
+
+	// Watch the agent stream for successful memory writes (remember tool calls
+	// and patch_committed events). Trigger a silent refresh when the count
+	// increases so the graph and counters update without any visible reload.
+	const agentStream = getAgentStream();
+	const memoryWriteCount = $derived.by(() => {
+		const events = agentStream.events;
+		const rememberCallIds = new Set<string>();
+		for (const e of events) {
+			if (e.type === 'tool_call' && e.tool === 'memory.remember') {
+				rememberCallIds.add(e.callId);
+			}
+		}
+		let count = 0;
+		for (const e of events) {
+			if (e.type === 'tool_result' && e.outcome.ok && rememberCallIds.has(e.callId)) {
+				count++;
+			}
+			if (e.type === 'patch_committed') {
+				count++;
+			}
+		}
+		return count;
+	});
+	// Use -1 as a sentinel so the first $effect run just initialises the
+	// baseline without triggering a redundant fetch on mount.
+	let lastMemoryWriteCount = -1;
 	$effect(() => {
-		const id = workspaceId;
-		loading = true;
-		allPatterns = [];
-		embeddings = new Map();
-		embedUnavailable = false;
-		void workspaceClient
-			.listMemoryPatterns(id)
-			.then((patterns) => {
-				allPatterns = patterns;
-			})
-			.catch((err: unknown) => {
-				toast.error('Failed to load patterns', {
-					description: err instanceof Error ? err.message : String(err)
-				});
-			})
-			.finally(() => {
-				loading = false;
-			});
+		const count = memoryWriteCount;
+		if (lastMemoryWriteCount === -1) {
+			lastMemoryWriteCount = count;
+			return;
+		}
+		if (count > lastMemoryWriteCount) {
+			lastMemoryWriteCount = count;
+			void silentRefresh();
+		}
 	});
 
 	$effect(() => {
