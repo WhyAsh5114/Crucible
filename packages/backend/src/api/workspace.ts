@@ -1350,8 +1350,21 @@ export const workspaceApi = workspaceApiBase
       }
     }
 
+    // Deduplicate by pattern ID — local takes priority over mesh.
+    // This is necessary because all containers share the same 0G KV stream
+    // (same OG_STORAGE_PRIVATE_KEY → same stream ID), so fetching locals from
+    // multiple workspaces returns overlapping pattern sets.
+    const seen = new Set<string>();
+    const deduplicated: RawPattern[] = [];
+    for (const p of [...local, ...mesh]) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id);
+        deduplicated.push(p);
+      }
+    }
+
     return c.json(
-      { patterns: [...local, ...mesh] } as unknown as {
+      { patterns: deduplicated } as unknown as {
         patterns: z.infer<typeof MemoryPatternSchema>[];
       },
       200,
