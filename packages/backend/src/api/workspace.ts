@@ -1319,7 +1319,7 @@ export const workspaceApi = workspaceApiBase
     let meshPromise: Promise<RawPattern[]> = Promise.resolve([]);
     if (wantsMesh) {
       const siblings = await prisma.workspace.findMany({
-        where: { userId, id: { not: id } },
+        where: { id: { not: id } },
         select: { id: true },
       });
       meshPromise = Promise.all(siblings.map((w) => fetchLocalPatterns(w.id))).then((lists) =>
