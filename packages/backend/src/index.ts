@@ -1,8 +1,21 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { cors } from 'hono/cors';
+import { randomBytes } from 'node:crypto';
 import { prisma } from './lib/prisma';
 import { upgradeWebSocket, websocket } from 'hono/bun';
 import { auth, requireSession } from './lib/auth';
+
+// Ensure CRUCIBLE_RUNTIME_SECRET is always set so in-container services
+// (mcp-mesh) can authenticate back to the host. In production operators
+// should supply an explicit value; in dev we generate one per process so
+// containers launched by this process share the same secret automatically.
+if (!process.env['CRUCIBLE_RUNTIME_SECRET']) {
+  process.env['CRUCIBLE_RUNTIME_SECRET'] = randomBytes(32).toString('hex');
+  console.warn(
+    '[runtime] CRUCIBLE_RUNTIME_SECRET not set — generated an ephemeral secret for this session. ' +
+      'Set CRUCIBLE_RUNTIME_SECRET explicitly for persistent deployments.',
+  );
+}
 import { agentApi } from './api/agent';
 import { runtimeApi } from './api/runtime';
 import { rpcApi } from './api/rpc';
@@ -53,8 +66,8 @@ app.use('/api/prompt', requireSession);
 app.use('/api/models', requireSession);
 
 const apiRoutes = app
-  .route('/api', workspaceApi)
   .route('/api', containerApi)
+  .route('/api', workspaceApi)
   .route('/api', runtimeApi)
   .route('/api', rpcApi)
   .route('/api', agentApi)
