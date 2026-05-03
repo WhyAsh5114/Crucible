@@ -5,6 +5,11 @@
 # the memory pane looks like a real mesh: each container has its own local
 # patterns PLUS mesh patterns received from other containers.
 #
+# After writing, polls GET /patterns on each container until every seeded
+# pattern ID appears — necessary because the 0G KV indexer has a propagation
+# delay between a write transaction landing on-chain and the read path
+# reflecting it.  Times out after 60 seconds per container.
+#
 # Usage:
 #   bash scripts/seed-memories.sh          # auto-discover containers
 #   bash scripts/seed-memories.sh ws-a ws-b  # use specific container names
@@ -12,6 +17,8 @@
 set -euo pipefail
 
 MEMORY_PORT=3104
+VERIFY_TIMEOUT=60   # seconds to wait per container for patterns to appear
+VERIFY_INTERVAL=3   # poll interval in seconds
 
 # ── Discover containers ───────────────────────────────────────────────────────
 
@@ -34,7 +41,12 @@ fi
 echo "Containers: ${CONTAINERS[*]}"
 echo ""
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Track expected IDs per container ─────────────────────────────────────────
+# Associative array: container → space-separated list of pattern IDs to verify.
+
+declare -A EXPECTED_IDS
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 remember() {
   local container="$1"
@@ -55,11 +67,71 @@ remember() {
     echo "  [local]              $revert_sig"
   fi
 
-  docker exec "$container" sh -c \
+  local response
+  response=$(docker exec "$container" sh -c \
     "curl -sf -X POST http://127.0.0.1:${MEMORY_PORT}/remember \
       -H 'Content-Type: application/json' \
-      -d '${payload}'" \
-  | { read -r id; echo "    → $id"; } || echo "    → (failed — container may not have memory service ready)"
+      -d '${payload}'" 2>/dev/null) || { echo "    → FAILED (is the memory service running?)"; return; }
+
+  # Response is {"id":"pattern-xxxxx"}
+  local id
+  id=$(printf '%s' "$response" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+  echo "    → $id"
+
+  # Accumulate for later verification
+  EXPECTED_IDS["$container"]="${EXPECTED_IDS[$container]:-} $id"
+}
+
+# Poll GET /patterns until all expected IDs for a container appear, or timeout.
+verify_container() {
+  local container="$1"
+  local ids="${EXPECTED_IDS[$container]:-}"
+
+  if [[ -z "${ids// }" ]]; then
+    echo "  (no patterns to verify)"
+    return 0
+  fi
+
+  local expected_count
+  expected_count=$(echo "$ids" | wc -w | tr -d ' ')
+  echo "  Waiting for $expected_count patterns to be readable (timeout ${VERIFY_TIMEOUT}s)…"
+
+  local elapsed=0
+  while [[ $elapsed -lt $VERIFY_TIMEOUT ]]; do
+    local response
+    response=$(docker exec "$container" sh -c \
+      "curl -sf 'http://127.0.0.1:${MEMORY_PORT}/patterns?limit=50'" 2>/dev/null) || true
+
+    if [[ -n "$response" ]]; then
+      local visible_count=0
+      local missing=""
+      for id in $ids; do
+        if echo "$response" | grep -qF "\"$id\""; then
+          (( visible_count++ )) || true
+        else
+          missing="$missing $id"
+        fi
+      done
+
+      if [[ $visible_count -eq $expected_count ]]; then
+        echo "  ✓ All $expected_count patterns confirmed readable (${elapsed}s)"
+        return 0
+      fi
+
+      local still_missing
+      still_missing=$(echo "$missing" | wc -w | tr -d ' ')
+      echo "  … ${elapsed}s: ${visible_count}/${expected_count} visible, ${still_missing} still propagating"
+    else
+      echo "  … ${elapsed}s: memory service not responding yet"
+    fi
+
+    sleep "$VERIFY_INTERVAL"
+    (( elapsed += VERIFY_INTERVAL )) || true
+  done
+
+  echo "  ✗ Timed out after ${VERIFY_TIMEOUT}s — 0G KV indexer may still be catching up."
+  echo "    Patterns were written (transactions confirmed); try refreshing the memory pane in ~30s."
+  return 1
 }
 
 # ── Container aliases ─────────────────────────────────────────────────────────
@@ -136,4 +208,12 @@ remember "$B" \
   "$A"
 
 echo ""
-echo "Done. Both containers now have local + cross-mesh patterns."
+echo "Done seeding. Verifying patterns are readable via the 0G KV indexer…"
+echo ""
+echo "=== Verifying $A ==="
+verify_container "$A"
+echo ""
+echo "=== Verifying $B ==="
+verify_container "$B"
+echo ""
+echo "All done."
