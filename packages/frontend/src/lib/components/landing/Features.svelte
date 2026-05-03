@@ -39,7 +39,7 @@
 		</p>
 
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-			{#each features as feature, i}
+			{#each features as feature, i (feature.title)}
 				<div
 					use:reveal={{ delay: i * 100 }}
 					class="rounded-lg border border-border bg-card p-6 transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:bg-accent hover:shadow-md"

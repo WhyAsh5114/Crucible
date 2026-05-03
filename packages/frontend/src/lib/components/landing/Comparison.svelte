@@ -71,7 +71,7 @@
 						<th class="w-40 bg-muted px-4 py-3 text-left font-mono text-xs text-muted-foreground">
 							<!-- Feature column header -->
 						</th>
-						{#each tools as tool, i}
+						{#each tools as tool, i (tool)}
 							<th
 								class="px-4 py-3 text-center text-xs font-semibold {i === 3
 									? 'border-x border-border bg-primary text-primary-foreground'
@@ -83,7 +83,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each rows as row, rowIndex}
+					{#each rows as row, rowIndex (row.feature)}
 						<tr
 							class="border-b border-border transition-colors duration-200 last:border-0 hover:bg-muted/30 {rowIndex %
 								2 ===
@@ -94,7 +94,7 @@
 							<td class="px-4 py-3 text-xs font-medium whitespace-nowrap text-foreground">
 								{row.feature}
 							</td>
-							{#each row.values as value, colIndex}
+							{#each row.values as value, colIndex (`${row.feature}-${colIndex}`)}
 								<td
 									class="px-4 py-3 text-center text-xs {colIndex === 3
 										? 'border-x border-border font-medium text-foreground'

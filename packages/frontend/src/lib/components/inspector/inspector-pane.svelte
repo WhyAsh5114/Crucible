@@ -221,6 +221,7 @@
 
 					<div class="flex items-center gap-2">
 						<span class="w-20 font-mono text-[10px] text-muted-foreground">Audit Trail</span>
+						<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 						<a
 							href={`https://app.keeperhub.com/runs/${shipDeployment.auditTrailId}`}
 							target="_blank"

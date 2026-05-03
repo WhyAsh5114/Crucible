@@ -55,6 +55,7 @@
 						variant="ghost"
 						class="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
 					/>
+					<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 					<a
 						href={event.explorerUrl}
 						target="_blank"
@@ -68,6 +69,7 @@
 
 			<div class="flex flex-wrap items-center gap-2">
 				<span class="font-mono text-[10px] text-muted-foreground">audit trail</span>
+				<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -->
 				<a
 					href={`https://app.keeperhub.com/runs/${event.auditTrailId}`}
 					target="_blank"
