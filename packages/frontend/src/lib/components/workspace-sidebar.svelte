@@ -208,11 +208,13 @@
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
 					{#if loading}
-						{#each [0, 1, 2] as i (i)}
-							<Sidebar.MenuItem>
-								<Skeleton class="h-8 w-full rounded-md" />
-							</Sidebar.MenuItem>
-						{/each}
+						<div class="flex flex-col gap-1">
+							{#each [0, 1, 2] as i (i)}
+								<Sidebar.MenuItem>
+									<Skeleton class="h-8 w-full rounded-md" />
+								</Sidebar.MenuItem>
+							{/each}
+						</div>
 					{:else if workspaces.length === 0}
 						<Sidebar.MenuItem>
 							<p class="px-2 py-1.5 text-xs text-muted-foreground">No workspaces yet.</p>
