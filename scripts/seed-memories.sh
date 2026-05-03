@@ -1,29 +1,51 @@
 #!/usr/bin/env bash
 # seed-memories.sh — Inject demo memory patterns into running Crucible containers.
 #
-# Discovers all running crucible-ws-* containers and distributes patterns so
-# the memory pane looks like a real mesh: each container has its own local
-# patterns PLUS mesh patterns received from other containers.
+# Each container only writes LOCAL patterns. The backend's
+# /workspace/{id}/memory/patterns endpoint automatically surfaces every OTHER
+# workspace's locals as scope='mesh', so peer patterns appear in the memory
+# pane without any cross-writes.
 #
-# After writing, polls GET /patterns on each container until every seeded
-# pattern ID appears — necessary because the 0G KV indexer has a propagation
-# delay between a write transaction landing on-chain and the read path
-# reflecting it.  Times out after 60 seconds per container.
+# Graph edges in the memory pane are drawn between patterns with the same
+# revertSignature, so this script seeds 2 variants per signature per container
+# to give a clearly clustered graph.
+#
+# Seeded distribution (8 LOCAL patterns total, 4 per container):
+#   Container A: STF ×2, EXPIRED ×2
+#   Container B: ERC20:allowance ×2, OTC:filled ×2
+#
+# In the frontend, each container's pane will then show:
+#   - Its own 4 patterns as "local"
+#   - The other container's 4 patterns as "mesh"
 #
 # Usage:
-#   bash scripts/seed-memories.sh          # auto-discover containers
-#   bash scripts/seed-memories.sh ws-a ws-b  # use specific container names
+#   bash scripts/seed-memories.sh                # auto-discover containers
+#   bash scripts/seed-memories.sh --clean        # purge first, then seed
+#   bash scripts/seed-memories.sh ws-a ws-b      # specific container names
+#   bash scripts/seed-memories.sh --clean ws-a ws-b
 
 set -euo pipefail
 
 MEMORY_PORT=3104
-VERIFY_TIMEOUT=60   # seconds to wait per container for patterns to appear
-VERIFY_INTERVAL=3   # poll interval in seconds
+CURL_TIMEOUT=120  # 0G KV batcher.exec() is an on-chain tx — can take 30-90s
 
-# ── Discover containers (bash 3.2 compatible) ────────────────────────────────
+# ── Parse args ────────────────────────────────────────────────────────────────
+
+CLEAN=0
+POSITIONAL=()
+for arg in "$@"; do
+  if [[ "$arg" == "--clean" ]]; then
+    CLEAN=1
+  else
+    POSITIONAL+=("$arg")
+  fi
+done
+set -- "${POSITIONAL[@]+"${POSITIONAL[@]}"}"
+
+# ── Discover containers (bash 3.2 compatible) ─────────────────────────────────
 
 CONTAINERS=()
-if [[ $# -ge 2 ]]; then
+if [[ $# -ge 1 ]]; then
   CONTAINERS=("$@")
 else
   while IFS= read -r line; do
@@ -36,117 +58,71 @@ if [[ ${#CONTAINERS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-if [[ ${#CONTAINERS[@]} -lt 2 ]]; then
-  echo "Warning: only 1 container found (${CONTAINERS[0]}). Mesh patterns will reference a fake peer ID." >&2
-  CONTAINERS+=("crucible-ws-peer-demo")
-fi
-
 A="${CONTAINERS[0]}"
-B="${CONTAINERS[1]}"
+B="${CONTAINERS[1]:-}"
 
-echo "Containers: $A  $B"
+echo "Containers:"
+echo "  A = $A"
+[[ -n "$B" ]] && echo "  B = $B"
 echo ""
-
-# Per-container ID lists (space-separated strings, bash 3.2 compatible)
-IDS_A=""
-IDS_B=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# purge_container <container> — wipes local + mesh patterns (2 on-chain txs).
+purge_container() {
+  local container="$1"
+  echo "  Purging local…"
+  docker exec "$container" sh -c \
+    "curl -sf --max-time ${CURL_TIMEOUT} -X DELETE 'http://127.0.0.1:${MEMORY_PORT}/patterns?scope=local'" \
+    2>/dev/null || echo "    → purge local FAILED (continuing)"
+  echo "  Purging mesh…"
+  docker exec "$container" sh -c \
+    "curl -sf --max-time ${CURL_TIMEOUT} -X DELETE 'http://127.0.0.1:${MEMORY_PORT}/patterns?scope=mesh'" \
+    2>/dev/null || echo "    → purge mesh FAILED (continuing)"
+}
+
+# remember <container> <revert_sig> <patch> <trace_ref> <receipt>
+# Always writes a LOCAL pattern. Pipes payload via stdin to avoid shell
+# quoting problems with single quotes / brackets / em dashes in patches.
 remember() {
   local container="$1"
   local revert_sig="$2"
   local patch="$3"
   local trace_ref="$4"
   local receipt="$5"
-  local from_peer="${6:-}"
 
   local payload
-  if [[ -n "$from_peer" ]]; then
-    payload="{\"revertSignature\":\"${revert_sig}\",\"patch\":\"${patch}\",\"traceRef\":\"${trace_ref}\",\"verificationReceipt\":\"${receipt}\",\"fromPeerId\":\"${from_peer}\"}"
-    echo "  [mesh ← ${from_peer:0:16}…]  $revert_sig"
-  else
-    payload="{\"revertSignature\":\"${revert_sig}\",\"patch\":\"${patch}\",\"traceRef\":\"${trace_ref}\",\"verificationReceipt\":\"${receipt}\"}"
-    echo "  [local]                    $revert_sig"
-  fi
+  payload="{\"revertSignature\":\"${revert_sig}\",\"patch\":\"${patch}\",\"traceRef\":\"${trace_ref}\",\"verificationReceipt\":\"${receipt}\"}"
+  echo "  $revert_sig"
 
   local response
-  response=$(docker exec "$container" sh -c \
-    "curl -sf -X POST http://127.0.0.1:${MEMORY_PORT}/remember \
+  response=$(printf '%s' "$payload" | docker exec -i "$container" sh -c \
+    "curl -sf --max-time ${CURL_TIMEOUT} -X POST http://127.0.0.1:${MEMORY_PORT}/remember \
       -H 'Content-Type: application/json' \
-      -d '${payload}'" 2>/dev/null) || { echo "    → FAILED (is the memory service running?)"; return; }
+      --data-binary @-" 2>/dev/null) || { echo "    → FAILED (service down or tx timeout after ${CURL_TIMEOUT}s)"; return; }
 
-  # Response is {"id":"pattern-xxxxx"}
   local id
   id=$(printf '%s' "$response" | sed 's/.*"id":"\([^"]*\)".*/\1/')
   echo "    → $id"
-
-  if [[ "$container" == "$A" ]]; then
-    IDS_A="$IDS_A $id"
-  else
-    IDS_B="$IDS_B $id"
-  fi
 }
 
-# Poll GET /patterns until all expected IDs for a container appear, or timeout.
-verify_container() {
-  local container="$1"
-  local ids="$2"
+# ── Optional clean sweep ──────────────────────────────────────────────────────
 
-  if [[ -z "${ids// }" ]]; then
-    echo "  (no patterns to verify)"
-    return 0
+if [[ $CLEAN -eq 1 ]]; then
+  echo "=== Purging existing patterns before seed ==="
+  echo "--- $A ---"
+  purge_container "$A"
+  if [[ -n "$B" ]]; then
+    echo "--- $B ---"
+    purge_container "$B"
   fi
+  echo ""
+fi
 
-  local expected_count
-  expected_count=$(echo "$ids" | wc -w | tr -d ' ')
-  echo "  Waiting for $expected_count patterns to be readable (timeout ${VERIFY_TIMEOUT}s)…"
-
-  local elapsed=0
-  while [[ $elapsed -lt $VERIFY_TIMEOUT ]]; do
-    local response
-    response=$(docker exec "$container" sh -c \
-      "curl -sf 'http://127.0.0.1:${MEMORY_PORT}/patterns?limit=50'" 2>/dev/null) || true
-
-    if [[ -n "$response" ]]; then
-      local visible_count=0
-      local missing_count=0
-      for id in $ids; do
-        if printf '%s' "$response" | grep -qF "\"$id\""; then
-          visible_count=$((visible_count + 1))
-        else
-          missing_count=$((missing_count + 1))
-        fi
-      done
-
-      if [[ $visible_count -eq $expected_count ]]; then
-        echo "  ✓ All $expected_count patterns confirmed readable (${elapsed}s)"
-        return 0
-      fi
-
-      echo "  … ${elapsed}s: ${visible_count}/${expected_count} visible, ${missing_count} still propagating"
-    else
-      echo "  … ${elapsed}s: memory service not responding yet"
-    fi
-
-    sleep "$VERIFY_INTERVAL"
-    elapsed=$((elapsed + VERIFY_INTERVAL))
-  done
-
-  echo "  ✗ Timed out after ${VERIFY_TIMEOUT}s — 0G KV indexer may still be catching up."
-  echo "    Patterns were written (transactions confirmed); try refreshing the memory pane in ~30s."
-  return 1
-}
-
-# ── Container aliases ─────────────────────────────────────────────────────────
-# Use first two containers for a clean A↔B cross-mesh demo.
-
-A="${CONTAINERS[0]}"
-B="${CONTAINERS[1]}"
-
-# ── Patterns for Container A (local discoveries) ─────────────────────────────
+# ── Container A: 2 STF variants + 2 EXPIRED variants ──────────────────────────
 
 echo "=== $A: local patterns ==="
+
 remember "$A" \
   "TransferHelper::safeTransferFrom: STF" \
   "diff --git a/contracts/Swap.sol b/contracts/Swap.sol\n--- a/contracts/Swap.sol\n+++ b/contracts/Swap.sol\n@@ -12,6 +12,8 @@\n function swapExactTokensForTokens(...) {\n+  IERC20(tokenIn).approve(address(router), amountIn);\n   router.swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline);\n }" \
@@ -154,70 +130,59 @@ remember "$A" \
   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 remember "$A" \
+  "TransferHelper::safeTransferFrom: STF" \
+  "diff --git a/contracts/Router.sol b/contracts/Router.sol\n--- a/contracts/Router.sol\n+++ b/contracts/Router.sol\n@@ -31,5 +31,7 @@\n function _routeExact(address pool, address tokenIn, uint amount) internal {\n+  IERC20(tokenIn).approve(pool, amount);\n   IPool(pool).swap(tokenIn, amount, address(this));\n }" \
+  "trace://router-stf-002" \
+  "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+
+remember "$A" \
   "UniswapV2: EXPIRED" \
   "diff --git a/contracts/Swap.sol b/contracts/Swap.sol\n--- a/contracts/Swap.sol\n+++ b/contracts/Swap.sol\n@@ -8,1 +8,1 @@\n-  uint deadline = block.timestamp - 1;\n+  uint deadline = block.timestamp + 300;" \
-  "trace://uniswap-v2-expired-002" \
+  "trace://uniswap-v2-expired-003" \
   "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-# ── Patterns for Container B (local discoveries) ─────────────────────────────
-
-echo ""
-echo "=== $B: local patterns ==="
-remember "$B" \
-  "ERC20: transfer amount exceeds allowance" \
-  "diff --git a/contracts/Vault.sol b/contracts/Vault.sol\n--- a/contracts/Vault.sol\n+++ b/contracts/Vault.sol\n@@ -20,5 +20,6 @@\n function deposit(uint amount) external {\n+  token.approve(address(this), amount);\n   token.transferFrom(msg.sender, address(this), amount);\n }" \
-  "trace://erc20-allowance-003" \
-  "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-
-remember "$B" \
-  "OTC: order already filled" \
-  "diff --git a/contracts/OTC.sol b/contracts/OTC.sol\n--- a/contracts/OTC.sol\n+++ b/contracts/OTC.sol\n@@ -34,4 +34,7 @@\n function fill(Order calldata order) external {\n+  require(!filledOrders[orderHash], 'OTC: order already filled');\n+  filledOrders[orderHash] = true;\n   _settle(order);\n }" \
-  "trace://otc-filled-004" \
-  "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-
-# ── Cross-mesh: A stores patterns received from B ─────────────────────────────
-
-echo ""
-echo "=== $A: mesh patterns received from $B ==="
 remember "$A" \
-  "UniswapV2: K" \
-  "diff --git a/contracts/Liquidity.sol b/contracts/Liquidity.sol\n--- a/contracts/Liquidity.sol\n+++ b/contracts/Liquidity.sol\n@@ -18,3 +18,5 @@\n function addLiquidity(...) {\n+  // Sort tokens — UniV2 requires token0 < token1\n+  (tokenA, tokenB) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);\n   _addLiquidity(tokenA, tokenB, amountA, amountB, ...);" \
-  "trace://uniswap-v2-k-005" \
-  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" \
-  "$B"
+  "UniswapV2: EXPIRED" \
+  "diff --git a/scripts/deploy.ts b/scripts/deploy.ts\n--- a/scripts/deploy.ts\n+++ b/scripts/deploy.ts\n@@ -14,3 +14,3 @@\n-  const deadline = 1700000000;\n+  const deadline = Math.floor(Date.now() / 1000) + 300;" \
+  "trace://deploy-expired-004" \
+  "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
 
-remember "$A" \
-  "OTC: signature replay" \
-  "diff --git a/contracts/OTC.sol b/contracts/OTC.sol\n--- a/contracts/OTC.sol\n+++ b/contracts/OTC.sol\n@@ -29,3 +29,4 @@\n bytes32 orderHash = _hashOrder(order);\n+  require(block.chainid == order.chainId, 'OTC: wrong chain');\n   require(!filledOrders[orderHash], 'OTC: already filled');" \
-  "trace://otc-replay-006" \
-  "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" \
-  "$B"
+# ── Container B: 2 ERC20 variants + 2 OTC variants ────────────────────────────
 
-# ── Cross-mesh: B stores patterns received from A ─────────────────────────────
+if [[ -n "$B" ]]; then
+  echo ""
+  echo "=== $B: local patterns ==="
+
+  remember "$B" \
+    "ERC20: transfer amount exceeds allowance" \
+    "diff --git a/contracts/Vault.sol b/contracts/Vault.sol\n--- a/contracts/Vault.sol\n+++ b/contracts/Vault.sol\n@@ -20,5 +20,6 @@\n function deposit(uint amount) external {\n+  token.approve(address(this), amount);\n   token.transferFrom(msg.sender, address(this), amount);\n }" \
+    "trace://erc20-vault-005" \
+    "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+  remember "$B" \
+    "ERC20: transfer amount exceeds allowance" \
+    "diff --git a/contracts/Staking.sol b/contracts/Staking.sol\n--- a/contracts/Staking.sol\n+++ b/contracts/Staking.sol\n@@ -45,5 +45,7 @@\n function stake(uint amount) external {\n+  stakingToken.approve(address(this), amount);\n   stakingToken.transferFrom(msg.sender, address(this), amount);\n }" \
+    "trace://erc20-staking-006" \
+    "0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+
+  remember "$B" \
+    "OTC: order already filled" \
+    "diff --git a/contracts/OTC.sol b/contracts/OTC.sol\n--- a/contracts/OTC.sol\n+++ b/contracts/OTC.sol\n@@ -34,4 +34,7 @@\n function fill(Order calldata order) external {\n+  bytes32 orderHash = _hashOrder(order);\n+  require(!filledOrders[orderHash], 'OTC: order already filled');\n+  filledOrders[orderHash] = true;\n   _settle(order);\n }" \
+    "trace://otc-single-007" \
+    "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+  remember "$B" \
+    "OTC: order already filled" \
+    "diff --git a/contracts/MultiOTC.sol b/contracts/MultiOTC.sol\n--- a/contracts/MultiOTC.sol\n+++ b/contracts/MultiOTC.sol\n@@ -58,4 +58,8 @@\n function fillBatch(Order[] calldata orders) external {\n   for (uint i = 0; i < orders.length; i++) {\n+    bytes32 h = _hashOrder(orders[i]);\n+    require(!filledOrders[h], 'OTC: order already filled');\n+    filledOrders[h] = true;\n     _settle(orders[i]);\n }" \
+    "trace://otc-batch-008" \
+    "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+fi
 
 echo ""
-echo "=== $B: mesh patterns received from $A ==="
-remember "$B" \
-  "Compound: INSUFFICIENT_LIQUIDITY" \
-  "diff --git a/contracts/Borrow.sol b/contracts/Borrow.sol\n--- a/contracts/Borrow.sol\n+++ b/contracts/Borrow.sol\n@@ -11,3 +11,5 @@\n function borrow(uint amount) external {\n+  uint cash = cToken.getCash();\n+  require(cash >= amount, 'Compound: INSUFFICIENT_LIQUIDITY');\n   cToken.borrow(amount);" \
-  "trace://compound-liquidity-007" \
-  "0x1111111111111111111111111111111111111111111111111111111111111111" \
-  "$A"
-
-remember "$B" \
-  "Safe: GS025" \
-  "diff --git a/scripts/execTx.ts b/scripts/execTx.ts\n--- a/scripts/execTx.ts\n+++ b/scripts/execTx.ts\n@@ -8,3 +8,5 @@\n const sigs = [sig1];\n+// Safe requires threshold signatures; collect all required owners\n+const sigs = await Promise.all(owners.slice(0, threshold).map(o => o.signTypedData(...)));\n const tx = await safe.execTransaction(...);" \
-  "trace://safe-gs025-008" \
-  "0x2222222222222222222222222222222222222222222222222222222222222222" \
-  "$A"
-
+echo "Done seeding."
 echo ""
-echo "Done seeding. Verifying patterns are readable via the 0G KV indexer…"
+echo "Each workspace's memory pane now sees:"
+echo "  - its own patterns under \"local\""
+echo "  - the OTHER workspace's patterns under \"mesh\" (auto-aggregated by the backend)"
 echo ""
-echo "=== Verifying $A ==="
-verify_container "$A" "$IDS_A"
-echo ""
-echo "=== Verifying $B ==="
-verify_container "$B" "$IDS_B"
-echo ""
-echo "All done."
+echo "Refresh the memory pane in the browser to see the patterns."

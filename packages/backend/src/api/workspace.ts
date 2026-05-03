@@ -1285,45 +1285,71 @@ export const workspaceApi = workspaceApiBase
       return c.json(createApiErrorBody('not_found', 'Workspace not found'), 404);
     }
 
-    const ports = await getWorkspaceContainerPorts(id).catch(() => null);
-    if (!ports?.memory) {
-      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service not ready'), 503);
+    type RawPattern = z.infer<typeof MemoryPatternSchema>;
+    type RawPage = { patterns: RawPattern[] };
+
+    // Fetch the LOCAL patterns from a single workspace's memory service.
+    // Returns an empty array if the container is not running or the service
+    // is unreachable — never throws, so a single offline peer can't break
+    // the whole pane.
+    async function fetchLocalPatterns(workspaceId: string): Promise<RawPattern[]> {
+      const ports = await getWorkspaceContainerPorts(workspaceId).catch(() => null);
+      if (!ports?.memory) return [];
+      const url = `http://127.0.0.1:${ports.memory}/patterns?scope=local&limit=200`;
+      try {
+        const res = await loopbackFetch(url);
+        if (!res.ok) return [];
+        const body = (await res.json()) as RawPage;
+        return Array.isArray(body.patterns) ? body.patterns : [];
+      } catch {
+        return [];
+      }
     }
 
-    const base = `http://127.0.0.1:${ports.memory}`;
+    const wantsLocal = scope === undefined || scope === 'local';
+    const wantsMesh = scope === undefined || scope === 'mesh';
 
-    type RawPage = { patterns: unknown[] };
+    // "local" = patterns this workspace itself has remembered.
+    const localPromise = wantsLocal ? fetchLocalPatterns(id) : Promise.resolve([] as RawPattern[]);
 
-    if (scope) {
-      let res: Response;
-      try {
-        res = await loopbackFetch(`${base}/patterns?scope=${scope}&limit=200`);
-      } catch {
-        return c.json(createApiErrorBody('runtime_unavailable', 'Memory service unreachable'), 503);
-      }
-      if (!res.ok)
-        return c.json(createApiErrorBody('runtime_unavailable', 'Memory fetch failed'), 503);
-      const body = (await res.json()) as RawPage;
-      return c.json(
-        { patterns: body.patterns } as unknown as {
-          patterns: z.infer<typeof MemoryPatternSchema>[];
-        },
-        200,
+    // "mesh" = patterns from OTHER workspaces owned by the same user.
+    // Each peer workspace's locals are re-tagged scope:'mesh' so the pane
+    // can visually separate own discoveries from peer discoveries without
+    // requiring producers to write into a separate KV stream.
+    let meshPromise: Promise<RawPattern[]> = Promise.resolve([]);
+    if (wantsMesh) {
+      const siblings = await prisma.workspace.findMany({
+        where: { userId, id: { not: id } },
+        select: { id: true },
+      });
+      meshPromise = Promise.all(siblings.map((w) => fetchLocalPatterns(w.id))).then((lists) =>
+        lists.flat().map((p) => ({ ...p, scope: 'mesh' as const })),
       );
     }
 
-    let localRes: Response;
-    let meshRes: Response;
-    try {
-      [localRes, meshRes] = await Promise.all([
-        loopbackFetch(`${base}/patterns?scope=local&limit=200`),
-        loopbackFetch(`${base}/patterns?scope=mesh&limit=200`),
-      ]);
-    } catch {
-      return c.json(createApiErrorBody('runtime_unavailable', 'Memory service unreachable'), 503);
+    const [local, mesh] = await Promise.all([localPromise, meshPromise]);
+
+    // The local memory service may also still hold patterns explicitly written
+    // with scope='mesh' (e.g. via the agent's mesh.collect_responses path).
+    // Include those when the caller asked for mesh, so we don't silently lose
+    // anything that producers actively pushed into the mesh stream.
+    if (wantsMesh) {
+      const ports = await getWorkspaceContainerPorts(id).catch(() => null);
+      if (ports?.memory) {
+        try {
+          const res = await loopbackFetch(
+            `http://127.0.0.1:${ports.memory}/patterns?scope=mesh&limit=200`,
+          );
+          if (res.ok) {
+            const body = (await res.json()) as RawPage;
+            if (Array.isArray(body.patterns)) mesh.push(...body.patterns);
+          }
+        } catch {
+          // ignore — already returning peer-derived mesh patterns
+        }
+      }
     }
-    const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
-    const mesh = meshRes.ok ? ((await meshRes.json()) as RawPage).patterns : [];
+
     return c.json(
       { patterns: [...local, ...mesh] } as unknown as {
         patterns: z.infer<typeof MemoryPatternSchema>[];
