@@ -42,7 +42,7 @@
 		<h2 class="mb-8 text-center text-xl font-semibold text-foreground">Built With</h2>
 
 		<div use:reveal class="flex flex-wrap items-center justify-center gap-4">
-			{#each technologies as tech, i}
+			{#each technologies as tech, i (tech.name)}
 				<div
 					class="group flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-all duration-300 hover:border-primary/40 hover:bg-muted/50"
 					style="animation-delay: {i * 50}ms;"

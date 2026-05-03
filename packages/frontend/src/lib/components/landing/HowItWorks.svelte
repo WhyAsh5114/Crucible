@@ -37,12 +37,12 @@
 		</p>
 
 		<div class="space-y-8">
-			{#each steps as step, i}
+			{#each steps as step, i (step.number)}
 				<div
 					use:reveal={{ delay: i * 100 }}
 					class="group flex gap-6 transition-all duration-300 hover:translate-x-2"
 				>
-					<div class="flex-shrink-0">
+					<div class="shrink-0">
 						<span
 							class="font-mono text-3xl font-bold text-muted-foreground transition-colors duration-300 group-hover:text-primary"
 						>
