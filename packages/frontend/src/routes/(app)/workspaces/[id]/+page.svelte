@@ -20,9 +20,11 @@
 	import TerminalPane from '$lib/components/panes/terminal-pane.svelte';
 	import WalletPane from '$lib/components/panes/wallet-pane.svelte';
 	import InspectorPane from '$lib/components/inspector/inspector-pane.svelte';
+	import MemoryPane from '$lib/components/panes/memory-pane.svelte';
 	import WorkspaceBootOverlay from '$lib/components/workspace-boot-overlay.svelte';
 	import WalletApprovalDialog from '$lib/components/wallet-approval-dialog.svelte';
 	import CpuIcon from '@lucide/svelte/icons/cpu';
+	import BrainIcon from '@lucide/svelte/icons/brain';
 	import MonitorIcon from '@lucide/svelte/icons/monitor';
 	import BotIcon from '@lucide/svelte/icons/bot';
 	import TerminalIcon from '@lucide/svelte/icons/terminal';
@@ -39,9 +41,9 @@
 	let workspace = $state<WorkspaceState | null>(null);
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
-	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector'>('editor');
-	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'devtools'>('editor');
-	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector'>('editor');
+	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
+	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory' | 'devtools'>('editor');
+	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
 	let loadedWorkspaceId = $state<string | null>(null);
 	// Latch: once a workspace has finished its initial boot we never show the
 	// full-screen boot overlay again for that session, even if a sub-component
@@ -388,8 +390,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector';
-										mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector';
+									activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
+									mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>
@@ -433,6 +435,13 @@
 													</Badge>
 												{/if}
 											</Tabs.Trigger>
+											<Tabs.Trigger
+												value="memory"
+												class="flex items-center gap-1.5 rounded-md px-3 py-1 font-mono text-xs text-muted-foreground data-[state=active]:bg-muted data-[state=active]:text-foreground"
+											>
+												<BrainIcon class="size-3 text-indigo-400" />
+												memory
+											</Tabs.Trigger>
 										</Tabs.List>
 									</div>
 									<Tabs.Content value="editor" class="m-0 min-h-0 flex-1 overflow-hidden">
@@ -446,6 +455,9 @@
 									</Tabs.Content>
 									<Tabs.Content value="wallet" class="m-0 min-h-0 flex-1 overflow-hidden">
 										<WalletPane {workspace} />
+									</Tabs.Content>
+									<Tabs.Content value="memory" class="m-0 min-h-0 flex-1 overflow-hidden">
+										<MemoryPane workspaceId={workspace.id} />
 									</Tabs.Content>
 								</Tabs.Root>
 							{/if}

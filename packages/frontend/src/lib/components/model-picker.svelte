@@ -6,6 +6,7 @@
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import ZapIcon from '@lucide/svelte/icons/zap';
+	import SearchIcon from '@lucide/svelte/icons/search';
 
 	export type ModelSelection =
 		| { provider: '0g'; model: string }
@@ -20,6 +21,7 @@
 
 	let models = $state<ModelsResponse | null>(null);
 	let loading = $state(true);
+	let search = $state('');
 
 	onMount(async () => {
 		try {
@@ -59,6 +61,12 @@
 		return base.replace(/-(instruct|chat|preview|latest)$/i, '');
 	}
 
+	function matchesSearch(m: string): boolean {
+		if (!search.trim()) return true;
+		const q = search.trim().toLowerCase();
+		return m.toLowerCase().includes(q) || shortModelName(m).toLowerCase().includes(q);
+	}
+
 	const RECOMMENDED = ['glm-5', 'minimax-b2.5', 'deepseek-v4-pro'];
 	function isRecommended(m: string): boolean {
 		const lower = m.toLowerCase();
@@ -66,7 +74,11 @@
 	}
 </script>
 
-<DropdownMenu.DropdownMenu>
+<DropdownMenu.DropdownMenu
+	onOpenChange={(open) => {
+		if (!open) search = '';
+	}}
+>
 	<DropdownMenu.DropdownMenuTrigger
 		class="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 	>
@@ -74,7 +86,7 @@
 			<SparklesIcon class="size-3 text-warning" />
 		{/if}
 		<span class="text-muted-foreground">{providerTag}</span>
-		<span class="max-w-[96px] truncate text-foreground">{label}</span>
+		<span class="max-w-24 truncate text-foreground">{label}</span>
 		<ChevronDownIcon class="size-3 text-muted-foreground" />
 	</DropdownMenu.DropdownMenuTrigger>
 
@@ -83,6 +95,18 @@
 			align="start"
 			class="max-h-[60vh] w-64 overflow-y-auto font-mono"
 		>
+			<!-- Search input -->
+			<div class="flex items-center gap-1.5 border-b px-2 py-1.5">
+				<SearchIcon class="size-3 shrink-0 text-muted-foreground" />
+				<input
+					type="text"
+					placeholder="Search models…"
+					bind:value={search}
+					onkeydown={(e) => e.stopPropagation()}
+					class="w-full bg-transparent text-[11px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+				/>
+			</div>
+
 			<!-- 0G section -->
 			{#if loading || models?.og}
 				<DropdownMenu.DropdownMenuGroup>
@@ -102,18 +126,20 @@
 						</DropdownMenu.DropdownMenuItem>
 					{:else if models?.og}
 						{@const ogModel = models.og.model}
-						<DropdownMenu.DropdownMenuItem
-							class="flex items-center justify-between text-[11px]"
-							onclick={() => onchange({ provider: '0g', model: ogModel })}
-						>
-							<span class="truncate">{shortModelName(ogModel)}</span>
-							{#if value.provider === '0g'}
-								<CheckIcon class="ml-2 size-3 shrink-0 text-warning" />
-							{/if}
-						</DropdownMenu.DropdownMenuItem>
-						<p class="px-2 pt-0.5 pb-1 text-[10px] text-muted-foreground/60">
-							Testnet: good for simple tasks. Use OpenAI for complex work.
-						</p>
+						{#if matchesSearch(ogModel)}
+							<DropdownMenu.DropdownMenuItem
+								class="flex items-center justify-between text-[11px]"
+								onclick={() => onchange({ provider: '0g', model: ogModel })}
+							>
+								<span class="truncate">{shortModelName(ogModel)}</span>
+								{#if value.provider === '0g'}
+									<CheckIcon class="ml-2 size-3 shrink-0 text-warning" />
+								{/if}
+							</DropdownMenu.DropdownMenuItem>
+							<p class="px-2 pt-0.5 pb-1 text-[10px] text-muted-foreground/60">
+								Testnet: good for simple tasks. Use OpenAI for complex work.
+							</p>
+						{/if}
 					{/if}
 				</DropdownMenu.DropdownMenuGroup>
 			{/if}
@@ -131,8 +157,14 @@
 							Loading…
 						</DropdownMenu.DropdownMenuItem>
 					{:else if models?.openai && models.openai.length > 0}
-						{@const recommended = models.openai.filter(isRecommended)}
-						{@const others = models.openai.filter((m) => !isRecommended(m))}
+						{@const recommended = models.openai.filter((m) => isRecommended(m) && matchesSearch(m))}
+						{@const others = models.openai.filter((m) => !isRecommended(m) && matchesSearch(m))}
+						{@const noResults = recommended.length === 0 && others.length === 0}
+						{#if noResults}
+							<DropdownMenu.DropdownMenuItem disabled class="text-[11px] text-muted-foreground">
+								No models match
+							</DropdownMenu.DropdownMenuItem>
+						{/if}
 						{#if recommended.length > 0}
 							<div class="flex items-center gap-1 px-2 pt-1 pb-0.5 text-[10px] text-warning/80">
 								<ZapIcon class="size-3" />

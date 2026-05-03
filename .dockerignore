@@ -1,0 +1,62 @@
+# Whitelist approach: exclude everything, then re-include only what the
+# Dockerfile actually COPYs.  BuildKit will not descend into any directory
+# that has no matching re-inclusion pattern, so node_modules (162 K+ inodes),
+# .git, and all other irrelevant trees are skipped entirely — not just
+# excluded after scanning.  This is what eliminates the 60–70 s
+# "load build context" step on macOS / OrbStack.
+
+**
+
+# ── Root workspace config ─────────────────────────────────────────────────────
+!package.json
+!bun.lock
+!bunfig.toml
+!turbo.json
+!tsconfig.base.json
+
+# ── Types package (full source) ───────────────────────────────────────────────
+!packages/types/**
+
+# ── MCP server packages (src + config only; no test / node_modules / cache) ──
+!packages/mcp-chain/package.json
+!packages/mcp-chain/tsconfig.json
+!packages/mcp-chain/src/**
+
+!packages/mcp-compiler/package.json
+!packages/mcp-compiler/tsconfig.json
+!packages/mcp-compiler/hardhat.config.js
+!packages/mcp-compiler/src/**
+
+!packages/mcp-deployer/package.json
+!packages/mcp-deployer/tsconfig.json
+!packages/mcp-deployer/src/**
+
+!packages/mcp-wallet/package.json
+!packages/mcp-wallet/tsconfig.json
+!packages/mcp-wallet/src/**
+
+!packages/mcp-memory/package.json
+!packages/mcp-memory/tsconfig.json
+!packages/mcp-memory/src/**
+
+!packages/mcp-mesh/package.json
+!packages/mcp-mesh/tsconfig.json
+!packages/mcp-mesh/src/**
+
+!packages/mcp-terminal/package.json
+!packages/mcp-terminal/tsconfig.json
+!packages/mcp-terminal/src/**
+
+!packages/mcp-devtools/package.json
+!packages/mcp-devtools/tsconfig.json
+!packages/mcp-devtools/src/**
+
+# ── Backend (package.json + prisma schema + runtime scripts only) ─────────────
+!packages/backend/package.json
+!packages/backend/prisma.config.ts
+!packages/backend/prisma/**
+!packages/backend/runtime/**
+
+# ── Agent + Frontend (package.json only — needed by bun install workspace) ───
+!packages/agent/package.json
+!packages/frontend/package.json
