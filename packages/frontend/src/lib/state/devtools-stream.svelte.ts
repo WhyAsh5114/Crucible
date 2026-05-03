@@ -55,6 +55,14 @@ export class DevtoolsStream {
 		this.start(this.workspaceId, { resetEvents: false });
 	}
 
+	clear(): void {
+		this.events = [];
+	}
+
+	clear(): void {
+		this.events = [];
+	}
+
 	stop(): void {
 		this.disconnect();
 		this.status = 'closed';

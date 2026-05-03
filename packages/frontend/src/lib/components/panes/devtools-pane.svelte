@@ -9,6 +9,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import WrenchIcon from '@lucide/svelte/icons/wrench';
 	import XIcon from '@lucide/svelte/icons/x';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import RefreshCcwIcon from '@lucide/svelte/icons/refresh-ccw';
 	import ServerIcon from '@lucide/svelte/icons/server';
 	import SearchIcon from '@lucide/svelte/icons/search';
@@ -214,6 +215,17 @@
 				{/if}
 				{stream.status === 'cutoff' ? 'stream cutoff' : stream.status}
 			</Badge>
+			{#if stream.events.length > 0}
+				<Button
+					variant="outline"
+					size="sm"
+					class="h-7 px-3 font-mono text-[10px] tracking-wide uppercase"
+					onclick={() => stream.clear()}
+				>
+					<Trash2Icon class="mr-1 size-3" />
+					clear
+				</Button>
+			{/if}
 			{#if stream.status === 'error' || stream.status === 'cutoff' || stream.status === 'closed' || stream.status === 'reconnecting'}
 				<Button
 					variant="outline"
