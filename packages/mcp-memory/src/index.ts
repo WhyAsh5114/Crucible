@@ -156,7 +156,7 @@ const purgeRoute = createRoute({
   },
 });
 
-const mcpServer = createMemoryServer({ workspaceRoot: WORKSPACE_ROOT });
+const mcpServer = createMemoryServer({ workspaceRoot: WORKSPACE_ROOT, service });
 
 type Env = { Variables: { parsedBody: unknown } };
 

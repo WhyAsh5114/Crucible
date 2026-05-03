@@ -9,7 +9,7 @@ import {
   type ListPatternsInput,
   type ProvenanceInput,
 } from '@crucible/types/mcp/memory';
-import { createMemoryService } from './service.ts';
+import { createMemoryService, type MemoryService } from './service.ts';
 
 const TAG = '[mcp-memory]';
 const log = (msg: string) => console.log(`${TAG} ${msg}`);
@@ -29,8 +29,11 @@ function errorResult(message: string): CallToolResult {
   };
 }
 
-export function createMemoryServer(opts: { workspaceRoot: string }): McpServer {
-  const service = createMemoryService(opts);
+export function createMemoryServer(opts: {
+  workspaceRoot: string;
+  service?: MemoryService;
+}): McpServer {
+  const service = opts.service ?? createMemoryService(opts);
   const server = new McpServer({
     name: 'crucible-memory',
     version: '0.0.0',
