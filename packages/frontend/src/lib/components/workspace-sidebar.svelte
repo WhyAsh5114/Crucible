@@ -10,6 +10,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { resolve } from '$app/paths';
 	import TemplatePickerDialog, {
 		TEMPLATE_INFO
 	} from '$lib/components/template-picker-dialog.svelte';
@@ -201,7 +202,7 @@
 	<Sidebar.Header>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<a href="/" class="block w-full">
+				<a href={resolve('/')} class="block w-full">
 					<Sidebar.MenuButton size="lg" class="w-full cursor-pointer">
 						<img src="/icon.svg" alt="Crucible" class="size-8" />
 						<div class="flex flex-col gap-0.5 leading-none">
