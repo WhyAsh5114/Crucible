@@ -58,10 +58,10 @@
 	class="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-background pr-12 pl-4 text-xs"
 >
 	<!-- ── Brand ─────────────────────────────────────────────────────────── -->
-	<div class="flex items-center gap-2">
+	<a href={resolve('/')} class="flex items-center gap-2 transition-opacity hover:opacity-80">
 		<img src="/icon.svg" alt="Crucible" class="size-5" />
 		<span class="font-medium tracking-tight text-foreground">Crucible</span>
-	</div>
+	</a>
 
 	<div class="h-4 w-px bg-border"></div>
 

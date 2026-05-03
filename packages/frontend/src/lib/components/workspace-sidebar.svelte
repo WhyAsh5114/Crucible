@@ -201,13 +201,15 @@
 	<Sidebar.Header>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<Sidebar.MenuButton size="lg" class="cursor-default">
-					<img src="/icon.svg" alt="Crucible" class="size-8" />
-					<div class="flex flex-col gap-0.5 leading-none">
-						<span class="font-semibold">Crucible</span>
-						<span class="text-xs text-muted-foreground">Web3 dev sandbox</span>
-					</div>
-				</Sidebar.MenuButton>
+				<a href="/" class="block w-full">
+					<Sidebar.MenuButton size="lg" class="w-full cursor-pointer">
+						<img src="/icon.svg" alt="Crucible" class="size-8" />
+						<div class="flex flex-col gap-0.5 leading-none">
+							<span class="font-semibold">Crucible</span>
+							<span class="text-xs text-muted-foreground">Web3 dev sandbox</span>
+						</div>
+					</Sidebar.MenuButton>
+				</a>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Header>
