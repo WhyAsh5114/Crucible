@@ -6,8 +6,7 @@
 </script>
 
 <section
-	class="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-16 sm:px-6 sm:py-20"
-	style="height: 150vh;"
+	class="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-4 py-4 sm:px-6 sm:py-20"
 >
 	<div class="sticky top-0 flex min-h-screen w-full items-center justify-center">
 		<div class="mx-auto flex max-w-5xl flex-col items-center text-center">
