@@ -199,6 +199,10 @@ export class WorkspaceClient {
 			param: { id: workspaceId },
 			query: scope ? { scope } : {}
 		});
+		// 503 means the memory service isn't up yet (normal during container boot).
+		// Return an empty list silently so the pane shows an empty state instead
+		// of a toast error that will self-resolve on the next refresh.
+		if (res.status === 503) return [];
 		if (!res.ok) throw new Error(`listMemoryPatterns failed: ${res.status} ${await res.text()}`);
 		const body = (await res.json()) as { patterns: MemoryPattern[] };
 		return body.patterns;
