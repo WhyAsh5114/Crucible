@@ -78,6 +78,7 @@ previewApi.get(
         };
       },
 
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       onMessage(evt, _ws) {
         const data = evt.data as string | ArrayBuffer;
         if (viteSocket?.readyState === WebSocket.OPEN) {
