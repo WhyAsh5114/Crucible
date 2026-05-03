@@ -572,7 +572,9 @@
 										class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 font-mono text-[10px] leading-relaxed">{#each patchLines(pattern.patch) as line, i (i)}<span
 												class={cn(
 													'block',
-													line.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+													line.startsWith('+')
+														? 'text-green-600 dark:text-green-400'
+														: 'text-red-600 dark:text-red-400'
 												)}>{line}</span
 											>{/each}</pre>
 								{/if}
@@ -728,8 +730,8 @@
 												class={cn(
 													'h-4 gap-1 px-1.5 text-[9px] uppercase',
 													selectedPattern.scope === 'local'
-													? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300'
-													: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300'
+														? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-300'
+														: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300'
 												)}
 											>
 												{#if selectedPattern.scope === 'local'}
@@ -758,7 +760,9 @@
 												class="overflow-x-auto rounded bg-muted/40 px-2.5 py-2 text-[10px] leading-relaxed">{#each patchLines(selectedPattern.patch, 10) as line, i (i)}<span
 														class={cn(
 															'block',
-															line.startsWith('+') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+															line.startsWith('+')
+																? 'text-green-600 dark:text-green-400'
+																: 'text-red-600 dark:text-red-400'
 														)}>{line}</span
 													>{/each}</pre>
 										</dd>

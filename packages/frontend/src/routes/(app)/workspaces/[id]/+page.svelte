@@ -42,7 +42,9 @@
 	let loading = $state(false);
 	let loadError = $state<string | null>(null);
 	let activeMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
-	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory' | 'devtools'>('editor');
+	let mainView = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory' | 'devtools'>(
+		'editor'
+	);
 	let previousMainTab = $state<'editor' | 'preview' | 'wallet' | 'inspector' | 'memory'>('editor');
 	let loadedWorkspaceId = $state<string | null>(null);
 	// Latch: once a workspace has finished its initial boot we never show the
@@ -390,8 +392,8 @@
 								<Tabs.Root
 									value={activeMainTab}
 									onValueChange={(v) => {
-									activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
-									mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
+										activeMainTab = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
+										mainView = v as 'editor' | 'preview' | 'wallet' | 'inspector' | 'memory';
 									}}
 									class="flex h-full min-h-0 flex-col"
 								>
