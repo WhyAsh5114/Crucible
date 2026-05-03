@@ -152,7 +152,7 @@ function createFsService(opts: {
   authorNode: string;
   originalSession: string;
 }): MemoryService {
-  const { patternsPath, authorNode, originalSession } = opts;
+  const { patternsPath, authorNode: ownNodeId, originalSession } = opts;
   return {
     async recall(input) {
       const patterns = await readPatternsFs(patternsPath);
@@ -162,14 +162,17 @@ function createFsService(opts: {
     async remember(input) {
       const patterns = await readPatternsFs(patternsPath);
       const id = newPatternId();
+      // Derive scope + authorNode from fromPeerId presence. The agent must NOT
+      // pass these directly — see the schema docstring for rationale.
+      const fromPeer = input.fromPeerId !== undefined;
       patterns.push({
         id,
         revertSignature: input.revertSignature,
         patch: input.patch,
         traceRef: input.traceRef,
         verificationReceipt: input.verificationReceipt,
-        provenance: { authorNode, originalSession },
-        scope: input.scope,
+        provenance: { authorNode: fromPeer ? input.fromPeerId! : ownNodeId, originalSession },
+        scope: fromPeer ? 'mesh' : 'local',
         createdAt: Date.now(),
       });
       await writePatternsFs(patternsPath, patterns);
@@ -351,14 +354,20 @@ function createKvService(cfg: KvConfig): MemoryService {
     },
     async remember(input) {
       const id = newPatternId();
+      // Derive scope + authorNode from fromPeerId presence. The agent must NOT
+      // pass these directly — see the schema docstring for rationale.
+      const fromPeer = input.fromPeerId !== undefined;
       const pattern: StoredPattern = {
         id,
         revertSignature: input.revertSignature,
         patch: input.patch,
         traceRef: input.traceRef,
         verificationReceipt: input.verificationReceipt,
-        provenance: { authorNode: cfg.authorNode, originalSession: cfg.originalSession },
-        scope: input.scope,
+        provenance: {
+          authorNode: fromPeer ? input.fromPeerId! : cfg.authorNode,
+          originalSession: cfg.originalSession,
+        },
+        scope: fromPeer ? 'mesh' : 'local',
         createdAt: Date.now(),
       };
       await writePattern(pattern);

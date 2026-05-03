@@ -9,7 +9,7 @@ import {
   MemoryProvenanceSchema,
   MemoryScopeSchema,
 } from '../memory.ts';
-import { HashSchema, PatternIdSchema } from '../primitives.ts';
+import { HashSchema, PatternIdSchema, PeerIdSchema } from '../primitives.ts';
 
 export const RecallInputSchema = z
   .object({
@@ -32,7 +32,17 @@ export const RememberInputSchema = z.object({
   /** Reference to the trace stored in the Log layer. */
   traceRef: z.string().min(1),
   verificationReceipt: HashSchema,
-  scope: MemoryScopeSchema,
+  /**
+   * AXL public key of the peer this pattern was received from.
+   * Set this ONLY when storing a patch obtained from `mesh.collect_responses`
+   * (i.e. Workflow D / mesh collaboration). Leave unset for patterns the agent
+   * derived locally itself.
+   *
+   * The service derives both `scope` (mesh vs local) and provenance.authorNode
+   * from the presence/value of this field — callers MUST NOT try to set scope
+   * or authorNode manually.
+   */
+  fromPeerId: PeerIdSchema.optional(),
 });
 export const RememberOutputSchema = z.object({ id: PatternIdSchema });
 export type RememberInput = z.infer<typeof RememberInputSchema>;
