@@ -205,8 +205,9 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
-- KeeperHub `ship` frontend UI — `POST /api/ship` and all MCP tools are wired; the inspector panel showing simulation output, live execution status, and clickable audit trail links is still pending.
+- KeeperHub `ship` frontend button — `POST /api/ship`, all MCP tools, Sepolia end-to-end validation, and frontend event rows (`ship-simulated-row`, `ship-status-row`, `ship-confirmed-row`) are all wired and rendered; what is missing is a `workspaceClient.ship()` call and a Ship button on the workspace page so the user can trigger a ship from the UI.
+- AXL cross-process proof — `mcp-mesh` is fully implemented inside each workspace runner container (port 3105); what remains is a same-machine dual-workspace AXL connectivity proof (two containers, `list_peers` shows mutual discovery) and a two-laptop proof.
+- Frontend mesh panel — the memory pane has a mesh scope filter and the chat inspector renders `mesh_help_broadcast` / `mesh_help_received` event rows, but there is no dedicated pane showing live peer list, active help requests, and received responses.
 - Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
 
 ---
