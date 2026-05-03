@@ -107,6 +107,34 @@ export const DeployOgChainOutputSchema = z.object({
 export type DeployOgChainInput = z.infer<typeof DeployOgChainInputSchema>;
 export type DeployOgChainOutput = z.infer<typeof DeployOgChainOutputSchema>;
 
+// ── deploy_sepolia ──────────────────────────────────────────────────────────
+
+/**
+ * Deploy a compiled contract to Ethereum Sepolia testnet (chainId 11155111).
+ * Uses the deployer node's `SEPOLIA_DEPLOY_PRIVATE_KEY` to sign and broadcast
+ * a real on-chain creation transaction via the configured Sepolia RPC endpoint.
+ */
+export const DeploySepoliaInputSchema = z.object({
+  /** Compiled contract name (e.g. "DemoVault"). Compile first via compiler-mcp. */
+  contractName: z.string().min(1),
+  /** Encoded constructor calldata appended to the bytecode. May be empty `0x`. */
+  constructorData: HexSchema,
+  /** Optional ETH value to send with the deployment, in wei. */
+  value: BigIntStringSchema.optional(),
+});
+
+export const DeploySepoliaOutputSchema = z.object({
+  address: AddressSchema,
+  txHash: HashSchema,
+  gasUsed: BigIntStringSchema,
+  /** Sepolia chain id. */
+  chainId: z.literal(11155111),
+  /** Etherscan Sepolia URL for the deployment transaction. */
+  explorerUrl: z.string().url(),
+});
+export type DeploySepoliaInput = z.infer<typeof DeploySepoliaInputSchema>;
+export type DeploySepoliaOutput = z.infer<typeof DeploySepoliaOutputSchema>;
+
 // ── Deployment registry ─────────────────────────────────────────────────────
 //
 // The deployer keeps an in-memory registry of every contract deployed in the
@@ -119,13 +147,13 @@ export const DeploymentRecordSchema = z.object({
   address: AddressSchema,
   txHash: HashSchema,
   /** Network this deployment lives on. "local" = Hardhat (chainId 31337). */
-  network: z.enum(['local', '0g-galileo']),
+  network: z.enum(['local', '0g-galileo', 'sepolia']),
   deployedAt: z.string().datetime(),
 });
 export type DeploymentRecord = z.infer<typeof DeploymentRecordSchema>;
 
 export const ListDeploymentsInputSchema = z.object({
-  network: z.enum(['local', '0g-galileo']).optional(),
+  network: z.enum(['local', '0g-galileo', 'sepolia']).optional(),
 });
 export const ListDeploymentsOutputSchema = z.object({
   deployments: z.array(DeploymentRecordSchema),
@@ -133,105 +161,12 @@ export const ListDeploymentsOutputSchema = z.object({
 export type ListDeploymentsInput = z.infer<typeof ListDeploymentsInputSchema>;
 export type ListDeploymentsOutput = z.infer<typeof ListDeploymentsOutputSchema>;
 
-// ── KeeperHub (Sepolia) ─────────────────────────────────────────────────────
-//
-// The KeeperHub ship path is the ONLY sanctioned route for public-chain
-// deployment. Tools are registered on the `deployer` MCP server (not a
-// separate `ship` server) so the agent has a single deployer surface.
-//
-// IMPORTANT (token-friendly contract): the agent never passes raw bytecode
-// in. Instead it passes `contractName` references — the deployer service
-// resolves bytecode internally from the compiler artifact store. This keeps
-// tool inputs small (token-friendly), avoids fragile copy-paste of multi-KB
-// hex strings, and means every Sepolia deploy goes through the same
-// compile-then-deploy invariant as the local chain.
-
-/** A single deployment artifact reference for KeeperHub bundling. */
-export const ShipArtifactRefSchema = z.object({
-  /** Compiled contract name (e.g. "DemoVault"). Compile via compiler.compile first. */
-  contractName: z.string().min(1),
-  /** Encoded constructor calldata. May be empty `0x`. */
-  constructorData: HexSchema.default('0x'),
-  /** Optional native-token value to send with the constructor (wei, decimal). */
-  value: BigIntStringSchema.optional(),
-});
-export type ShipArtifactRef = z.infer<typeof ShipArtifactRefSchema>;
-
-export const SimulateBundleInputSchema = z.object({
-  /**
-   * Compiled contract artifact references to deploy. Bytecode is fetched
-   * automatically from the compiler artifact store — DO NOT pass bytecode.
-   */
-  artifacts: z.array(ShipArtifactRefSchema).min(1),
-  /** EOA address that will authorize the bundle (KeeperHub wallet). */
-  deployerAddress: AddressSchema,
-  /** Sepolia (11155111) is the only supported public testnet. */
-  chainId: z.literal(11155111).default(11155111),
-});
-export type SimulateBundleInput = z.infer<typeof SimulateBundleInputSchema>;
-
-export const PerTxGasEstimateSchema = z.object({
-  index: z.number().int().nonnegative(),
-  contractName: z.string(),
-  /** Estimated gas as a decimal string. */
-  gasEstimate: BigIntStringSchema,
-  note: z.string().optional(),
-});
-export type PerTxGasEstimate = z.infer<typeof PerTxGasEstimateSchema>;
-
-export const SimulateBundleOutputSchema = z.object({
-  /** Opaque ID — pass to execute_tx. */
-  bundleId: z.string().min(1),
-  gasEstimates: z.array(PerTxGasEstimateSchema),
-  willSucceed: z.boolean().optional(),
-  summary: z.string().optional(),
-});
-export type SimulateBundleOutput = z.infer<typeof SimulateBundleOutputSchema>;
-
-export const ExecuteTxInputSchema = z.object({
-  bundleId: z.string().min(1),
-});
-export type ExecuteTxInput = z.infer<typeof ExecuteTxInputSchema>;
-
-export const KeeperHubStatusEnum = z.enum(['pending', 'mined', 'confirmed', 'failed']);
-
-export const ExecuteTxOutputSchema = z.object({
-  executionId: z.string().min(1),
-  txHash: HashSchema.nullable(),
-  status: KeeperHubStatusEnum,
-});
-export type ExecuteTxOutput = z.infer<typeof ExecuteTxOutputSchema>;
-
-export const GetExecutionStatusInputSchema = z.object({
-  executionId: z.string().min(1),
-});
-export type GetExecutionStatusInput = z.infer<typeof GetExecutionStatusInputSchema>;
-
-export const GetExecutionStatusOutputSchema = z.object({
-  executionId: z.string().min(1),
-  status: KeeperHubStatusEnum,
-  txHash: HashSchema.nullable(),
-  blockNumber: z.number().int().nonnegative().nullable(),
-  /** Set when status === 'confirmed' (KeeperHub audit-trail reference). */
-  auditTrailId: z.string().nullable(),
-  /** Deployed contract address (set on confirmed contract-creation txs). */
-  contractAddress: AddressSchema.nullable(),
-  /** Sepolia explorer URL once mined. */
-  explorerUrl: z.string().url().nullable(),
-});
-export type GetExecutionStatusOutput = z.infer<typeof GetExecutionStatusOutputSchema>;
-
 export const tools = {
   deploy_local: { input: DeployLocalInputSchema, output: DeployLocalOutputSchema },
   simulate_local: { input: SimulateLocalInputSchema, output: SimulateLocalOutputSchema },
   trace: { input: TraceInputSchema, output: TraceOutputSchema },
   call: { input: CallInputSchema, output: CallOutputSchema },
   deploy_og_chain: { input: DeployOgChainInputSchema, output: DeployOgChainOutputSchema },
+  deploy_sepolia: { input: DeploySepoliaInputSchema, output: DeploySepoliaOutputSchema },
   list_deployments: { input: ListDeploymentsInputSchema, output: ListDeploymentsOutputSchema },
-  simulate_bundle: { input: SimulateBundleInputSchema, output: SimulateBundleOutputSchema },
-  execute_tx: { input: ExecuteTxInputSchema, output: ExecuteTxOutputSchema },
-  get_execution_status: {
-    input: GetExecutionStatusInputSchema,
-    output: GetExecutionStatusOutputSchema,
-  },
 } as const;

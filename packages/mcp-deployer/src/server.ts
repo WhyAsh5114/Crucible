@@ -5,25 +5,17 @@ import {
   TraceInputSchema,
   CallInputSchema,
   DeployOgChainInputSchema,
+  DeploySepoliaInputSchema,
   ListDeploymentsInputSchema,
   type DeployLocalInput,
   type SimulateLocalInput,
   type TraceInput,
   type CallInput,
   type DeployOgChainInput,
+  type DeploySepoliaInput,
   type ListDeploymentsInput,
 } from '@crucible/types/mcp/deployer';
 import { createDeployerService, type DeployerService } from './service.ts';
-import {
-  SimulateBundleInputSchema,
-  ExecuteTxInputSchema,
-  GetExecutionStatusInputSchema,
-  type SimulateBundleInput,
-  type ExecuteTxInput,
-  type GetExecutionStatusInput,
-  createKeeperHubClient,
-  getKeeperHubConfig,
-} from './keeperhub-client.ts';
 
 const TAG = '[mcp-deployer]';
 const log = (msg: string) => console.log(`${TAG} ${msg}`);
@@ -50,25 +42,14 @@ export function createDeployerServer(
         workspaceRoot: string;
         compilerUrl?: string;
         ogDeployPrivateKey?: string;
-        keeperHubApiKey?: string;
-        keeperHubBaseUrl?: string;
       }
-    | { service: DeployerService; keeperHubApiKey?: string; keeperHubBaseUrl?: string },
+    | { service: DeployerService },
 ): McpServer {
   const service = 'service' in opts ? opts.service : createDeployerService(opts);
   const server = new McpServer({
     name: 'crucible-deployer',
     version: '0.0.0',
   });
-
-  // KeeperHub client — only available when KEEPERHUB_API_KEY is configured.
-  const khConfig = opts.keeperHubApiKey
-    ? {
-        apiKey: opts.keeperHubApiKey,
-        baseUrl: opts.keeperHubBaseUrl ?? 'https://app.keeperhub.com/api',
-      }
-    : getKeeperHubConfig();
-  const khClient = khConfig ? createKeeperHubClient(khConfig, service.resolveBytecode) : null;
 
   server.registerTool(
     'deploy_local',
@@ -107,8 +88,7 @@ export function createDeployerServer(
       title: 'Simulate Local Transaction',
       description:
         'Run eth_call + eth_estimateGas on the LOCAL Hardhat node without mining — returns call result, gas estimate, and optional revert reason. ' +
-        'LOCAL ONLY — do NOT use this for KeeperHub, Sepolia, or any public chain deployment. ' +
-        'For public-chain deployment pre-flight, use simulate_bundle instead.',
+        'LOCAL ONLY — do NOT use this for any public chain deployment.',
       inputSchema: SimulateLocalInputSchema,
       annotations: {
         readOnlyHint: true,
@@ -212,122 +192,39 @@ export function createDeployerServer(
       }
     },
   );
-
-  // ── KeeperHub ship tools ──────────────────────────────────────────────────
-  //
-  // ship_* AgentEvent shapes emitted by the POST /api/ship backend endpoint:
-  //
-  //   ship_simulated  { bundleId, gasEstimates: [{index, contractName, gasEstimate}], willSucceed }
-  //   ship_status     { executionId, status: 'pending'|'mined'|'confirmed', txHash?, blockNumber? }
-  //   ship_confirmed  { executionId, contractAddress, auditTrailId, explorerUrl }
-  //
-  // Dev C depends on this comment as the source of truth for event shapes.
-
   server.registerTool(
-    'simulate_bundle',
+    'deploy_sepolia',
     {
-      title: 'Simulate KeeperHub Deployment Bundle (Sepolia)',
+      title: 'Deploy Contract to Sepolia Testnet',
       description:
-        'KeeperHub/Sepolia deployment pre-flight. DO NOT confuse with simulate_local (which is for local Hardhat only). ' +
-        'Accepts compiled-artifact REFERENCES (contractName only — NEVER raw bytecode) plus the deployer address; ' +
-        'returns decoded per-tx gas estimates and a bundleId to pass to execute_tx. ' +
-        'Bytecode is resolved internally from the compiler artifact store, so the contract MUST be compiled first via compiler.compile. ' +
-        'This is the mandatory first step for ANY Sepolia / public-chain deployment — always call this before execute_tx. ' +
-        'Returns an error with instructions if KEEPERHUB_API_KEY is not set.',
-      inputSchema: SimulateBundleInputSchema,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (input: SimulateBundleInput) => {
-      if (!khClient) {
-        return errorResult(
-          'simulate_bundle: KEEPERHUB_API_KEY is not configured. Set it on the deployer node to enable KeeperHub ship path.',
-        );
-      }
-      try {
-        log('tool:simulate_bundle');
-        const output = await khClient.simulateBundle(input);
-        log(
-          `tool:simulate_bundle ok  bundleId=${output.bundleId} willSucceed=${output.willSucceed}`,
-        );
-        return toolResult(output);
-      } catch (err) {
-        logError(`tool:simulate_bundle error: ${String(err)}`);
-        return errorResult(`simulate_bundle failed: ${String(err)}`);
-      }
-    },
-  );
-
-  server.registerTool(
-    'execute_tx',
-    {
-      title: 'Execute KeeperHub Bundle',
-      description:
-        'Execute a previously simulated bundle (identified by bundleId) through KeeperHub ' +
-        'with automatic retry and private routing. ' +
-        'Returns { executionId, txHash, status } immediately. ' +
-        'Use get_execution_status to poll until confirmed. ' +
-        'NEVER calls eth_sendRawTransaction — all public-chain writes go through KeeperHub.',
-      inputSchema: ExecuteTxInputSchema,
+        'USE THIS TOOL when the user asks to deploy to "Sepolia" or needs a contract on Sepolia for KeeperHub automation. ' +
+        'Deploys a compiled contract to Ethereum Sepolia testnet (chainId 11155111). ' +
+        'Do NOT call start_node or deploy_local before this — this is an external testnet, not a local node. ' +
+        'Requires the contract to have been compiled first (run compile via compiler-mcp). ' +
+        'Bytecode is fetched automatically from the artifact store. ' +
+        'The deployer node must be configured with SEPOLIA_DEPLOY_PRIVATE_KEY and the wallet ' +
+        'must hold Sepolia ETH (faucet: https://sepoliafaucet.com). ' +
+        'Returns contract address, tx hash, gas used, and an Etherscan Sepolia explorer URL.',
+      inputSchema: DeploySepoliaInputSchema,
       annotations: {
         destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
       },
     },
-    async (input: ExecuteTxInput) => {
-      if (!khClient) {
-        return errorResult(
-          'execute_tx: KEEPERHUB_API_KEY is not configured. Set it on the deployer node to enable KeeperHub ship path.',
-        );
-      }
+    async (input: DeploySepoliaInput) => {
       try {
-        log(`tool:execute_tx bundleId=${input.bundleId}`);
-        const output = await khClient.executeTx(input);
-        log(`tool:execute_tx ok  executionId=${output.executionId} status=${output.status}`);
+        log('tool:deploy_sepolia');
+        const output = await service.deploySepolia(input);
+        log(`tool:deploy_sepolia ok  address=${output.address} txHash=${output.txHash}`);
         return toolResult(output);
       } catch (err) {
-        logError(`tool:execute_tx error: ${String(err)}`);
-        return errorResult(`execute_tx failed: ${String(err)}`);
+        logError(`tool:deploy_sepolia error: ${String(err)}`);
+        return errorResult(`deploy_sepolia failed: ${String(err)}`);
       }
     },
   );
-
-  server.registerTool(
-    'get_execution_status',
-    {
-      title: 'Poll KeeperHub Execution Status',
-      description:
-        'Poll the status of a KeeperHub execution by executionId. ' +
-        'Returns { executionId, status, txHash?, blockNumber?, auditTrailId?, contractAddress?, explorerUrl? }. ' +
-        'status progresses: pending → mined → confirmed (or failed). ' +
-        'auditTrailId is non-null on confirmed deployments — record it for the audit trail.',
-      inputSchema: GetExecutionStatusInputSchema,
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (input: GetExecutionStatusInput) => {
-      if (!khClient) {
-        return errorResult('get_execution_status: KEEPERHUB_API_KEY is not configured.');
-      }
-      try {
-        log(`tool:get_execution_status executionId=${input.executionId}`);
-        const output = await khClient.getExecutionStatus(input);
-        log(`tool:get_execution_status ok  status=${output.status}`);
-        return toolResult(output);
-      } catch (err) {
-        logError(`tool:get_execution_status error: ${String(err)}`);
-        return errorResult(`get_execution_status failed: ${String(err)}`);
-      }
-    },
-  );
-
+  // ── list_deployments ──────────────────────────────────────────────────────
   server.registerTool(
     'list_deployments',
     {
@@ -357,84 +254,6 @@ export function createDeployerServer(
   );
 
   // ── prompts ────────────────────────────────────────────────────────────────
-
-  server.registerPrompt(
-    'ship_workflow',
-    {
-      title: 'KeeperHub Ship Workflow',
-      description:
-        'Step-by-step guide for deploying compiled contracts to Sepolia via KeeperHub (simulate → execute → poll).',
-    },
-    () => ({
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: [
-              'You are connected to the crucible-deployer MCP server with KeeperHub enabled.',
-              '',
-              'Use this workflow to deploy compiled Solidity contracts to Sepolia via KeeperHub.',
-              'NEVER use deploy_local, deploy_og_chain, or eth_sendRawTransaction for Sepolia.',
-              '',
-              'Prerequisites:',
-              '  - Contracts must already be compiled (use crucible-compiler).',
-              '  - KEEPERHUB_API_KEY must be set in the deployer environment (starts with kh_).',
-              '',
-              'Step 1 — simulate_bundle',
-              '  Inputs:',
-              '    artifacts: Array of { contractName, constructorData?, value? }',
-              '      - contractName: exact Solidity contract name (e.g. "DemoVault") — must already be compiled',
-              '      - constructorData: ABI-encoded constructor args (omit or "0x" if no args)',
-              '      - value: optional native-token value (wei, decimal string)',
-              '      - DO NOT pass bytecode — it is resolved automatically from the compiler',
-              '    deployerAddress: the KeeperHub wallet address (checksummed 0x... address)',
-              '    chainId: 11155111  (Sepolia, default — may be omitted)',
-              '  Returns: { bundleId, gasEstimates[], willSucceed, summary }',
-              '    - bundleId: opaque string — pass to execute_tx',
-              '    - gasEstimates[]: per-contract estimate with contractName, gasEstimate (decimal), note',
-              '  Note: gas estimates are local approximations; actual cost is determined on-chain.',
-              '  Always simulate before executing — do not skip this step.',
-              '',
-              'Step 2 — execute_tx',
-              '  Inputs: { bundleId }  (from simulate_bundle)',
-              '  Returns: { executionId, txHash, status }',
-              '    - executionId: use this to poll status',
-              '    - status: "pending" initially',
-              '    - txHash: may be null at first',
-              '  Warning: NOT idempotent. Each call creates a new on-chain transaction.',
-              '',
-              'Step 3 — get_execution_status  (poll until terminal)',
-              '  Inputs: { executionId }  (from execute_tx)',
-              '  Returns: { executionId, status, txHash, blockNumber, auditTrailId, contractAddress, explorerUrl }',
-              '  Status progression: pending → mined → confirmed (or failed)',
-              '  Poll every ~5 seconds until status is "confirmed" or "failed".',
-              '  On "confirmed":',
-              '    - contractAddress: the deployed Sepolia address',
-              '    - auditTrailId: KeeperHub audit record — always record this',
-              '    - explorerUrl: Sepolia Etherscan link — report to the user',
-              '  On "failed":',
-              '    - Report the failure; include txHash if present',
-              '    - Do NOT retry; do NOT fall back to other deploy tools',
-              '',
-              'Error handling:',
-              '  simulate_bundle returns "KEEPERHUB_API_KEY is not configured"',
-              '    → Tell the user the env var is missing; you cannot fix this.',
-              '  simulate_bundle returns any other error',
-              '    → Report verbatim; do NOT call execute_tx.',
-              '  execute_tx fails',
-              '    → Report the error; if executionId was returned, poll with get_execution_status.',
-              '',
-              'Tool reference:',
-              '  simulate_bundle      — Pre-flight gas estimation; creates a KeeperHub workflow.',
-              '  execute_tx           — Executes the workflow; private routing (no raw signing).',
-              '  get_execution_status — Polls execution; returns tx details when confirmed.',
-            ].join('\n'),
-          },
-        },
-      ],
-    }),
-  );
 
   server.registerPrompt(
     'deployer_workflow',
