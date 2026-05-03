@@ -71,7 +71,7 @@ const server = await createServer({
     // endpoint is on an internal port the browser can't reach. The preview
     // still loads and functions correctly; file changes require a manual
     // reload. HMR can be re-enabled once WS proxying is implemented.
-    hmr: base !== '/' ? false : undefined,
+    hmr: base !== '/' ? { overlay: true } : undefined,
   },
   plugins: [crucibleBridgePlugin],
 });

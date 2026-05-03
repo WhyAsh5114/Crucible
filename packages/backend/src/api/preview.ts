@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { upgradeWebSocket } from 'hono/bun';
 import { getPreviewPort } from '../lib/preview-manager';
 
 /**
@@ -24,6 +25,81 @@ previewApi.get('/preview/:workspaceId', (c) => {
   return c.redirect(`/preview/${workspaceId}/`, 301);
 });
 
+// WebSocket proxy for Vite HMR.
+// Vite's client derives the WS URL from location.hostname + the configured base
+// (e.g. wss://crucible.example.com/preview/<id>/?token=…). Caddy forwards the
+// upgrade to port 3000; we proxy it down to the per-workspace Vite port.
+// This route MUST be registered before the HTTP all() handler because both
+// share the same path pattern — upgradeWebSocket falls through on plain HTTP.
+previewApi.get(
+  '/preview/:workspaceId/*',
+  upgradeWebSocket((c) => {
+    const workspaceId = c.req.param('workspaceId') ?? '';
+    const port = getPreviewPort(workspaceId);
+
+    if (port === null) {
+      return {
+        onOpen(_evt, ws) {
+          ws.close(1011, 'preview not running');
+        },
+      };
+    }
+
+    const url = new URL(c.req.url);
+    const targetUrl = `ws://127.0.0.1:${port}${url.pathname}${url.search}`;
+    const subprotocol = c.req.header('sec-websocket-protocol');
+
+    let viteSocket: WebSocket | null = null;
+    const queue: Array<string | ArrayBuffer> = [];
+
+    return {
+      onOpen(_evt, ws) {
+        viteSocket = new WebSocket(
+          targetUrl,
+          subprotocol ? subprotocol.split(',').map((s) => s.trim()) : 'vite-hmr',
+        );
+        viteSocket.binaryType = 'arraybuffer';
+
+        viteSocket.onopen = () => {
+          for (const msg of queue) viteSocket!.send(msg);
+          queue.length = 0;
+        };
+
+        viteSocket.onmessage = (e) => {
+          ws.send(e.data as string);
+        };
+
+        viteSocket.onclose = (e) => {
+          ws.close(e.code, e.reason || undefined);
+        };
+
+        viteSocket.onerror = () => {
+          ws.close(1011, 'upstream error');
+        };
+      },
+
+      onMessage(evt, _ws) {
+        const data = evt.data as string | ArrayBuffer;
+        if (viteSocket?.readyState === WebSocket.OPEN) {
+          viteSocket.send(data);
+        } else {
+          queue.push(data);
+        }
+      },
+
+      onClose() {
+        viteSocket?.close();
+        queue.length = 0;
+      },
+
+      onError() {
+        viteSocket?.close();
+        queue.length = 0;
+      },
+    };
+  }),
+);
+
 previewApi.all('/preview/:workspaceId/*', async (c) => {
   const workspaceId = c.req.param('workspaceId');
   const port = getPreviewPort(workspaceId);
@@ -36,11 +112,8 @@ previewApi.all('/preview/:workspaceId/*', async (c) => {
   const targetUrl = `http://127.0.0.1:${port}${url.pathname}${url.search}`;
 
   // Override the Host header so Vite's allowedHosts check passes.
-  // The original Host is the public domain (e.g. crucible.example.com);
-  // Vite only trusts localhost/127.0.0.1 by default.
   const forwardHeaders = new Headers(c.req.raw.headers);
   forwardHeaders.set('host', `127.0.0.1:${port}`);
-  // Remove hop-by-hop headers that shouldn't be forwarded.
   forwardHeaders.delete('connection');
 
   let response: Response;
@@ -54,7 +127,6 @@ previewApi.all('/preview/:workspaceId/*', async (c) => {
     return c.text('Preview unavailable — Vite server not ready', 502);
   }
 
-  // Strip hop-by-hop response headers before forwarding.
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete('connection');
   responseHeaders.delete('transfer-encoding');

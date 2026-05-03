@@ -395,7 +395,7 @@ function useContractsManifest(): {
 
     async function load(attempt: number): Promise<void> {
       try {
-        const res = await fetch('/contracts.json', {
+        const res = await fetch(import.meta.env.BASE_URL + 'contracts.json', {
           cache: 'no-store',
           headers: { Accept: 'application/json' },
         });
