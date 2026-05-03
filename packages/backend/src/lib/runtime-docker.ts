@@ -477,20 +477,21 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     if (val) env.push(`${key}=${val}`);
   }
 
-  // Each workspace gets its own local 0G KV stream so patterns written by
-  // workspace A are physically separate from patterns written by workspace B,
-  // even though they share the same private key. Derive as:
-  //   keccak256(signerAddress ++ workspaceId) → 32-byte stream ID
-  // If the operator has already set OG_STORAGE_LOCAL_STREAM_ID in the host
-  // env (e.g. for single-workspace deployments) we respect that instead.
+  // All containers sharing the same OG_STORAGE_PRIVATE_KEY share one 0G KV
+  // stream so that patterns written from any deployment (local dev, CI, a
+  // production droplet) are immediately visible everywhere. The stream ID is
+  // derived from just the signer address — not from the workspace ID — so
+  // seeding locally and reading on the droplet both hit the same on-chain data.
+  //   keccak256(signerAddress) → 32-byte stream ID
+  // Cross-user / cross-deployment visibility is achieved via the backend's
+  // container-to-container aggregation layer (listMemoryPatternsRoute).
+  // If the operator has already set OG_STORAGE_LOCAL_STREAM_ID explicitly we
+  // respect that override (useful for isolated single-workspace testing).
   const privateKey = process.env['OG_STORAGE_PRIVATE_KEY'];
   const explicitLocalStreamId = process.env['OG_STORAGE_LOCAL_STREAM_ID'];
   if (privateKey && !explicitLocalStreamId) {
     const signerAddress = computeAddress(privateKey);
-    const localStreamId = zeroPadValue(
-      keccak256(toUtf8Bytes(`${signerAddress}:${workspaceId}`)),
-      32,
-    );
+    const localStreamId = zeroPadValue(keccak256(toUtf8Bytes(signerAddress)), 32);
     env.push(`OG_STORAGE_LOCAL_STREAM_ID=${localStreamId}`);
   } else if (explicitLocalStreamId) {
     env.push(`OG_STORAGE_LOCAL_STREAM_ID=${explicitLocalStreamId}`);

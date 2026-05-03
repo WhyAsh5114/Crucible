@@ -1318,6 +1318,8 @@ export const workspaceApi = workspaceApiBase
     // requiring producers to write into a separate KV stream.
     let meshPromise: Promise<RawPattern[]> = Promise.resolve([]);
     if (wantsMesh) {
+      // Mesh = locals from ALL other workspaces across ALL users. 0G KV is a
+      // shared decentralised store — patterns are globally visible by design.
       const siblings = await prisma.workspace.findMany({
         where: { id: { not: id } },
         select: { id: true },
@@ -1407,9 +1409,9 @@ export const workspaceApi = workspaceApiBase
     const localRes = await loopbackFetch(`${memBase}/patterns?scope=local&limit=200`);
     const local = localRes.ok ? ((await localRes.json()) as RawPage).patterns : [];
 
-    // Fetch mesh patterns from ALL peer workspace containers (same approach as
-    // listMemoryPatternsRoute) — the container's own scope=mesh KV stream is
-    // unused in the aggregation model, so we must query peers directly.
+    // Fetch mesh patterns from ALL peer workspace containers across all users
+    // (same approach as listMemoryPatternsRoute) — the container's own scope=mesh
+    // KV stream is unused in the aggregation model, so we must query peers directly.
     const siblings = await prisma.workspace.findMany({
       where: { id: { not: id } },
       select: { id: true },

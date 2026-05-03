@@ -24,6 +24,7 @@ import { inferenceApi } from './api/inference';
 import { terminalApi } from './api/terminal';
 import { modelsApi } from './api/models';
 import { shipApi } from './api/ship';
+import { previewApi } from './api/preview';
 
 export { upgradeWebSocket };
 
@@ -74,7 +75,8 @@ const apiRoutes = app
   .route('/api', inferenceApi)
   .route('/api', modelsApi)
   .route('/api', shipApi)
-  .route('/', terminalApi);
+  .route('/', terminalApi)
+  .route('/', previewApi);
 
 apiRoutes.doc('/doc', { openapi: '3.0.0', info: { version: '0.0.0', title: 'crucible-backend' } });
 
