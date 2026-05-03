@@ -237,6 +237,10 @@ function createKvService(cfg: KvConfig): MemoryService {
   const indexer = new Indexer(cfg.indexerUrl);
   const kvClient = new KvClient(cfg.kvUrl);
 
+  // Write-through cache: patterns are stored here immediately on `remember` so
+  // that reads are instant even before the 0G KV indexer propagates the block.
+  const writeCache = new Map<string, StoredPattern>();
+
   let cachedNodes: StorageNode[] | null = null;
   let cachedFlowAddress: string | null = null;
 
@@ -327,6 +331,14 @@ function createKvService(cfg: KvConfig): MemoryService {
       }
     }
 
+    // Merge: KV results + any cached patterns for this scope not yet indexed.
+    const kvIds = new Set(out.map((p) => p.id));
+    for (const p of writeCache.values()) {
+      if (p.scope === scope && !kvIds.has(p.id)) {
+        out.push(p);
+      }
+    }
+
     return out;
   }
 
@@ -336,6 +348,8 @@ function createKvService(cfg: KvConfig): MemoryService {
   }
 
   async function findById(id: string): Promise<StoredPattern | null> {
+    // Check in-memory cache first for instant lookup.
+    if (writeCache.has(id)) return writeCache.get(id)!;
     for (const scope of ['local', 'mesh'] as const) {
       const streamId = streamIdForScope(cfg, scope);
       const value = await kvClient.getValue(streamId, hexlify(encodeKey(id)));
@@ -370,6 +384,8 @@ function createKvService(cfg: KvConfig): MemoryService {
         scope: fromPeer ? 'mesh' : 'local',
         createdAt: Date.now(),
       };
+      // Cache immediately so reads don't have to wait for 0G KV indexer propagation.
+      writeCache.set(id, pattern);
       await writePattern(pattern);
       return { id };
     },
@@ -405,6 +421,8 @@ function createKvService(cfg: KvConfig): MemoryService {
         }
         const [, err] = await batcher.exec();
         if (err) throw new Error(`0G KV purge failed for scope="${scope}": ${err.message}`);
+        // Clear purged entries from the write-through cache.
+        for (const pattern of patterns) writeCache.delete(pattern.id);
         deleted += patterns.length;
       }
       return { deleted };
