@@ -2,54 +2,119 @@
 	import { Check, X } from '@lucide/svelte';
 	import { reveal } from '$lib/actions/reveal';
 
-	const tools = ['Remix', 'ChainIDE', 'v0 (Vercel)', 'Crucible'];
+	const tools = [
+		{
+			name: 'Remix',
+			icon: 'https://remix.ethereum.org/assets/img/remix-logo-blue.png'
+		},
+		{
+			name: 'ChainIDE',
+			icon: 'https://chainide.com/favicon.ico'
+		},
+		{
+			name: 'v0',
+			displayName: 'v0 (Vercel)',
+			icon: 'https://v0.dev/favicon.ico'
+		},
+		{
+			name: 'Crucible',
+			icon: '/icon.svg',
+			isLocal: true
+		}
+	];
 
 	const rows = [
 		{
 			feature: 'AI-Driven',
-			values: ['No', 'No', 'Frontend only', 'Full-stack + chain']
+			values: [
+				{ text: 'RemixAI (chat)', positive: true },
+				{ text: 'Code Sage AI', positive: true },
+				{ text: 'Frontend + backend (sandbox)', positive: true },
+				{ text: 'Full-stack + chain', positive: true }
+			]
 		},
 		{
 			feature: 'Local Chain',
-			values: ['JS VM (limited)', 'Partial', 'No', 'Full Hardhat node (server-side)']
+			values: [
+				{ text: 'JS VM (in-browser, limited)', positive: true },
+				{ text: 'Cloud sandbox only', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Full Hardhat node (server-side)', positive: true }
+			]
 		},
 		{
 			feature: 'Embedded Wallet',
-			values: ['Yes (basic)', 'No', 'N/A', 'Pre-funded, labeled, auto-synced']
+			values: [
+				{ text: '10 test accounts', positive: true },
+				{ text: 'No (requires external MetaMask)', negative: true },
+				{ text: 'N/A', negative: true },
+				{ text: 'Pre-funded, labeled, auto-synced', positive: true }
+			]
 		},
 		{
 			feature: 'Live dApp Preview',
-			values: ['No', 'No', 'Yes', 'Yes, with chain injection']
+			values: [
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Yes', positive: true },
+				{ text: 'Yes, with chain injection', positive: true }
+			]
+		},
+		{
+			feature: 'Tx Inspector',
+			values: [
+				{ text: 'Basic only', negative: true },
+				{ text: 'Basic only', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Decoded traces, events, KeeperHub audit trail', positive: true }
+			]
 		},
 		{
 			feature: 'Agent has chain context',
-			values: ['No', 'No', 'No', 'Yes, via MCP']
+			values: [
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Yes, via MCP', positive: true }
+			]
 		},
 		{
 			feature: 'Persistent agent memory',
-			values: ['No', 'No', 'No', 'Yes, on 0G Storage']
+			values: [
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Yes, on 0G Storage (cross-session, cross-node)', positive: true }
+			]
 		},
 		{
 			feature: 'Peer knowledge mesh',
-			values: ['No', 'No', 'No', 'Yes, via Gensyn AXL']
+			values: [
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Yes, via Gensyn AXL', positive: true }
+			]
 		},
 		{
 			feature: 'Self-Healing Reverts',
-			values: ['No', 'No', 'No', 'Recall → mesh → patch → verify']
+			values: [
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'No', negative: true },
+				{ text: 'Recall → mesh → patch → verify → remember', positive: true }
+			]
 		},
 		{
 			feature: 'Ship to public chains',
-			values: ['Manual', 'Manual', 'N/A', 'One-click via KeeperHub']
+			values: [
+				{ text: 'Manual', negative: true },
+				{ text: 'Manual', negative: true },
+				{ text: 'N/A', negative: true },
+				{ text: 'One-click via KeeperHub (with audit trail)', positive: true }
+			]
 		}
 	];
-
-	function isNegative(value: string): boolean {
-		return value === 'No' || value === 'Manual' || value === 'N/A' || value === 'Partial';
-	}
-
-	function isPositive(value: string): boolean {
-		return value.startsWith('Yes') || (!isNegative(value) && value.length > 3);
-	}
 </script>
 
 <section class="border-t border-border py-20">
@@ -71,13 +136,21 @@
 						<th class="w-40 bg-muted px-4 py-3 text-left font-mono text-xs text-muted-foreground">
 							<!-- Feature column header -->
 						</th>
-						{#each tools as tool, i (tool)}
+						{#each tools as tool, i (tool.name)}
 							<th
 								class="px-4 py-3 text-center text-xs font-semibold {i === 3
 									? 'border-x border-border bg-primary text-primary-foreground'
 									: 'bg-muted text-foreground'}"
 							>
-								{tool}
+								<div class="flex items-center justify-center gap-2">
+									<img
+										src={tool.icon}
+										alt={tool.name}
+										class="h-4 w-4 object-contain"
+										loading="lazy"
+									/>
+									<span>{tool.displayName || tool.name}</span>
+								</div>
 							</th>
 						{/each}
 					</tr>
@@ -101,12 +174,12 @@
 										: 'text-muted-foreground'}"
 								>
 									<span class="inline-flex items-center justify-center gap-1.5">
-										{#if isNegative(value)}
-											<X size={12} class="text-muted-foreground" />
-										{:else if isPositive(value)}
-											<Check size={12} class={colIndex === 3 ? 'text-foreground' : ''} />
+										{#if value.negative}
+											<X size={14} class="shrink-0 text-muted-foreground" />
+										{:else if value.positive}
+											<Check size={14} class="shrink-0 {colIndex === 3 ? 'text-foreground' : 'text-muted-foreground'}" />
 										{/if}
-										{value}
+										{value.text}
 									</span>
 								</td>
 							{/each}
