@@ -1,25 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { authClient } from '$lib/auth-client';
 	import { Button } from '$lib/components/ui/button';
 	import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
 	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRightIcon';
-
-	const session = authClient.useSession();
-
-	// Authenticated visitors skip the landing — they're here to work, not to
-	// re-read the marketing copy.
-	$effect(() => {
-		if ($session.data?.user) {
-			void goto(resolve('/workspaces'), { replaceState: true });
-		}
-	});
-
-	onMount(() => {
-		void authClient.getSession();
-	});
 </script>
 
 <main class="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 p-6">
@@ -35,11 +18,4 @@
 			previews live, ships through KeeperHub.
 		</p>
 	</header>
-
-	{#if !$session.isPending && !$session.data?.user}
-		<Button size="lg" href={resolve('/login')}>
-			Login
-			<ArrowRightIcon data-icon="inline-end" weight="bold" />
-		</Button>
-	{/if}
 </main>
