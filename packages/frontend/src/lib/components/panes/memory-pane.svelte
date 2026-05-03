@@ -209,11 +209,7 @@
 		embeddings = new Map();
 		embedUnavailable = false;
 		try {
-			const [local, mesh] = await Promise.all([
-				workspaceClient.listMemoryPatterns(workspaceId, 'local'),
-				workspaceClient.listMemoryPatterns(workspaceId, 'mesh')
-			]);
-			allPatterns = [...local, ...mesh];
+			allPatterns = await workspaceClient.listMemoryPatterns(workspaceId);
 		} catch (err) {
 			toast.error('Failed to load patterns', {
 				description: err instanceof Error ? err.message : String(err)
@@ -267,10 +263,9 @@
 		embeddings = new Map();
 		embedUnavailable = false;
 		void workspaceClient
-			.listMemoryPatterns(id, 'local')
-			.then(async (local) => {
-				const mesh = await workspaceClient.listMemoryPatterns(id, 'mesh');
-				allPatterns = [...local, ...mesh];
+			.listMemoryPatterns(id)
+			.then((patterns) => {
+				allPatterns = patterns;
 			})
 			.catch((err: unknown) => {
 				toast.error('Failed to load patterns', {
