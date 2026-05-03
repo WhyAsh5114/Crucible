@@ -67,7 +67,11 @@
 	}
 </script>
 
-<DropdownMenu.DropdownMenu onOpenChange={(open) => { if (!open) search = ''; }}>
+<DropdownMenu.DropdownMenu
+	onOpenChange={(open) => {
+		if (!open) search = '';
+	}}
+>
 	<DropdownMenu.DropdownMenuTrigger
 		class="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] transition-colors hover:bg-muted focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 	>
