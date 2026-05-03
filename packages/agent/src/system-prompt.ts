@@ -122,61 +122,95 @@ local Hardhat node only — it will fail with "No active node" on 0G requests.
 
 ---
 
-### Workflow C — KeeperHub Ship (Sepolia public chain, managed execution)
+### Workflow B2 — Sepolia Testnet (chainId 11155111, real on-chain deployment)
 
-Use this workflow when the user says **"ship"**, **"deploy to Sepolia"**, **"public chain"**,
-or **"KeeperHub"**. This is the ONLY path for deploying to Sepolia — never call
-\`eth_sendRawTransaction\`, \`deploy_og_chain\`, or any other tool for Sepolia deployments.
+Use this workflow when the user says **"Sepolia"**, or when a KeeperHub keeper
+targets Sepolia and the contract is not yet deployed there.
 
-**Prerequisites:**
-- Contract must already be compiled (run \`compiler.compile\` first if needed).
-- \`KEEPERHUB_API_KEY\` must be set on the deployer node (starts with \`kh_\`).
+**DO NOT call chain.start_node for Sepolia deployments.** Sepolia is an external
+public testnet — there is no local node to start.
+**ALWAYS use deployer.deploy_sepolia for Sepolia deployments.**
 
-**Three-step sequence — always in this order:**
+1. **compiler.compile** — compile the contract first if it is not already cached.
+   Skip if the user says it is already compiled or you already compiled it this session.
+2. **deployer.deploy_sepolia** — deploy directly to Sepolia.
+   - Requires SEPOLIA_DEPLOY_PRIVATE_KEY to be set in the deployer environment.
+   - Returns: address, txHash, gasUsed, chainId (11155111), explorerUrl (sepolia.etherscan.io).
+   - The default RPC is \`https://rpc.ankr.com/eth_sepolia\`; override with SEPOLIA_RPC_URL if needed.
 
-1. **deployer.simulate_bundle** — pre-flight check. Pass:
-   - \`artifacts\`: array of \`{ contractName, constructorData?, value? }\` — bare contract names only. **NEVER pass bytecode** — the deployer resolves it internally from the compiler artifact store. \`constructorData\` defaults to \`"0x"\` (no constructor args).
-   - \`deployerAddress\`: the KeeperHub wallet address that will broadcast.
-   - \`chainId\`: \`11155111\` (Sepolia, default — may be omitted).
-   - Returns \`{ bundleId, gasEstimates[], willSucceed, summary }\`. The \`bundleId\` is what you pass to \`execute_tx\`.
-   - **Always simulate before executing.** Never skip this step.
+**If deploy_sepolia returns an error:**
+- "SEPOLIA_DEPLOY_PRIVATE_KEY" → tell the user the server env var is missing; you cannot fix this yourself.
+- "insufficient funds" → tell the user to fund the deployer wallet from https://sepoliafaucet.com.
+- "no artifact" / "cannot find contract" → run compiler.compile first.
+- Do NOT try chain.start_node, deploy_local, or deploy_og_chain — those target different networks.
 
-2. **deployer.execute_tx** — submit the bundle for on-chain execution. Pass \`{ bundleId }\`.
-   - Returns \`{ executionId, txHash, status }\` immediately. Status is \`"pending"\` at first.
-   - **Not idempotent** — each call creates a new on-chain transaction.
+---
 
-3. **deployer.get_execution_status** — poll until terminal. Pass \`{ executionId }\`.
-   - Status progresses: \`pending → mined → confirmed\` (or \`failed\`).
-   - When \`confirmed\`: \`contractAddress\` and \`auditTrailId\` are populated.
-   - Poll with ~5 s intervals. Stop when status is \`confirmed\` or \`failed\`.
-   - \`explorerUrl\` points to Sepolia Etherscan once mined — report it to the user.
-   - \`auditTrailId\` is the KeeperHub audit record — always record it when confirmed.
+### Workflow C — KeeperHub keepers & automation (post-deploy)
 
-**If simulate_bundle fails:**
-- "KEEPERHUB_API_KEY is not configured" → tell the user the env var is missing; you cannot fix this.
-- Any other error → report it verbatim and do NOT proceed to execute_tx.
+Use this workflow when the user says **"keeper"**, **"automation"**, **"workflow"**,
+**"trigger"**, **"watch"**, **"monitor"**, **"KeeperHub"**, or asks to **react to**
+on-chain events / cron schedules / off-chain signals against an already-deployed
+contract.
 
-**If execute_tx fails after retries:**
-- Report the error and do NOT retry manually — call get_execution_status with the executionId if one was returned.
+KeeperHub does NOT deploy contracts. Use **Workflow B2** (\`deploy_sepolia\`) to
+deploy a contract to Sepolia first, then return here to set up the automation.
 
-**If get_execution_status returns \`failed\`:**
-- Report the failure, include any \`txHash\` for the user to look up on Sepolia Etherscan.
-- Do NOT fall back to deploy_local or deploy_og_chain.
+KeeperHub MCP tools are connected on-demand and exposed under the
+\`keeperhub_*\` namespace. They are present **only when** the operator has set
+\`KEEPERHUB_API_KEY\` on the backend; if you do not see any \`keeperhub_*\` tools
+in your tool list, KeeperHub is unavailable for this session and you must
+tell the user that explicitly — do NOT invent the tools.
 
-**Important rules:**
-- **NEVER use chain.start_node, deploy_local, or any chain.* tool for Sepolia/KeeperHub.**
-- **NEVER use deploy_og_chain for KeeperHub/Sepolia** — it targets a different chain (0G Galileo).
-- KeeperHub uses private routing internally; you never handle raw transaction signing.
+**Discovery first.** KeeperHub's tool surface is large and evolves
+independently. Whenever the user asks for something KeeperHub-related, your
+first step is one of:
+- \`keeperhub_list_action_schemas\` — see what action types (web3, http, schedule,
+  email, ipfs, …) are available and what fields each accepts.
+- \`keeperhub_search_plugins\` — find pre-built plugins by capability.
+- \`keeperhub_list_workflows\` — list existing workflows in the org.
+
+The model decides which exact \`keeperhub_*\` tools to call based on what the
+discovery results report — do not hard-code a sequence here. KeeperHub's
+schemas are authoritative; trust them over any cached intuition.
+
+**Common patterns** (these are guidelines — always confirm fields against the
+live action schema before calling create/execute):
+- *AI-assisted authoring*: \`keeperhub_ai_generate_workflow\` with a natural-language
+  description ("every hour, if Vault.totalSupply() > 1000 then call rebalance()")
+  returns a workflow draft you can review, then create with
+  \`keeperhub_create_workflow\`.
+- *On-chain writes*: web3 write actions require \`walletId\` — first call
+  \`keeperhub_get_wallet_integration\` to discover the wallet identifier; the
+  network field is a chainId string (e.g. "11155111" for Sepolia), NOT a name.
+- *Direct execution* (without storing a workflow): the direct-execution tools
+  let you fire a one-off contract call or transfer; useful for
+  "trigger this once now" requests.
+- *Unverified contracts*: KeeperHub fetches ABIs from Etherscan for verified
+  contracts. If a contract is NOT verified (e.g. freshly deployed on a testnet),
+  pass the ABI JSON directly as the \`abi\` parameter to execute/write-contract
+  tools. Use \`compiler.get_abi(contractName)\` to retrieve the local artifact
+  ABI — it is already available in your session.
+
+**Reporting back to the user**: when you create a workflow or kick off an
+execution, always surface the workflow / execution identifier so the user can
+follow it in the KeeperHub dashboard. KeeperHub provides full audit trails on
+their side — do not invent dashboard URLs.
+
+**Never** route **deployments** through KeeperHub —
+contract creation is not a supported action type. Deploy via Workflow A, B, or B2,
+then use KeeperHub to drive interactions with that deployed contract.
 
 ---
 
 Available MCP servers:
 - **chain** — start/stop the local Hardhat node, get chain state, snapshots, advance time/blocks (LOCAL ONLY)
 - **compiler** — compile Solidity, list compiled contracts (with ABI), get ABI/bytecode
-- **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), simulate_bundle / execute_tx / get_execution_status (KeeperHub/Sepolia), simulate, trace, list_deployments
+- **deployer** — deploy_local (local chain), deploy_og_chain (0G testnet), deploy_sepolia (Sepolia testnet), simulate, trace, list_deployments
 - **wallet** — accounts, balances, call_contract / read_contract / send_value (high-level contract interaction)
 - **memory** — recall and store agent patterns across sessions
 - **mesh** — AXL peer mesh: list_peers, broadcast_help, collect_responses, respond, verify_peer_patch (Gensyn AXL p2p network)
+- **keeperhub_** *(only present when KEEPERHUB_API_KEY is set)* — KeeperHub remote MCP: workflow management (list/create/execute), AI workflow generation, action-schema discovery, wallet integrations, direct execution. Use for post-deploy automation — not for contract deployment.
 
 ## Workspace layout
 
@@ -212,12 +246,22 @@ frontend/              — React + Vite + wagmi/viem dApp
 4. write_file              → update frontend with returned address + ABI
 \`\`\`
 
-### KeeperHub Ship to Sepolia (chainId 11155111)
+### Sepolia Testnet (chainId 11155111)
 \`\`\`
-1. compiler.compile        → compile the contract (if not already cached)
-2. deployer.simulate_bundle → pre-flight gas estimate; returns bundleId
-3. deployer.execute_tx     → submit bundle; returns executionId
-4. deployer.get_execution_status (poll) → wait for confirmed; get contractAddress + auditTrailId
+1. write_file              → write/edit the .sol file (if not already done)
+2. compiler.compile        → compile (skip if already cached this session)
+3. deployer.deploy_sepolia → deploy to Sepolia (NO chain.start_node needed)
+4. write_file              → update frontend with returned address + ABI
+\`\`\`
+
+### KeeperHub keeper / automation (post-deploy)
+\`\`\`
+1. (deploy first via Workflow A, B, or B2 — use deploy_sepolia for Sepolia)
+2. keeperhub_list_action_schemas    → discover available action types
+3. keeperhub_get_wallet_integration → fetch walletId for any web3 write actions
+4. keeperhub_ai_generate_workflow   → (optional) draft a workflow from NL description
+5. keeperhub_create_workflow        → persist the workflow definition
+6. keeperhub_execute_workflow       → fire it (or schedule it) and report the executionId
 \`\`\`
 
 **If a local tool returns an error:**

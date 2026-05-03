@@ -245,7 +245,7 @@ function useContractsManifest(): { manifest: ContractsManifest | null; error: st
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function load(attempt: number): Promise<void> {
       try {
-        const res = await fetch('/contracts.json', { cache: 'no-store' });
+        const res = await fetch(import.meta.env.BASE_URL + 'contracts.json', { cache: 'no-store' });
         if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
         const ct = res.headers.get('content-type') ?? '';
         if (!ct.toLowerCase().includes('application/json')) throw new Error('not yet deployed');
@@ -406,7 +406,7 @@ function useContractsManifest(): { manifest: ContractsManifest | null; error: st
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function load(attempt: number): Promise<void> {
       try {
-        const res = await fetch('/contracts.json', { cache: 'no-store' });
+        const res = await fetch(import.meta.env.BASE_URL + 'contracts.json', { cache: 'no-store' });
         if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
         const ct = res.headers.get('content-type') ?? '';
         if (!ct.toLowerCase().includes('application/json')) throw new Error('not yet deployed');
@@ -566,7 +566,7 @@ function useContractsManifest(): { manifest: ContractsManifest | null; error: st
     let timer: ReturnType<typeof setTimeout> | null = null;
     async function load(attempt: number): Promise<void> {
       try {
-        const res = await fetch('/contracts.json', { cache: 'no-store' });
+        const res = await fetch(import.meta.env.BASE_URL + 'contracts.json', { cache: 'no-store' });
         if (!res.ok) throw new Error(\`HTTP \${res.status}\`);
         const ct = res.headers.get('content-type') ?? '';
         if (!ct.toLowerCase().includes('application/json')) throw new Error('not yet deployed');

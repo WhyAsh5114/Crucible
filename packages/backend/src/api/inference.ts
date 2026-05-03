@@ -167,10 +167,26 @@ async function runInference(
   // for the same workspace, so back-to-back prompts don't race.
   const controller = registerAgentTurn(workspaceId);
   try {
+    // KeeperHub remote MCP — single-tenant, agent-side. When KEEPERHUB_API_KEY
+    // is set in the backend env we connect every agent turn to KeeperHub's
+    // hosted MCP (https://app.keeperhub.com/mcp by default) so the model can
+    // call list_workflows, create_workflow, ai_generate_workflow,
+    // get_wallet_integration, etc. directly. See docs/TRACKS.md → KeeperHub.
+    const keeperHubApiKey = process.env['KEEPERHUB_API_KEY'];
+    const keeperHubMcpUrl = process.env['KEEPERHUB_MCP_URL'] ?? 'https://app.keeperhub.com/mcp';
+    const khConfig: { keeperHubMcpUrl?: string; keeperHubApiKey?: string } = keeperHubApiKey
+      ? { keeperHubMcpUrl, keeperHubApiKey }
+      : {};
+
     await runAgentTurn(
       workspaceId,
       prompt,
-      { ...resolved.config, mcpServerUrls, mcpFetch: loopbackFetch as typeof fetch },
+      {
+        ...resolved.config,
+        mcpServerUrls,
+        mcpFetch: loopbackFetch as typeof fetch,
+        ...khConfig,
+      },
       buildAdapter(sessionId),
       controller.signal,
     );
