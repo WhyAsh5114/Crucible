@@ -471,6 +471,7 @@ function buildContainerEnv(workspaceId: string, workspaceDir: string): string[] 
     'OG_DEPLOY_PRIVATE_KEY',
     'KEEPERHUB_API_KEY',
     'SEPOLIA_DEPLOY_PRIVATE_KEY',
+    'SEPOLIA_RPC_URL',
   ] as const;
 
   for (const key of ogPassthrough) {
