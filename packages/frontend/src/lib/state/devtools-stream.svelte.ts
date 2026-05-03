@@ -59,10 +59,6 @@ export class DevtoolsStream {
 		this.events = [];
 	}
 
-	clear(): void {
-		this.events = [];
-	}
-
 	stop(): void {
 		this.disconnect();
 		this.status = 'closed';
