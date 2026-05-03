@@ -538,6 +538,10 @@ export async function ensureWorkspaceContainer(
           HostConfig: {
             RestartPolicy: { Name: 'unless-stopped' },
             Binds: [bind],
+            // On Linux, Docker does not add host.docker.internal automatically.
+            // host-gateway resolves to the host's Docker bridge IP so containers
+            // can reach the backend even when it binds to 127.0.0.1.
+            ExtraHosts: ['host.docker.internal:host-gateway'],
             // Empty HostPort = Docker assigns a free port on the host.
             PortBindings: {
               [`${CONTAINER_CHAIN_PORT}/tcp`]: [{ HostPort: '' }],

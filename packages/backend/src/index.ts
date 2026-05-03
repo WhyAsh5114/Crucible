@@ -91,8 +91,10 @@ export type AppType = typeof apiRoutes;
 prisma.workspaceRuntime.updateMany({ data: { previewUrl: null } }).catch(() => undefined);
 
 const port = Number(process.env['PORT'] ?? 3000);
+const hostname = process.env['HOST'] ?? '127.0.0.1';
 export default {
   port,
+  hostname,
   idleTimeout: 0,
   fetch: apiRoutes.fetch,
   websocket,
