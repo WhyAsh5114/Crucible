@@ -205,15 +205,14 @@ Boundaries that hold today:
 
 What is **not** here yet, and where it will land when added:
 
-- `mcp-memory` durable backend — server is in-runner today but storage is local; a 0G Storage KV+Log adapter still needs to land.
 - KeeperHub `ship` frontend UI — `POST /api/ship` and all MCP tools are wired; the inspector panel showing simulation output, live execution status, and clickable audit trail links is still pending.
-- Preview subdomain gateway — the dev server is already running on the host (see above); what's missing is the Caddy gateway that maps `preview.<id>.crucible.localhost` to the per-workspace port. Until that lands, `sendToShell` in the bridge IIFE uses `'*'` as the target origin (acceptable for localhost dev; a Phase 5 TODO marks the exact line in `preview-manager.ts`).
+- Preview subdomain gateway — superseded by the path-based proxy (`/preview/:workspaceId/*`). Production preview is served at `${CRUCIBLE_APP_URL}/preview/${workspaceId}/`. A Caddy gateway for per-workspace subdomains (`preview.<id>.crucible.localhost`) remains a Phase 5 option but is no longer required for public deployment.
 
 ---
 
 ## Preview Isolation and Wallet Bridge
 
-The preview pane renders the workspace's Vite dev server in an `<iframe>`. For the dApp preview to be interactive (send transactions, call contracts), `window.ethereum` inside the iframe must point at the local Hardhat node. Because the iframe may run on a different origin from the shell (and will on a subdomain once the portless gateway lands), the connection goes through a three-layer postMessage bridge.
+The preview pane renders the workspace's Vite dev server in an `<iframe>`. For the dApp preview to be interactive (send transactions, call contracts), `window.ethereum` inside the iframe must point at the local Hardhat node. Because the iframe may run on a different origin from the shell, the connection goes through a three-layer postMessage bridge.
 
 ### Layer 1 — Bridge Script (preview origin)
 
@@ -268,7 +267,7 @@ All frames use the `crucible-preview-bridge` v1 envelope defined in `packages/ty
 
 ### Phase 5 Note
 
-Once the portless Caddy gateway is live (`preview.<id>.crucible.localhost`), the IIFE's `sendToShell` call must be updated from `postMessage(msg, '*')` to `postMessage(msg, SHELL_ORIGIN)` where `SHELL_ORIGIN` is the known shell origin. The exact line is marked with a `// Phase 5 TODO` comment in `preview-manager.ts`.
+The path-based proxy (`/preview/:workspaceId/*`) is now the production preview path. When `CRUCIBLE_APP_URL` is set, both preview and shell share the same backend origin, so the bridge IIFE's `sendToShell` still uses `'*'` as `targetOrigin` — this is safe under the proxy model. The per-workspace subdomain approach (`preview.<id>.crucible.localhost`) is deferred to Phase 5; if it is ever adopted, the `sendToShell` call must be tightened to `postMessage(msg, SHELL_ORIGIN)`. The exact line is marked with a `// Phase 5 TODO` comment in `preview-manager.ts`.
 
 ---
 
@@ -939,10 +938,14 @@ Phase 7 — deployer.deploy_local    redeploy fixed contract
 
 **Memory back-end:** when `OG_STORAGE_PRIVATE_KEY` + `OG_STORAGE_KV_URL` are set,
 `memory-mcp` writes to 0G Storage KV; otherwise it falls back to a local JSONL
-file in `${workspaceDir}/.crucible/memory.jsonl`. The peer-mesh fallback shown
-in earlier drafts of this doc is wired through `mesh-mcp` _(planned, not yet
-implemented)_; in the current shipped loop, `recall` returns hits or `[]` and
-the LLM falls back to reasoning from the trace + source code.
+file in `${workspaceDir}/.crucible/memory.jsonl`. Each workspace container uses a
+workspace-specific KV stream ID derived as `keccak256(signerAddress + ':' + workspaceId)`
+so that patterns from different workspaces do not collide on the same 0G stream.
+A write-through in-memory cache (`writeCache`) bridges the 0G indexer propagation
+delay so newly stored patterns are readable immediately within the same container
+session. Peer-mesh recall is wired through `mesh-mcp` (see §mcp-mesh above);
+in the current loop, `recall` queries local storage first, then broadcasts to
+mesh peers only when local hits are empty.
 
 **Cleanup contract:** if the turn is cancelled or errors mid-repair, the
 `finally` block opens a one-shot MCP client to `chain.revert(snapshotId)` so

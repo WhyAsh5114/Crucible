@@ -129,10 +129,13 @@
 - [x] `runtime-docker.ts` — create / start / inspect / stop / reconcile per-workspace containers
 - [x] Cold-start polling loop — `starting → ready | degraded | crashed`
 - [x] Tool calls survive runner restart — port re-discovery
+- [x] `HOST` env var — backend binds to `HOST` (default `127.0.0.1`); set to `0.0.0.0` on EC2 for nginx proxy
+- [x] `ExtraHosts: host.docker.internal:host-gateway` — Linux Docker compatibility so containers can reach the backend
+- [x] Path-based preview proxy — `GET /preview/:workspaceId/*` on the backend streams requests to the internal Vite port; WebSocket proxy for HMR included; activated by `CRUCIBLE_APP_URL` env var
 
 ### Still required (post-hackathon unless cheap)
 
-- [ ] Gateway container (Caddy / Traefik) — TLS termination + preview-subdomain routing
+- [ ] Gateway container (Caddy / Traefik) — TLS termination; preview-subdomain routing is now optional (path proxy covers production use)
 - [ ] AXL sidecar container alongside control plane
 - [ ] Docker Compose top-level stack (gateway + control plane + AXL + cloudflared)
 - [ ] Cloudflare Tunnel for public ingress from laptop
@@ -173,15 +176,15 @@
 
 ## Gensyn Track — Best Application of AXL
 
-- [ ] AXL node binary running per Crucible backend instance
-- [ ] `mcp-mesh` package wrapping AXL node binary
-- [ ] Peer discovery + `list_peers`
-- [ ] Structured message format (not freeform chat) — `{revert_signature, full_trace, contract_source, solc_version, ttl}`
-- [ ] `broadcast_help` + `collect_responses` + `respond` + `verify_peer_patch`
+- [x] AXL node binary running per workspace runner container (Stage 0 in Dockerfile, `axl-node` binary built from `gensyn-ai/axl`)
+- [x] `mcp-mesh` package wrapping AXL node binary
+- [x] Peer discovery + `list_peers`
+- [x] Structured message format (not freeform chat) — `{revert_signature, full_trace, contract_source, solc_version, ttl}`
+- [x] `broadcast_help` + `collect_responses` + `respond` + `verify_peer_patch`
 - [ ] **Cross-process AXL**: two independent AXL node processes (not in-process) — required by Gensyn rules
 - [ ] Two-laptop demo: `axl status` on both machines proving independent peers
 - [x] Code quality: Turborepo monorepo, TypeScript 6.x, ESLint 9 flat config, Vitest 4.x
-- [ ] `ARCHITECTURE.md` section documenting `mcp-mesh` tool spec (update when implemented)
+- [x] `ARCHITECTURE.md` section documenting `mcp-mesh` tool spec
 
 ---
 
