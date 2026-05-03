@@ -150,16 +150,16 @@ These are the product proofs of value. They determine build order.
 
 Only one thing truly freezes on Day 0: the type contracts. Everything else stays replaceable.
 
-| Boundary                            | Contract                                                                                     | Why it must freeze early                                           |
-| :---------------------------------- | :------------------------------------------------------------------------------------------- | :----------------------------------------------------------------- |
-| Frontend <-> backend                | `WorkspaceState`, `PromptRequest`, `ShipResponse`, `AgentEvent` stream                       | Lets UI, backend, and agent move independently                     |
-| Agent <-> MCP tools                 | Zod-validated tool schemas in `packages/types`                                               | Prevents direct package imports and hidden coupling                |
-| Control plane <-> workspace runtime | `open_workspace`, `runtime_status`, `preview_url`, terminal session, tool execution envelope | Keeps child-process mode and runner-container mode interchangeable |
-| Preview <-> shell                   | Exact-origin message contract for EIP-1193 bridging                                          | Avoids preview-specific hacks leaking into the app shell           |
-| Memory layer <-> agent              | `recall`, `remember`, `list_patterns`, `provenance`                                          | Lets local fixtures and 0G backends share one interface            |
-| Mesh layer <-> agent                | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`          | Keeps AXL optional until the mesh proof phase                      |
-| Shipping layer <-> agent            | `simulate_bundle`, `execute_tx`, `get_execution_status`                                      | Keeps public-chain execution isolated from local-chain logic       |
-| Inference layer <-> agent           | provider adapter result including receipt metadata and degraded-mode flag                    | Makes 0G primary while keeping fallback honest                     |
+| Boundary                            | Contract                                                                                                               | Why it must freeze early                                           |
+| :---------------------------------- | :--------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------- |
+| Frontend <-> backend                | `WorkspaceState`, `PromptRequest`, `ShipResponse`, `AgentEvent` stream                                                 | Lets UI, backend, and agent move independently                     |
+| Agent <-> MCP tools                 | Zod-validated tool schemas in `packages/types`                                                                         | Prevents direct package imports and hidden coupling                |
+| Control plane <-> workspace runtime | `open_workspace`, `runtime_status`, `preview_url`, terminal session, tool execution envelope                           | Keeps child-process mode and runner-container mode interchangeable |
+| Preview <-> shell                   | Exact-origin message contract for EIP-1193 bridging                                                                    | Avoids preview-specific hacks leaking into the app shell           |
+| Memory layer <-> agent              | `recall`, `remember`, `list_patterns`, `provenance`                                                                    | Lets local fixtures and 0G backends share one interface            |
+| Mesh layer <-> agent                | `list_peers`, `broadcast_help`, `collect_responses`, `respond`, `verify_peer_patch`                                    | Keeps AXL optional until the mesh proof phase                      |
+| Shipping layer <-> agent            | `deploy_sepolia`, `deploy_og_chain` for public-chain deploy; `keeperhub_*` hosted MCP tools for post-deploy automation | Keeps public-chain execution isolated from local-chain logic       |
+| Inference layer <-> agent           | provider adapter result including receipt metadata and degraded-mode flag                                              | Makes 0G primary while keeping fallback honest                     |
 
 ### Non-Negotiable Architectural Rules
 
@@ -203,8 +203,8 @@ The plan is phased by proof, not by package completion.
 - `packages/types` merged and treated as frozen
 - Fixture payloads for every `AgentEvent` variant
 - Mock runtime contract returning `WorkspaceState`, `previewUrl`, and `terminalSessionId`
-- Mock MCP responses for chain, compiler, deployer, wallet, memory, mesh, and ship
-- A single source of truth for dev env flags such as `MOCK_RUNTIME`, `MOCK_MEMORY`, `MOCK_MESH`, `MOCK_SHIP`, `MOCK_INFERENCE`
+- Mock MCP responses for chain, compiler, deployer, wallet, memory, and mesh
+- A single source of truth for dev env flags such as `MOCK_RUNTIME`, `MOCK_MEMORY`, `MOCK_MESH`, `MOCK_INFERENCE`
 
 **Gate:** By end of Day 1, every domain can build against typed fixtures without waiting on another domain.
 
@@ -281,23 +281,20 @@ The plan is phased by proof, not by package completion.
 
 ### Phase 4 — Prove POV-4: Ship Path
 
-**Days 7-8 (May 1-2) — 🟢 Backend shipped; frontend UI pending**
+**Days 7-8 (May 1-2) — ✅ Fully shipped (approach changed)**
 
-**Goal:** Keep public-chain execution isolated from the local development loop and make KeeperHub the only public-chain path.
+**Goal:** Keep public-chain execution isolated from the local development loop; KeeperHub is the post-deploy automation layer.
 
 **Status:**
 
-- ✅ `POST /api/ship` wired to KeeperHub only — phases: simulate → (optional) execute → background poll → persist.
-- ✅ `simulate_bundle`, `execute_tx`, `get_execution_status` MCP tools registered in `mcp-deployer/server.ts`; `keeperhub-client.ts` handles exponential back-off and status enum mapping.
-- ✅ `ship_simulated` / `ship_status` / `ship_confirmed` `AgentEvent` types emitted from the backend with `sessionId` scoping.
-- ✅ Sepolia contract address persisted to workspace `deployments` DB column on confirmed deploy; `auditTrailId` captured.
-- ✅ Auth-gated: `requireSession` + workspace ownership check in `POST /api/ship`.
+- ✅ `deploy_sepolia` added to `mcp-deployer` — viem, chainId 11155111, `SEPOLIA_DEPLOY_PRIVATE_KEY`, Etherscan explorer URLs.
+- ✅ KeeperHub connected as hosted MCP at `https://app.keeperhub.com/mcp` with Bearer auth in the agent loop; all `keeperhub_*` tools auto-discovered via `schemas: 'automatic'`.
+- ✅ System prompt teaches `Workflow B2` (deploy to Sepolia via `deploy_sepolia`) and `Workflow C` (KeeperHub keeper authoring via `keeperhub_ai_generate_workflow` / `keeperhub_create_workflow` / `keeperhub_execute_workflow`).
 - ✅ No `eth_sendRawTransaction` to a public RPC anywhere in the KeeperHub path.
-- 🔴 Frontend Ship button / dedicated inspector panel not yet wired — ship events appear in the chat stream (event rows are rendered) but there is no standalone "Ship" button that posts to `/api/ship` from the UI.\n- 🔴 Sepolia end-to-end path not validated with a real `KEEPERHUB_API_KEY` on testnet.
+- ✅ `KEEPERHUB_API_KEY` and `KEEPERHUB_MCP_URL` documented in `.env.example`; `runtime-docker.ts` forwards both to the container env.
+- ℹ️ Previous approach (`POST /api/ship`, `keeperhub-client.ts`, `simulate_bundle`/`execute_tx` MCP tools, `ship_*` events) removed — KeeperHub does not support contract creation as an action type.
 
-**Success demo:** User clicks Ship, sees KeeperHub simulation, execution status, and audit trail for the exact artifact that just ran locally.
-
-**Kill criteria:** If shipping is unstable by Day 12, freeze scope to Sepolia, one contract archetype, and no live post-deploy interactions from the public preview.
+**Success demo:** Agent deploys to Sepolia via `deploy_sepolia` (Etherscan link), then calls `keeperhub_list_action_schemas` → `keeperhub_get_wallet_integration` → `keeperhub_ai_generate_workflow` → `keeperhub_create_workflow` → `keeperhub_execute_workflow`; Inspector shows each tool call and the returned `executionId`.
 
 ### Phase 5 — Prove POV-5: Hosted Runtime and Demo Hardening
 
@@ -347,15 +344,15 @@ These are go/no-go gates, not status ceremonies.
 
 Stubs are not temporary hacks. They are how we keep the build decoupled.
 
-| Boundary          | Stub artifact                                             | Purpose                                                                     |
-| :---------------- | :-------------------------------------------------------- | :-------------------------------------------------------------------------- |
-| Agent events      | `packages/frontend/src/lib/fixtures/agentEvents.json`     | Frontend can render every event union variant immediately                   |
-| Workspace runtime | Mock `GET /api/workspace/:id` + fake preview/terminal IDs | Frontend and backend can wire the shell before the real runtime is stable   |
-| Chain toolchain   | `--mock` mode for chain/compiler/deployer/wallet MCPs     | Agent can exercise planning loop before Hardhat is reliable                 |
-| Memory            | Local fixture-backed `recall`/`remember` implementation   | Repair loop can be proven before 0G wiring is done                          |
-| Mesh              | Fixture peer directory + canned help responses            | UI and orchestration can be built before AXL networking is live             |
-| Ship              | KeeperHub fixture adapter                                 | Inspector and ship flow can be built before real execution is wired         |
-| Inference         | Receipt-shaped fixture result                             | UI can handle receipts and degraded mode before real 0G transport is stable |
+| Boundary          | Stub artifact                                             | Purpose                                                                         |
+| :---------------- | :-------------------------------------------------------- | :------------------------------------------------------------------------------ |
+| Agent events      | `packages/frontend/src/lib/fixtures/agentEvents.json`     | Frontend can render every event union variant immediately                       |
+| Workspace runtime | Mock `GET /api/workspace/:id` + fake preview/terminal IDs | Frontend and backend can wire the shell before the real runtime is stable       |
+| Chain toolchain   | `--mock` mode for chain/compiler/deployer/wallet MCPs     | Agent can exercise planning loop before Hardhat is reliable                     |
+| Memory            | Local fixture-backed `recall`/`remember` implementation   | Repair loop can be proven before 0G wiring is done                              |
+| Mesh              | Fixture peer directory + canned help responses            | UI and orchestration can be built before AXL networking is live                 |
+| KeeperHub MCP     | Canned `keeperhub_*` tool responses                       | Agent can exercise keeper authoring flow before real KEEPERHUB_API_KEY is wired |
+| Inference         | Receipt-shaped fixture result                             | UI can handle receipts and degraded mode before real 0G transport is stable     |
 
 ### Stub Rule
 

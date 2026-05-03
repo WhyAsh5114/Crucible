@@ -620,7 +620,7 @@ resize(sessionId: string, cols: number, rows: number): { success }
 
 ### KeeperHub MCP (External, hosted)
 
-Connected from the agent loop (`packages/agent/src/loop.ts`) per turn when `KEEPERHUB_API_KEY` is set in the backend env. Transport is plain HTTP MCP at `https://app.keeperhub.com/mcp` with `Authorization: Bearer kh_…`. Tools are surfaced to the model under the `keeperhub_*` namespace via `@ai-sdk/mcp` with `schemas: 'automatic'`, so the agent always sees KeeperHub's current tool surface without client-side rebuilds. **Used for post-deploy automation, not for contract creation** — deploy via `deployer.deploy_local` or `deployer.deploy_og_chain`, then drive keepers / scheduled actions / on-chain reads & writes against the deployed contract through the KeeperHub workflow API.
+Connected from the agent loop (`packages/agent/src/loop.ts`) per turn when `KEEPERHUB_API_KEY` is set in the backend env. Transport is plain HTTP MCP at `https://app.keeperhub.com/mcp` with `Authorization: Bearer kh_…`. Tools are surfaced to the model under the `keeperhub_*` namespace via `@ai-sdk/mcp` with `schemas: 'automatic'`, so the agent always sees KeeperHub's current tool surface without client-side rebuilds. **Used for post-deploy automation, not for contract creation** — deploy via `deployer.deploy_local` (Hardhat), `deployer.deploy_og_chain` (0G Galileo), or `deployer.deploy_sepolia` (Sepolia), then drive keepers / scheduled actions / on-chain reads & writes against the deployed contract through the KeeperHub workflow API.
 
 ```text
 # Representative tools (KeeperHub is authoritative — the agent discovers the live set at runtime)

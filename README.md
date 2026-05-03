@@ -44,7 +44,7 @@ Crucible is engineered around three structural commitments — each chosen becau
 
 1. **The agent is a 0G-native open agent**, not a closed SDK wrapper. It's built as a Web3-development extension to the **OpenClaw** framework, with sealed inference on **0G Compute** (e.g., `qwen3.6-plus` / `GLM-5-FP8`) and persistent memory on **0G Storage** (KV for hot state, Log for full history).
 2. **Every Crucible instance is an AXL node.** When the local agent hits an unfamiliar revert, it queries its own 0G Storage memory first; on miss, it broadcasts a structured help request over **Gensyn AXL** to peer Crucible nodes. Real cross-node communication, not in-process actor theater.
-3. **KeeperHub is the agent's automation backplane.** Once a contract is deployed (locally or to 0G Galileo), the agent connects to **KeeperHub's hosted MCP** (`https://app.keeperhub.com/mcp`) per turn and uses its native tool surface — `keeperhub_ai_generate_workflow`, `keeperhub_create_workflow`, `keeperhub_execute_workflow`, `keeperhub_get_wallet_integration`, `keeperhub_list_action_schemas` — to wire keepers, scheduled actions, and on-chain reads/writes against that contract. No hand-rolled REST shim, no parallel data model: the model picks up KeeperHub's tools the moment they ship.
+3. **KeeperHub is the agent's automation backplane.** Once a contract is deployed (locally, to Sepolia, or to 0G Galileo), the agent connects to **KeeperHub's hosted MCP** (`https://app.keeperhub.com/mcp`) per turn and uses its native tool surface — `keeperhub_ai_generate_workflow`, `keeperhub_create_workflow`, `keeperhub_execute_workflow`, `keeperhub_get_wallet_integration`, `keeperhub_list_action_schemas` — to wire keepers, scheduled actions, and on-chain reads/writes against that contract. No hand-rolled REST shim, no parallel data model: the model picks up KeeperHub's tools the moment they ship.
 
 The three integrations compose into one coherent narrative: **0G is where the agent thinks and remembers, AXL is how agents share what they've learned, KeeperHub is how the agent automates what it has built.**
 
@@ -146,13 +146,13 @@ When a transaction reverts, the agent doesn't just show an error. It **autonomou
 
 ### 6. Post-Deploy Automation via KeeperHub
 
-Once a contract is live (locally or on 0G Galileo), the agent connects to KeeperHub's hosted MCP and drives the platform directly:
+Once a contract is live (locally, on Sepolia, or on 0G Galileo), the agent connects to KeeperHub's hosted MCP and drives the platform directly:
 
 - The agent calls `keeperhub_list_action_schemas` to discover what action types KeeperHub exposes (web3 reads/writes, schedules, HTTP, IPFS, …) — the schemas are the source of truth, not a frozen client.
 - For natural-language requests ("every hour, if `Vault.totalSupply()` > 1000, call `rebalance()`"), the agent uses `keeperhub_ai_generate_workflow` to draft a workflow, then `keeperhub_create_workflow` to persist it.
 - `keeperhub_execute_workflow` fires the keeper; the agent surfaces the `executionId` so the user can follow it in the KeeperHub dashboard.
 - For one-off calls or transfers, the direct-execution tools fire a single action without storing a workflow.
-- KeeperHub deliberately doesn't provide a contract-creation action, so deployments still go through Crucible's `deploy_local` (Hardhat) or `deploy_og_chain` (0G). The handoff is clean: Crucible deploys, KeeperHub automates.
+- KeeperHub deliberately doesn't provide a contract-creation action, so deployments still go through Crucible's `deploy_local` (Hardhat), `deploy_og_chain` (0G Galileo), or `deploy_sepolia` (Sepolia). The handoff is clean: Crucible deploys, KeeperHub automates.
 
 ---
 
