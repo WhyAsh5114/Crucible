@@ -23,14 +23,19 @@
 	 * Phase 1: only the most recent trace is shown — no history list. The
 	 * `mode` prop is reserved for a future Phase 4 KeeperHub/public-chain
 	 * variant; for now it's effectively a no-op tag the page passes through.
+	 *
+	 * Phase 4 (Ship): When a ship_confirmed event is present, show a
+	 * "Deployed to Sepolia" section alongside the trace section.
 	 */
 	import { TxTraceSchema, type TxTrace, type AgentEvent } from '@crucible/types';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { getAgentStream } from '$lib/state/agent-stream.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import { Badge } from '$lib/components/ui/badge';
+	import { CopyButton } from '$lib/components/ai-elements/copy-button';
 	import TraceView from './trace-view.svelte';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
+	import RocketLaunchIcon from 'phosphor-svelte/lib/RocketLaunchIcon';
 
 	// Phase 1 takes no props. Phase 4 will add `mode: 'local' | 'keeperhub'`
 	// here to switch the pane into a public-chain variant with explorer
@@ -118,6 +123,33 @@
 		}
 		return null;
 	});
+
+	/**
+	 * Find the most recent ship_confirmed event in the stream.
+	 * Returns null when no ship deployment has been confirmed.
+	 */
+	const shipDeployment = $derived.by<Extract<AgentEvent, { type: 'ship_confirmed' }> | null>(
+		() => {
+			const events = stream.events;
+			for (let i = events.length - 1; i >= 0; i--) {
+				const ev = events[i]!;
+				if (ev.type === 'ship_confirmed') {
+					return ev;
+				}
+			}
+			return null;
+		}
+	);
+
+	// Extract tx hash from explorer URL
+	const shipTxHash = $derived.by(() => {
+		if (!shipDeployment?.explorerUrl) return null;
+		const match = shipDeployment.explorerUrl.match(/\/tx\/(0x[0-9a-fA-F]+)/);
+		return match ? match[1] : null;
+	});
+
+	// Estimate gas used (placeholder since backend doesn't provide it yet)
+	const gasUsed = $derived('N/A');
 </script>
 
 <section class="flex h-full min-h-0 flex-col bg-background">
@@ -136,6 +168,75 @@
 	</header>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
+		<!-- Ship deployment section -->
+		{#if shipDeployment}
+			<div class="border-b border-border/40 bg-green-500/5 p-3">
+				<div class="flex items-center gap-2 mb-3">
+					<RocketLaunchIcon class="size-4 text-green-500" weight="fill" />
+					<h3 class="text-sm font-medium text-green-500">Deployed to Sepolia</h3>
+					<Badge variant="outline" class="ml-auto font-mono text-[9px]">
+						chain {shipDeployment.chainId}
+					</Badge>
+				</div>
+
+				<div class="flex flex-col gap-2 text-xs">
+					<div class="flex items-center gap-2">
+						<span class="font-mono text-[10px] text-muted-foreground w-20">Contract</span>
+						<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-live">
+							{shipDeployment.contractAddress}
+						</code>
+						<CopyButton
+							text={shipDeployment.contractAddress}
+							size="sm"
+							variant="ghost"
+							class="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+						/>
+					</div>
+
+					{#if shipTxHash}
+						<div class="flex items-center gap-2">
+							<span class="font-mono text-[10px] text-muted-foreground w-20">Tx Hash</span>
+							<code class="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground">
+								{shipTxHash.slice(0, 14)}…
+							</code>
+							<CopyButton
+								text={shipTxHash}
+								size="sm"
+								variant="ghost"
+								class="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+							/>
+							<a
+								href={shipDeployment.explorerUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="ml-auto font-mono text-[10px] text-muted-foreground/70 underline hover:text-foreground"
+							>
+								Etherscan ↗
+							</a>
+						</div>
+					{/if}
+
+					<div class="flex items-center gap-2">
+						<span class="font-mono text-[10px] text-muted-foreground w-20">Gas Used</span>
+						<span class="font-mono text-[10px] text-foreground">{gasUsed}</span>
+					</div>
+
+					<div class="flex items-center gap-2">
+						<span class="font-mono text-[10px] text-muted-foreground w-20">Audit Trail</span>
+						<a
+							href={`https://app.keeperhub.com/runs/${shipDeployment.auditTrailId}`}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="font-mono text-[10px] text-primary underline hover:text-primary/80"
+						>
+							{shipDeployment.auditTrailId}
+						</a>
+					</div>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Trace section -->
 		{#if trace}
 			<div class="p-3">
 				<TraceView {trace} />
@@ -146,7 +247,7 @@
 				title="Revert detected — capturing trace…"
 				description="The agent caught a revert. The decoded call tree will appear here in a moment."
 			/>
-		{:else}
+		{:else if !shipDeployment}
 			<EmptyState
 				title="No trace captured yet"
 				description="Deploy a contract or call a transaction. If it reverts, the call tree and decoded revert reason will land here automatically."
